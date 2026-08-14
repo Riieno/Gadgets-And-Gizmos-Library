@@ -1,0 +1,188 @@
+import groovy.json.JsonSlurper
+
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.141'
+}
+
+group = mod_group_id
+version = artifact_version
+
+base {
+    archivesName = archive_name
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'Create Maven'
+        url = 'https://maven.createmod.net/'
+    }
+    maven {
+        name = 'BlameJared'
+        url = 'https://maven.blamejared.com/'
+    }
+    maven {
+        name = 'TerraformersMC'
+        url = 'https://maven.terraformersmc.com/releases/'
+    }
+    maven {
+        name = 'Curios'
+        url = 'https://maven.theillusivec4.top/'
+    }
+    maven {
+        name = 'Modrinth'
+        url = 'https://api.modrinth.com/maven'
+    }
+}
+
+def libsDir = file('libs')
+def requiredSableJar = file("libs/sable-neoforge-${minecraft_version}-${sable_version}.jar")
+def localJars = fileTree(libsDir) {
+    include '*.jar'
+    exclude 'sable-neoforge-*.jar'
+}
+def localRuntimeJars = fileTree(libsDir) {
+    include '*.jar'
+    exclude 'veil-neoforge-*.jar'
+    exclude 'sable-neoforge-*.jar'
+}
+def replaceProperties = [
+    mod_group_id: mod_group_id,
+    mod_id: mod_id,
+    mod_name: mod_name,
+    mod_license: mod_license,
+    mod_version: mod_version,
+    mod_authors: mod_authors,
+    mod_description: mod_description,
+    minecraft_version: minecraft_version,
+    neoforge_version: neoforge_version,
+    flywheel_version: flywheel_version,
+    sable_version: sable_version
+]
+
+neoForge {
+    version = neoforge_version
+
+    parchment {
+        minecraftVersion = minecraft_version
+        mappingsVersion = '2024.11.17'
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+
+    runs {
+        configureEach {
+            systemProperty 'forge.logging.console.level', 'debug'
+            systemProperty 'mixin.env.remapRefMap', 'true'
+            systemProperty 'mixin.env.refMapRemappingFile', "${projectDir}/build/createSrgToMcp/output.srg"
+        }
+
+        client {
+            client()
+            gameDirectory = file('run/client')
+        }
+
+        server {
+            server()
+            gameDirectory = file('run/server')
+        }
+    }
+}
+
+def validateLocalDependencies = tasks.register('validateLocalDependencies') {
+    doLast {
+        if (!requiredSableJar.isFile()) {
+            throw new GradleException("Missing Sable ${sable_version} jar: ${requiredSableJar}")
+        }
+    }
+}
+
+def validateLibraryBoundary = tasks.register('validateLibraryBoundary') {
+    inputs.files(fileTree('src/main/java') { include '**/*.java' })
+    doLast {
+        List<String> violations = []
+        fileTree('src/main/java') { include '**/*.java' }.each { File source ->
+            source.eachLine { String line, int lineNumber ->
+                if (line ==~ /\s*import\s+com\.rieno\.gadgetsandgizmos\.(?!lib\.).*;/) {
+                    violations.add("${project.relativePath(source)}:${lineNumber}: ${line.trim()}")
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException("Library sources import addon implementation classes:\n"
+                    + violations.join('\n'))
+        }
+    }
+}
+
+def validateMixinConfig = tasks.register('validateMixinConfig') {
+    inputs.files(
+            fileTree('src/main/java') { include '**/mixin/**/*.java' },
+            'src/main/resources/gadgetsngizmos.mixins.json')
+    doLast {
+        File sourceRoot = file('src/main/java')
+        Map<String, ?> config = new JsonSlurper().parse(
+                file('src/main/resources/gadgetsngizmos.mixins.json')) as Map<String, ?>
+        Set<String> declared = (config.getOrDefault('mixins', [])
+                + config.getOrDefault('client', [])
+                + config.getOrDefault('server', [])) as Set<String>
+        List<String> missing = []
+        fileTree(sourceRoot) { include '**/mixin/**/*.java' }.each { File source ->
+            if (!source.text.contains('@Mixin')) {
+                return
+            }
+            String relative = sourceRoot.toPath().relativize(source.toPath()).toString()
+                    .replace('\\', '.')
+                    .replace('/', '.')
+                    .replaceFirst(/\.java$/, '')
+            String prefix = config.package + '.'
+            String name = relative.startsWith(prefix) ? relative.substring(prefix.length()) : relative
+            if (!declared.contains(name)) {
+                missing.add("${project.relativePath(source)} (${name})")
+            }
+        }
+        if (!missing.isEmpty()) {
+            throw new GradleException("Mixin classes missing from the library config:\n" + missing.join('\n'))
+        }
+    }
+}
+
+dependencies {
+    compileOnly localJars
+    compileOnly files(requiredSableJar)
+    compileOnly "dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}"
+    runtimeOnly localRuntimeJars
+    runtimeOnly files(requiredSableJar)
+    runtimeOnly "dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}"
+}
+
+tasks.withType(JavaCompile).configureEach {
+    dependsOn validateLocalDependencies
+    options.encoding = 'UTF-8'
+}
+
+tasks.named('check') {
+    dependsOn validateLibraryBoundary
+    dependsOn validateMixinConfig
+}
+
+tasks.named('jar', Jar) {
+    archiveBaseName = archive_name
+    archiveVersion = artifact_version
+}
+
+processResources {
+    inputs.properties replaceProperties
+    filesMatching(['META-INF/neoforge.mods.toml']) {
+        expand replaceProperties
+    }
+}

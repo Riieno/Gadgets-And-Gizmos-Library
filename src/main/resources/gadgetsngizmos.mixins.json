@@ -1,0 +1,30 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.rieno.gadgetsandgizmos.lib.mixin",
+  "plugin": "com.rieno.gadgetsandgizmos.lib.mixin.GadgetsNGizmosLibraryMixinConfigPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "refmap": "gadgetsngizmos.refmap.json",
+  "mixins": [
+    "AeroworksServoPreciseAngleOutputMixin",
+    "HandCrankPreciseAngleOutputMixin",
+    "KineticBlockEntityHeldAngleMixin",
+    "KineticBlockEntityPreciseAngleOutputMixin",
+    "SequencedGearshiftPreciseAngleOutputMixin",
+    "SimAssemblyHelperInvoker",
+    "SimulatedPhysicsStaffActionPacketMixin",
+    "SimulatedPhysicsStaffDragPacketMixin",
+    "SteeringWheelPreciseAngleOutputMixin",
+    "ValveHandlePreciseAngleOutputMixin",
+    "VirtualKineticBlockEntityMixin",
+    "VirtualKineticNetworkMixin",
+    "VirtualKineticRotationPropagatorMixin"
+  ],
+  "client": [
+    "DiagramScreenAccessMixin",
+    "SimulatedPhysicsStaffClientHandlerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
