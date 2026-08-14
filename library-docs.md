@@ -884,8 +884,8 @@ Patch and beta releases may add methods and types without breaking the `1.2.x` c
 
 ## Jar layout
 
-- `gadgetsngizmos-<version>.jar` is the reusable library mod.
-- `createthrusters-<version>.jar` is the Gadgets & Gizmos addon and requires the library jar.
-- `Create-Gadgets-and-Gizmos-<version>.jar` is the distribution wrapper containing both jars as separate NeoForge Jar-in-Jar entries.
+- `gadgets-and-gizmos-lib-<version>.jar` is the reusable library mod.
+- `gadgets-and-gizmos-<version>.jar` is the Gadgets & Gizmos addon and requires the library jar.
+- `gadgets-and-gizmos-bundled-<version>.jar` is the distribution wrapper containing both jars as separate NeoForge Jar-in-Jar entries.
 
 The addon source set may depend on the library source set. The library source set must never import addon classes. If a reusable integration needs addon knowledge, add a typed contract, callback, registry or value object to the library and make the addon implement it.
