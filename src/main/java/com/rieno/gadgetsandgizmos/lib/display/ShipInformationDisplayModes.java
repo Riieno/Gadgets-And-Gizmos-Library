@@ -106,6 +106,16 @@ public final class ShipInformationDisplayModes {
         return STATIC_TEXT_SIMPLE.equals(normalized) || STATIC_TEXT_RICH.equals(normalized);
     }
 
+    // Check if this mode needs an active ship service
+    public static boolean requiresActiveService(String mode) {
+        return !isStaticText(mode);
+    }
+
+    // Check if this mode is currently available
+    public static boolean isAvailable(String mode, boolean scheduleActive, boolean pilotPresent) {
+        return !requiresActiveService(mode) || scheduleActive && pilotPresent;
+    }
+
     // Normalize the key
     private static String normalizeKey(String mode) {
         return mode == null ? "" : mode.strip().toLowerCase(Locale.ROOT);

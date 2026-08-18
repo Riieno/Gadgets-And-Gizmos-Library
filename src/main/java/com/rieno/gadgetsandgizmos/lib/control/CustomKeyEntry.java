@@ -68,6 +68,8 @@ public class CustomKeyEntry {
     public ControllerDirectTargetReference inputTarget = null;
     // Current binding preset
     public String bindingPreset = "none";
+    // Current binding owner
+    public ControllerBindingOwner owner = ControllerBindingOwner.USER;
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -123,6 +125,8 @@ public class CustomKeyEntry {
         if (directTarget != null && directTarget.isBound()) tag.put("DirectTarget", directTarget.toTag());
         if (inputTarget != null && inputTarget.isBound()) tag.put("InputTarget", inputTarget.toTag());
         tag.putString("BindingPreset", bindingPreset == null || bindingPreset.isBlank() ? "none" : bindingPreset);
+        tag.putString("Owner", owner == null
+                ? ControllerBindingOwner.USER.id() : owner.id());
         return tag;
     }
 
@@ -165,6 +169,7 @@ public class CustomKeyEntry {
             ? ControllerDirectTargetReference.fromTag(tag.getCompound("InputTarget")) : null;
         entry.bindingPreset = tag.contains("BindingPreset") && !tag.getString("BindingPreset").isBlank()
             ? tag.getString("BindingPreset") : "none";
+        entry.owner = ControllerBindingOwner.fromId(tag.getString("Owner"));
         return entry;
     }
 
