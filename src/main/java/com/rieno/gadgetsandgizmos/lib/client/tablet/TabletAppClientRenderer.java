@@ -18,4 +18,16 @@ public interface TabletAppClientRenderer {
                                  double mouseY, int btn) {
         return false;
     }
+
+    default boolean mouseScrolled(TabletAppClientContext ctx, double mouseX, double mouseY, double scrollX, double scrollY){ 
+        return false;
+    }
+
+    default boolean keyPressed(TabletAppClientContext ctx, int keyCode, int scanCode, int modifiers){
+        return false;
+    }
+
+    default boolean chatTyped(TabletAppClientContext ctx, char codePoint, int modifiers){
+        return false;
+    }
 }

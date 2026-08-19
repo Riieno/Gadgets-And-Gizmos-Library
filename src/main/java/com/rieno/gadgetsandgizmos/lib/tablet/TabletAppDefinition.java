@@ -23,7 +23,8 @@ public record TabletAppDefinition(
         int accentColor,
         List<TabletTabDefinition> tabs,
         ResourceLocation icon,
-        Set<String> sharedDataKeys
+        Set<String> sharedDataKeys,
+        boolean builtIn
 ) {
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -41,21 +42,28 @@ public record TabletAppDefinition(
         tabs = tabs == null ? List.of() : List.copyOf(tabs);
         icon = icon == null ? defaultIcon(id) : icon;
         sharedDataKeys = sharedDataKeys == null ? Set.of() : sharedDataKeys.stream()
-                .filter(key -> key != null && !key.isBlank()).collect(
-                        java.util.stream.Collectors.toUnmodifiableSet());
+                .filter(key -> key != null && !key.isBlank())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
-    // Initialize the tablet app definition
+    // Preserve the existing five-argument API for third-party apps
     public TabletAppDefinition(ResourceLocation id, Component title, Component description,
                                int accentColor, List<TabletTabDefinition> tabs) {
-        this(id, title, description, accentColor, tabs, null, Set.of());
+        this(id, title, description, accentColor, tabs, null, Set.of(), false);
     }
 
-    // Initialize the tablet app definition
+    // Preserve the existing icon API for third-party apps
     public TabletAppDefinition(ResourceLocation id, Component title, Component description,
                                int accentColor, List<TabletTabDefinition> tabs,
                                ResourceLocation icon) {
-        this(id, title, description, accentColor, tabs, icon, Set.of());
+        this(id, title, description, accentColor, tabs, icon, Set.of(), false);
+    }
+
+    // Preserve the existing full API; external apps remain non-built-in by default
+    public TabletAppDefinition(ResourceLocation id, Component title, Component description,
+                               int accentColor, List<TabletTabDefinition> tabs,
+                               ResourceLocation icon, Set<String> sharedDataKeys) {
+        this(id, title, description, accentColor, tabs, icon, sharedDataKeys, false);
     }
 
     /*--------------------------------------------------------##---------------------------------------------------------
