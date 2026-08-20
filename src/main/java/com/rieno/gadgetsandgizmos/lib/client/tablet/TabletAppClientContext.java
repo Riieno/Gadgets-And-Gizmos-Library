@@ -25,6 +25,7 @@ public record TabletAppClientContext(
         int top,
         int width,
         int height,
+        TabletAppClientSurface surface,
         int mouseX,
         int mouseY,
         ActionSender actions,
@@ -41,8 +42,17 @@ public record TabletAppClientContext(
     // Initialize the tablet app client context
     public TabletAppClientContext {
         data = data == null ? new CompoundTag() : data.copy();
+        surface = surface == null ? new TabletAppClientSurface(left, top, width, height) : surface;
         actions = actions == null ? (action, val) -> { } : actions;
         refresh = refresh == null ? () -> { } : refresh;
+    }
+
+    // Preserve the content-only client context API
+    public TabletAppClientContext(TabletAppDefinition app, TabletTabDefinition tab, CompoundTag data,
+                                  GuiGraphics graphics, Font font, int left, int top, int width, int height,
+                                  int mouseX, int mouseY, ActionSender actions, Runnable refresh) {
+        this(app, tab, data, graphics, font, left, top, width, height,
+                new TabletAppClientSurface(left, top, width, height), mouseX, mouseY, actions, refresh);
     }
 
     // Expose the action sender
