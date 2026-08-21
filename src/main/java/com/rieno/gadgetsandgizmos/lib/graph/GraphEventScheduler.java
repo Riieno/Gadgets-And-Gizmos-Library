@@ -72,6 +72,18 @@ public final class GraphEventScheduler<E> {
                 && scheduled.offer(new Scheduled<>(tick, event));
     }
 
+    // Queue one immediate event and one delayed event as one bounded operation
+    public boolean enqueueAndSchedule(E immediateEvent, long tick, E scheduledEvent) {
+        if (immediateEvent == null || scheduledEvent == null
+                || immediate.size() >= maximumImmediate
+                || scheduled.size() >= maximumScheduled) {
+            return false;
+        }
+        immediate.offer(immediateEvent);
+        scheduled.offer(new Scheduled<>(tick, scheduledEvent));
+        return true;
+    }
+
     // Release the graph event scheduler
     public void release(long tick) {
         while (!scheduled.isEmpty() && scheduled.peek().tick() <= tick
