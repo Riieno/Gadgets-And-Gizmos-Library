@@ -65,7 +65,7 @@ for example:
 ResourceLocation.fromNamespaceAndPath(
     "your_mod",
     "your_feature"
-)
+);
 ```
 Do not register over another mod's namespace.
 Use strict registration methods unless replacement is explicitly required.
@@ -176,9 +176,9 @@ For example:
 ```java
 package com.rieno.gadgetsandgizmos.lib.client;
 
-import com.some.dep.someDependency;
+import com.some.dep.SomeDependency;
 
-public final class someClass{
+public final class SomeClass{
     // Do something
 };
 
