@@ -38,7 +38,7 @@ public record GraphDocumentSnapshot(
     }
 
     // Publish one immutable node
-    public record Node(String id, String type, String label,
+    public record Node(String id, String type, String label, String alias,
                        double x, double y,
                        Map<String, String> inputs,
                        Map<String, String> outputs,
@@ -47,6 +47,7 @@ public record GraphDocumentSnapshot(
             id = id == null ? "" : id;
             type = type == null ? "" : type;
             label = label == null ? "" : label;
+            alias = GraphNodeAlias.normalize(alias);
             inputs = Map.copyOf(inputs == null ? Map.of() : inputs);
             outputs = Map.copyOf(outputs == null ? Map.of() : outputs);
             data = data == null
