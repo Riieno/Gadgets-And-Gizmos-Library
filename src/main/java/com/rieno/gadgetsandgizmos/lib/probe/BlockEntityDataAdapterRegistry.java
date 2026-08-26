@@ -11,6 +11,7 @@ package com.rieno.gadgetsandgizmos.lib.probe;
 import com.rieno.gadgetsandgizmos.lib.graph.GraphValue;
 import net.minecraft.world.level.block.entity.BlockEntity;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -51,16 +52,21 @@ public final class BlockEntityDataAdapterRegistry {
         if (target instanceof BlockEntityDataProvider provider) {
             Map<String, String> writable = provider.graphWritableData();
             provider.graphWritableOptions().forEach((port, values) -> {
-                if (writable.containsKey(port) && values != null && !values.isEmpty()) {
+                if (writable.containsKey(port)
+                        && !BlockEntityDataAccessPolicy.isItemContentMutation(
+                        port, writable.get(port))
+                        && values != null && !values.isEmpty()) {
                     options.put(port, List.copyOf(values));
                 }
             });
         }
 
-        BlockEntityDataAdapter<BlockEntity> adapter = findAdapter(target);
-        if (adapter != null) {
+        for (BlockEntityDataAdapter<BlockEntity> adapter : findAdapters(target)) {
             for (BlockEntityDataPort port : adapter.ports(target)) {
-                if (port.access().canWrite() && !port.options().isEmpty()) {
+                if (port.access().canWrite()
+                        && !BlockEntityDataAccessPolicy.isItemContentMutation(
+                        port.id(), port.type())
+                        && !port.options().isEmpty()) {
                     options.putIfAbsent(port.id(), port.options());
                 }
             }
@@ -78,10 +84,13 @@ public final class BlockEntityDataAdapterRegistry {
             return provider.readGraphValue(port);
         }
 
-        BlockEntityDataAdapter<BlockEntity> adapter = findAdapter(target);
-        BlockEntityDataPort descriptor = findPort(adapter, target, port);
-        return descriptor != null && descriptor.access().canRead()
-                ? adapter.read(target, port) : null;
+        for (BlockEntityDataAdapter<BlockEntity> adapter : findAdapters(target)) {
+            BlockEntityDataPort descriptor = findPort(adapter, target, port);
+            if (descriptor != null && descriptor.access().canRead()) {
+                return adapter.read(target, port);
+            }
+        }
+        return null;
     }
 
     // Write one registered data value
@@ -89,15 +98,24 @@ public final class BlockEntityDataAdapterRegistry {
         if (target == null || port == null || port.isBlank() || value == null) {
             return false;
         }
-        if (target instanceof BlockEntityDataProvider provider
-                && provider.graphWritableData().containsKey(port)) {
-            return provider.writeGraphValue(port, value);
+        if (target instanceof BlockEntityDataProvider provider) {
+            Map<String, String> writable = provider.graphWritableData();
+            if (writable.containsKey(port)) {
+                return !BlockEntityDataAccessPolicy.isItemContentMutation(
+                        port, writable.get(port))
+                        && provider.writeGraphValue(port, value);
+            }
         }
 
-        BlockEntityDataAdapter<BlockEntity> adapter = findAdapter(target);
-        BlockEntityDataPort descriptor = findPort(adapter, target, port);
-        return descriptor != null && descriptor.access().canWrite()
-                && adapter.write(target, port, value);
+        for (BlockEntityDataAdapter<BlockEntity> adapter : findAdapters(target)) {
+            BlockEntityDataPort descriptor = findPort(adapter, target, port);
+            if (descriptor != null && descriptor.access().canWrite()
+                    && !BlockEntityDataAccessPolicy.isItemContentMutation(
+                    descriptor.id(), descriptor.type())) {
+                return adapter.write(target, port, value);
+            }
+        }
+        return false;
     }
 
     // Build the readable or writable port map
@@ -107,13 +125,20 @@ public final class BlockEntityDataAdapterRegistry {
             return ports;
         }
         if (target instanceof BlockEntityDataProvider provider) {
-            ports.putAll(readable ? provider.graphReadableData() : provider.graphWritableData());
+            Map<String, String> declared = readable
+                    ? provider.graphReadableData() : provider.graphWritableData();
+            declared.forEach((port, type) -> {
+                if (readable || !BlockEntityDataAccessPolicy.isItemContentMutation(port, type)) {
+                    ports.put(port, type);
+                }
+            });
         }
 
-        BlockEntityDataAdapter<BlockEntity> adapter = findAdapter(target);
-        if (adapter != null) {
+        for (BlockEntityDataAdapter<BlockEntity> adapter : findAdapters(target)) {
             for (BlockEntityDataPort port : adapter.ports(target)) {
-                if (readable ? port.access().canRead() : port.access().canWrite()) {
+                if ((readable ? port.access().canRead() : port.access().canWrite())
+                        && (readable || !BlockEntityDataAccessPolicy.isItemContentMutation(
+                        port.id(), port.type()))) {
                     ports.putIfAbsent(port.id(), port.type());
                 }
             }
@@ -121,11 +146,12 @@ public final class BlockEntityDataAdapterRegistry {
         return Collections.unmodifiableMap(ports);
     }
 
-    // Find the first matching data adapter
-    private static BlockEntityDataAdapter<BlockEntity> findAdapter(BlockEntity target) {
+    // Find every matching data adapter in priority order
+    private static List<BlockEntityDataAdapter<BlockEntity>> findAdapters(BlockEntity target) {
         if (target == null) {
-            return null;
+            return List.of();
         }
+        List<BlockEntityDataAdapter<BlockEntity>> matches = new ArrayList<>();
         for (RegisteredAdapter entry : ADAPTERS) {
             BlockEntityDataAdapter<?> adapter = entry.adapter();
             if (!adapter.targetType().isInstance(target)) {
@@ -133,10 +159,10 @@ public final class BlockEntityDataAdapterRegistry {
             }
             BlockEntityDataAdapter<BlockEntity> cast = cast(adapter);
             if (cast.supports(target)) {
-                return cast;
+                matches.add(cast);
             }
         }
-        return null;
+        return List.copyOf(matches);
     }
 
     // Find one declared port
