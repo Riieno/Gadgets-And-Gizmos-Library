@@ -14,7 +14,9 @@ import net.minecraft.world.level.Level;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 
@@ -31,7 +33,7 @@ public final class PreciseKineticOutputGraph {
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     // Owned targets
-    private final Set<BlockPos> ownedTargets = new HashSet<>();
+    private final Map<BlockPos, KineticBlockEntity> ownedTargets = new HashMap<>();
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -50,7 +52,7 @@ public final class PreciseKineticOutputGraph {
             return ApplyResult.EMPTY;
         }
 
-        Set<BlockPos> nextTargets = new HashSet<>();
+        Map<BlockPos, KineticBlockEntity> nextTargets = new HashMap<>();
         ArrayDeque<HeldAngleNode> frontier = new ArrayDeque<>();
         Set<BlockPos> localVisited = new HashSet<>();
         frontier.addLast(new HeldAngleNode(source, sourceAngleDegrees));
@@ -75,7 +77,7 @@ public final class PreciseKineticOutputGraph {
                 synchronizer.sync(current);
             }
 
-            nextTargets.add(currentPos);
+            nextTargets.put(currentPos, current);
             stressBase += Math.max(current.calculateStressApplied(), 0.0f);
 
             if (current != source && current instanceof PreciseKineticOutputBoundary) {
@@ -105,23 +107,23 @@ public final class PreciseKineticOutputGraph {
         if (level == null || ownedTargets.isEmpty()) {
             return;
         }
-        for (BlockPos targetPos : ownedTargets) {
-            HeldAngleKineticGraph.clearHeldAngle(level, targetPos, synchronizer);
+        for (Map.Entry<BlockPos, KineticBlockEntity> target : ownedTargets.entrySet()) {
+            HeldAngleKineticGraph.clearHeldAngle(level, target.getKey(), target.getValue(), synchronizer);
         }
         ownedTargets.clear();
     }
 
     // Sync the targets
-    private void syncTargets(Level level, Set<BlockPos> nextTargets,
+    private void syncTargets(Level level, Map<BlockPos, KineticBlockEntity> nextTargets,
                              HeldAngleKineticGraph.KineticTargetSynchronizer synchronizer) {
-        Set<BlockPos> staleTargets = new HashSet<>(ownedTargets);
-        staleTargets.removeAll(nextTargets);
+        Set<BlockPos> staleTargets = new HashSet<>(ownedTargets.keySet());
+        staleTargets.removeAll(nextTargets.keySet());
         for (BlockPos staleTarget : staleTargets) {
-            HeldAngleKineticGraph.clearHeldAngle(level, staleTarget, synchronizer);
+            HeldAngleKineticGraph.clearHeldAngle(level, staleTarget, ownedTargets.get(staleTarget), synchronizer);
         }
 
         ownedTargets.clear();
-        ownedTargets.addAll(nextTargets);
+        ownedTargets.putAll(nextTargets);
     }
 
     // Check if this is downstream of the target

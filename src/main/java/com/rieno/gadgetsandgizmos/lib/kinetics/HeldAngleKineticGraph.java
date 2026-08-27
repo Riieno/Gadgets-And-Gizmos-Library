@@ -16,6 +16,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 import java.util.HashSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 
@@ -32,7 +34,7 @@ public final class HeldAngleKineticGraph {
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     // Owned targets
-    private final Set<BlockPos> ownedTargets = new HashSet<>();
+    private final Map<BlockPos, KineticBlockEntity> ownedTargets = new HashMap<>();
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -46,9 +48,9 @@ public final class HeldAngleKineticGraph {
     public ApplyResult apply(Level level, @Nullable KineticBlockEntity seedTarget, float seedAngleDegrees,
                              Set<BlockPos> claimedTargets, Predicate<KineticBlockEntity> skipNode,
                              KineticTargetSynchronizer synchronizer) {
-        Set<BlockPos> nextTargets = new HashSet<>();
+        Map<BlockPos, KineticBlockEntity> nextTargets = new HashMap<>();
         if (seedTarget == null || claimedTargets.contains(seedTarget.getBlockPos())) {
-            syncTargets(level, nextTargets, synchronizer);
+            syncTargets(level, nextTargets, claimedTargets, synchronizer);
             return ApplyResult.EMPTY;
         }
 
@@ -76,7 +78,7 @@ public final class HeldAngleKineticGraph {
                 synchronizer.sync(current);
             }
 
-            nextTargets.add(currentPos);
+            nextTargets.put(currentPos, current);
             claimedTargets.add(currentPos);
             stressBase += Math.max(current.calculateStressApplied(), 0.0f);
 
@@ -103,7 +105,7 @@ public final class HeldAngleKineticGraph {
             }
         }
 
-        syncTargets(level, nextTargets, synchronizer);
+        syncTargets(level, nextTargets, claimedTargets, synchronizer);
         return new ApplyResult(nextTargets.size(), stressBase);
     }
 
@@ -112,31 +114,37 @@ public final class HeldAngleKineticGraph {
         if (ownedTargets.isEmpty()) {
             return;
         }
-        for (BlockPos targetPos : ownedTargets) {
-            clearHeldAngle(level, targetPos, synchronizer);
+        for (Map.Entry<BlockPos, KineticBlockEntity> target : ownedTargets.entrySet()) {
+            clearHeldAngle(level, target.getKey(), target.getValue(), synchronizer);
         }
         ownedTargets.clear();
     }
 
     // Sync the targets
-    private void syncTargets(Level level, Set<BlockPos> nextTargets, KineticTargetSynchronizer synchronizer) {
-        Set<BlockPos> staleTargets = new HashSet<>(ownedTargets);
-        staleTargets.removeAll(nextTargets);
+    private void syncTargets(Level level, Map<BlockPos, KineticBlockEntity> nextTargets, Set<BlockPos> claimedTargets,
+                             KineticTargetSynchronizer synchronizer) {
+        Set<BlockPos> staleTargets = new HashSet<>(ownedTargets.keySet());
+        staleTargets.removeAll(nextTargets.keySet());
         for (BlockPos staleTarget : staleTargets) {
-            clearHeldAngle(level, staleTarget, synchronizer);
+            if (claimedTargets.contains(staleTarget)) {
+                continue;
+            }
+            clearHeldAngle(level, staleTarget, ownedTargets.get(staleTarget), synchronizer);
         }
 
         ownedTargets.clear();
-        ownedTargets.addAll(nextTargets);
+        ownedTargets.putAll(nextTargets);
     }
 
     // Clear the held angle
-    static void clearHeldAngle(Level level, BlockPos targetPos, KineticTargetSynchronizer synchronizer) {
-        BlockEntity blockEntity = level.getBlockEntity(targetPos);
-        if (!(blockEntity instanceof KineticBlockEntity target)) {
-            return;
+    static void clearHeldAngle(Level level, BlockPos targetPos, @Nullable KineticBlockEntity ownedTarget,
+                               KineticTargetSynchronizer synchronizer) {
+        KineticBlockEntity target = ownedTarget;
+        if (target == null || target.getLevel() != level || target.isRemoved()) {
+            BlockEntity blockEntity = level.getBlockEntity(targetPos);
+            target = blockEntity instanceof KineticBlockEntity kinetic ? kinetic : null;
         }
-        if (!KineticAngleHelper.clearHeldAngles(target)) {
+        if (target == null || !KineticAngleHelper.clearHeldAngles(target)) {
             return;
         }
         synchronizer.sync(target);
