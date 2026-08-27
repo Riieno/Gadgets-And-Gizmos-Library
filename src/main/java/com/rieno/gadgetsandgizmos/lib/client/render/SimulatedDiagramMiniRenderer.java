@@ -34,6 +34,7 @@ import org.slf4j.Logger;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -53,6 +54,9 @@ public final class SimulatedDiagramMiniRenderer {
     private static final long MAX_RETRY_DELAY_MS = 5000L;
     private static final int SOURCE_WIDTH = 512;
     private static final int SOURCE_HEIGHT = 320;
+    private static final int MASS_BUTTON_OFFSET_X = 9;
+    private static final int MASS_BUTTON_OFFSET_Y = 69;
+    private static final int MASS_BUTTON_SIZE = 18;
     private static final ResourceLocation DIAGRAM_ENTITY_ID = ResourceLocation.fromNamespaceAndPath(
             "simulated", "contraption_diagram");
 
@@ -104,6 +108,10 @@ public final class SimulatedDiagramMiniRenderer {
 
     // Shared paper visibility
     private boolean sharedPaperVisible;
+
+    // Current host-owned mass readout state
+    private boolean massReadoutVisible;
+    private double hostedMass;
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -158,10 +166,20 @@ public final class SimulatedDiagramMiniRenderer {
                 graphics.pose().scale((float) scale, (float) scale, 1.0F);
                 graphics.pose().translate(-viewportX, -viewportY, 0.0F);
                 screen.drawWindow(graphics, localMouseX, localMouseY, framePartialTick);
-                renderWidgets(graphics, localMouseX, localMouseY, partialTick);
             } finally {
                 graphics.pose().popPose();
                 graphics.disableScissor();
+            }
+
+            graphics.pose().pushPose();
+            try {
+                graphics.pose().translate(x, y, 0.0F);
+                graphics.pose().scale((float) scale, (float) scale, 1.0F);
+                graphics.pose().translate(-viewportX, -viewportY, 0.0F);
+                renderWidgets(graphics, localMouseX, localMouseY, partialTick);
+                renderMassReadout(graphics);
+            } finally {
+                graphics.pose().popPose();
             }
 
             graphics.pose().pushPose();
@@ -193,6 +211,10 @@ public final class SimulatedDiagramMiniRenderer {
         try {
             if (btn == 0 && tryRotateButtonClick(localX, localY)) {
                 captureSharedUiState();
+                markSuccess();
+                return true;
+            }
+            if (btn == 0 && tryMassButtonClick(localX, localY)) {
                 markSuccess();
                 return true;
             }
@@ -353,6 +375,7 @@ public final class SimulatedDiagramMiniRenderer {
 
     // Update the hosted force data
     private void updateData(DiagramDataSource data) {
+        hostedMass = Double.isFinite(data.mass()) ? Math.max(0.0D, data.mass()) : 0.0D;
         Map<ForceGroup, List<QueuedForceGroup.PointForce>> forcesByGroup = new HashMap<>();
         for (DiagramForceData force : data.forces()) {
             if (force == null || force.groupId() == null) {
@@ -375,6 +398,21 @@ public final class SimulatedDiagramMiniRenderer {
         for (Renderable renderable : screen.hostedRenderables()) {
             renderable.render(graphics, mouseX, mouseY, partialTick);
         }
+    }
+
+    // Draw the selected sublevel mass beside Simulated's disabled mass button
+    private void renderMassReadout(GuiGraphics graphics) {
+        if (!massReadoutVisible) {
+            return;
+        }
+        int windowX = SOURCE_WIDTH / 2 - DiagramScreen.DIAGRAM_TEXTURE.width / 2;
+        int windowY = SOURCE_HEIGHT / 2 - DiagramScreen.DIAGRAM_TEXTURE.height / 2;
+        String text = String.format(Locale.ROOT, "Mass: %.2f kg", hostedMass);
+        int textX = windowX + MASS_BUTTON_OFFSET_X + MASS_BUTTON_SIZE + 4;
+        int textY = windowY + MASS_BUTTON_OFFSET_Y + 5;
+        int textWidth = Minecraft.getInstance().font.width(text);
+        graphics.fill(textX - 3, textY - 3, textX + textWidth + 3, textY + 11, 0xD010151D);
+        graphics.drawString(Minecraft.getInstance().font, text, textX, textY, 0xFFE8EEF6, false);
     }
 
     // Try one diagram rotation control
@@ -409,6 +447,20 @@ public final class SimulatedDiagramMiniRenderer {
             return false;
         }
         access().ct$rotateDiagram(best.yawSteps(), best.pitchSteps());
+        return true;
+    }
+
+    // Toggle the hosted readout for Simulated's otherwise inactive mass control
+    private boolean tryMassButtonClick(double mouseX, double mouseY) {
+        int windowX = SOURCE_WIDTH / 2 - DiagramScreen.DIAGRAM_TEXTURE.width / 2;
+        int windowY = SOURCE_HEIGHT / 2 - DiagramScreen.DIAGRAM_TEXTURE.height / 2;
+        int left = windowX + MASS_BUTTON_OFFSET_X;
+        int top = windowY + MASS_BUTTON_OFFSET_Y;
+        if (mouseX < left || mouseX >= left + MASS_BUTTON_SIZE
+                || mouseY < top || mouseY >= top + MASS_BUTTON_SIZE) {
+            return false;
+        }
+        massReadoutVisible = !massReadoutVisible;
         return true;
     }
 
@@ -498,6 +550,8 @@ public final class SimulatedDiagramMiniRenderer {
         clientSubLevel = null;
         subLevelId = null;
         lastHostedTick = Long.MIN_VALUE;
+        massReadoutVisible = false;
+        hostedMass = 0.0D;
     }
 
     // Expose protected screen drawing to the hosted renderer

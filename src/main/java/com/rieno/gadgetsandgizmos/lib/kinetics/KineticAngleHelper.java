@@ -76,23 +76,28 @@ public final class KineticAngleHelper {
 
     // Get the absolute rotation angle degrees
     public static double getAbsoluteRotationAngleDegrees(KineticBlockEntity target, Direction.Axis axis) {
-        if (!(target instanceof HeldKineticAngleAccess access)) {
-            return Double.NaN;
+        double heldAngle = getHeldRotationAngleDegrees(target, axis);
+        if (!Double.isNaN(heldAngle)) {
+            return heldAngle;
         }
-        float absoluteAngle = access.ct$getAbsoluteRotationAngle(axis);
-        return Float.isNaN(absoluteAngle) ? Double.NaN : absoluteAngle;
+        return getKineticRotationAngleDegrees(target, axis);
     }
 
     // Get the kinetic rotation angle degrees
     public static float getKineticRotationAngleDegrees(KineticBlockEntity target) {
-        if (target.getLevel() == null) {
-            return 0.0f;
-        }
         BlockState state = target.getBlockState();
         if (!(state.getBlock() instanceof IRotate rotate)) {
             return 0.0f;
         }
-        Direction.Axis axis = rotate.getRotationAxis(state);
+        return getKineticRotationAngleDegrees(target, rotate.getRotationAxis(state));
+    }
+
+    // Get the kinetic rotation angle degrees for an axis
+    public static float getKineticRotationAngleDegrees(KineticBlockEntity target, Direction.Axis axis) {
+        if (target.getLevel() == null || axis == null) {
+            return 0.0f;
+        }
+        BlockState state = target.getBlockState();
         float offset = getRotationOffsetForPos(target, state, axis);
         return normalizeDegrees(target.getLevel().getGameTime() * target.getSpeed() * 3.0f / 10.0f + offset);
     }
