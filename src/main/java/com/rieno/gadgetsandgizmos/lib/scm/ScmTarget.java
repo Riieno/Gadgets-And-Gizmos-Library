@@ -21,7 +21,8 @@ public record ScmTarget(
         String blockId,
         String label,
         @Nullable BlockPos signalPosition,
-        @Nullable Direction signalFace
+        @Nullable Direction signalFace,
+        String controlChannelId
 ) {
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -34,7 +35,16 @@ public record ScmTarget(
     // Initialize the SCM target
     public ScmTarget(@Nullable UUID subLevelId, BlockPos blockPosition,
                      String blockId, String label) {
-        this(subLevelId, blockPosition, blockId, label, null, null);
+        this(subLevelId, blockPosition, blockId, label, null, null, "");
+    }
+
+    // Initialize the SCM target with a linked face
+    public ScmTarget(@Nullable UUID subLevelId, BlockPos blockPosition,
+                     String blockId, String label,
+                     @Nullable BlockPos signalPosition,
+                     @Nullable Direction signalFace) {
+        this(subLevelId, blockPosition, blockId, label,
+                signalPosition, signalFace, "");
     }
 
     // Initialize the SCM target
@@ -43,8 +53,10 @@ public record ScmTarget(
         blockId = blockId == null ? "minecraft:air" : blockId.strip();
         label = label == null ? "" : label.strip();
         signalPosition = signalPosition == null ? null : signalPosition.immutable();
+        controlChannelId = controlChannelId == null ? "" : controlChannelId.strip();
         if (signalPosition == null) {
             signalFace = null;
+            controlChannelId = "";
         }
     }
 
@@ -59,6 +71,11 @@ public record ScmTarget(
     // Check if this uses face control
     public boolean usesFaceControl() {
         return signalPosition != null && signalFace != null;
+    }
+
+    // Check whether this target was bound to one exact SCM control channel
+    public boolean usesControlChannel() {
+        return usesFaceControl() && !controlChannelId.isBlank();
     }
 
     // Get the stable id
