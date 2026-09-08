@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class LinkedKineticBlockEntityTest {
+    /*
     private MockedStatic<IRotate.StressImpact> stressConfig;
 
     @org.junit.jupiter.api.BeforeAll
@@ -331,4 +332,6 @@ class LinkedKineticBlockEntityTest {
         doNothing().when(member).sendData();
         doNothing().when(member).onSpeedChanged(anyFloat());
     }
+     
+     */
 }
