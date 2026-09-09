@@ -1,5 +1,5 @@
 package com.rieno.gadgetsandgizmos.lib.kinetics;
-/*
+
 import com.simibubi.create.content.kinetics.KineticNetwork;
 import com.simibubi.create.content.kinetics.TorquePropagator;
 import com.simibubi.create.content.kinetics.base.IRotate;
@@ -24,10 +24,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
-*/
 
 class LinkedKineticBlockEntityTest {
-    /*
     private MockedStatic<IRotate.StressImpact> stressConfig;
 
     @org.junit.jupiter.api.BeforeAll
@@ -333,6 +331,4 @@ class LinkedKineticBlockEntityTest {
         doNothing().when(member).sendData();
         doNothing().when(member).onSpeedChanged(anyFloat());
     }
-     
-     */
 }

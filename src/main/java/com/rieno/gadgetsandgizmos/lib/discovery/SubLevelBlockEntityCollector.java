@@ -23,6 +23,7 @@ import net.minecraft.server.level.TicketType;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import org.jetbrains.annotations.Nullable;
 
@@ -45,6 +46,13 @@ public final class SubLevelBlockEntityCollector {
 
     private static final TicketType<UUID> SUB_LEVEL_LOAD_TICKET = TicketType.create(
             "gadgetsngizmos:sable_sublevel_load", Comparator.comparing(UUID::toString), 40);
+
+    /** A loaded, non-air block in one Sable body. */
+    public record LoadedBlock(BlockPos position, BlockState state) {
+        public LoadedBlock {
+            position = position == null ? BlockPos.ZERO : position.immutable();
+        }
+    }
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -271,6 +279,35 @@ public final class SubLevelBlockEntityCollector {
         }
 
         return new ArrayList<>(blockEntities.values());
+    }
+
+    /**
+     * Read a bounded snapshot of the non-air blocks already loaded for a Sable
+     * body. This never creates chunk tickets and is suitable for previews sent
+     * to a client that is not currently tracking the craft itself.
+     */
+    public static List<LoadedBlock> getLoadedBlocks(@Nullable Object subLevel, int maximumBlocks) {
+        if (!(subLevel instanceof SubLevel sableSubLevel) || !isUsableSubLevel(sableSubLevel, null)) {
+            return List.of();
+        }
+        int limit = Math.max(1, maximumBlocks);
+        List<LoadedBlock> blocks = new ArrayList<>();
+        try {
+            for (PlotChunkHolder holder : sableSubLevel.getPlot().getLoadedChunks()) {
+                if (blocks.size() >= limit) break;
+                LevelChunk chunk = holder.getChunk();
+                if (chunk == null || chunk.isEmpty()) continue;
+                chunk.findBlocks(state -> !state.isAir(), (position, state) -> {
+                    if (blocks.size() < limit) {
+                        blocks.add(new LoadedBlock(position, state));
+                    }
+                });
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A body may be replaced while its chunk snapshot is being read.
+        }
+        blocks.sort(Comparator.comparing(LoadedBlock::position));
+        return List.copyOf(blocks);
     }
 
     // Find the actor block entity

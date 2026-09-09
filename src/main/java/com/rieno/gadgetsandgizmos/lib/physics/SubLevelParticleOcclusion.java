@@ -221,7 +221,10 @@ public final class SubLevelParticleOcclusion {
         }
         Map<BlockGetter, LoadedBlockLookup> sharedLookups = probeCache == null
                 ? new IdentityHashMap<>() : probeCache.lookups;
-        double nearest = maxDistance;
+        double nearest = findEnvelopeBlockingDistance(
+                dir, maxDistance, movingBoundsWorld,
+                subLevelWorldBounds(subLevels, excludedSubLevelIds));
+        if (nearest <= EPSILON) return 0.0D;
         Vec3 probeOffset = dir.scale(COLLISION_MARGIN * 2.0D);
         for (AABB bounds : movingBoundsWorld) {
             if (bounds == null) {
@@ -244,6 +247,41 @@ public final class SubLevelParticleOcclusion {
         return Mth.clamp(nearest, 0.0D, maxDistance);
     }
 
+    /**
+     * Find the first collision distance between translated moving bounds and
+     * fixed obstacle envelopes. This supplements block probes for sparse
+     * moving structures whose physical envelopes must not overlap.
+     */
+    public static double findEnvelopeBlockingDistance(
+            Vec3 directionWorld,
+            double maxDistance,
+            List<AABB> movingBoundsWorld,
+            List<AABB> obstacleBoundsWorld
+    ) {
+        double maximum = Double.isFinite(maxDistance)
+                ? Math.max(0.0D, maxDistance) : 0.0D;
+        if (directionWorld == null || directionWorld.lengthSqr() < EPSILON
+                || maximum <= 0.0D || movingBoundsWorld == null
+                || movingBoundsWorld.isEmpty() || obstacleBoundsWorld == null
+                || obstacleBoundsWorld.isEmpty()) {
+            return maximum;
+        }
+        Vec3 direction = directionWorld.normalize();
+        double nearest = maximum;
+        for (AABB moving : movingBoundsWorld) {
+            if (moving == null) continue;
+            for (AABB obstacle : obstacleBoundsWorld) {
+                if (obstacle == null) continue;
+                Double distance = translatedBoundsEntryDistance(
+                        moving, obstacle, direction, nearest);
+                if (distance == null) continue;
+                nearest = Math.min(nearest, distance);
+                if (nearest <= EPSILON) return 0.0D;
+            }
+        }
+        return Mth.clamp(nearest, 0.0D, maximum);
+    }
+
     // Handle the probe cache
     public static final class ProbeCache {
         // Tracked lookups
@@ -254,6 +292,47 @@ public final class SubLevelParticleOcclusion {
         public void clear() {
             lookups.clear();
         }
+    }
+
+    // Remove the shared support-contact band from a compound ground hull.
+    // Ground vehicles may rest on a block or another supported surface. That
+    // contact is not forward obstruction, so callers should remove it before
+    // asking a horizontal clearance question. The returned bounds continue to
+    // cover every part of the hull above the band, including low obstacles
+    // which project into the vehicle body.
+    public static List<AABB> withoutGroundContactBand(
+            List<AABB> movingBoundsWorld,
+            double contactClearance
+    ) {
+        if (movingBoundsWorld == null || movingBoundsWorld.isEmpty()) {
+            return List.of();
+        }
+        double supportY = Double.POSITIVE_INFINITY;
+        List<AABB> validBounds = new ArrayList<>(movingBoundsWorld.size());
+        for (AABB bounds : movingBoundsWorld) {
+            if (bounds == null) {
+                continue;
+            }
+            validBounds.add(bounds);
+            supportY = Math.min(supportY, bounds.minY);
+        }
+        if (validBounds.isEmpty() || !Double.isFinite(supportY)) {
+            return List.of();
+        }
+        double clearance = Math.max(0.0D, contactClearance);
+        double collisionFloor = supportY + clearance;
+        List<AABB> clipped = new ArrayList<>(validBounds.size());
+        for (AABB bounds : validBounds) {
+            double minimumY = Math.max(bounds.minY, collisionFloor);
+            if (bounds.maxY - minimumY > EPSILON) {
+                clipped.add(new AABB(bounds.minX, minimumY, bounds.minZ,
+                        bounds.maxX, bounds.maxY, bounds.maxZ));
+            }
+        }
+        // A very thin actor has no meaningful body above the requested band.
+        // Preserve its original bounds rather than accidentally making it
+        // collision-free.
+        return List.copyOf(clipped.isEmpty() ? validBounds : clipped);
     }
 
     // Get the leading face probe points
@@ -1026,6 +1105,64 @@ public final class SubLevelParticleOcclusion {
             }
         }
         return res;
+    }
+
+    // Get collision envelopes for every non-excluded Sable body in one query.
+    private static List<AABB> subLevelWorldBounds(
+            List<Object> subLevels,
+            Set<UUID> excludedSubLevelIds
+    ) {
+        if (subLevels == null || subLevels.isEmpty()) return List.of();
+        List<AABB> bounds = new ArrayList<>(subLevels.size());
+        for (Object candidate : subLevels) {
+            if (!(candidate instanceof SubLevel subLevel) || subLevel.isRemoved()) continue;
+            UUID id = subLevel.getUniqueId();
+            if (excludedSubLevelIds != null && excludedSubLevelIds.contains(id)) continue;
+            var envelope = subLevel.boundingBox();
+            bounds.add(new AABB(
+                    envelope.minX(), envelope.minY(), envelope.minZ(),
+                    envelope.maxX(), envelope.maxY(), envelope.maxZ()));
+        }
+        return List.copyOf(bounds);
+    }
+
+    // Get the first distance at which one translated AABB overlaps a fixed AABB.
+    private static @Nullable Double translatedBoundsEntryDistance(
+            AABB moving,
+            AABB obstacle,
+            Vec3 direction,
+            double maxDistance
+    ) {
+        double entry = 0.0D;
+        double exit = Math.max(0.0D, maxDistance);
+        double[] movingMin = {moving.minX, moving.minY, moving.minZ};
+        double[] movingMax = {moving.maxX, moving.maxY, moving.maxZ};
+        double[] obstacleMin = {obstacle.minX, obstacle.minY, obstacle.minZ};
+        double[] obstacleMax = {obstacle.maxX, obstacle.maxY, obstacle.maxZ};
+        double[] velocity = {direction.x, direction.y, direction.z};
+        for (int axis = 0; axis < 3; axis++) {
+            if (Math.abs(velocity[axis]) <= EPSILON) {
+                if (movingMax[axis] < obstacleMin[axis]
+                        || movingMin[axis] > obstacleMax[axis]) {
+                    return null;
+                }
+                continue;
+            }
+            double axisEntry;
+            double axisExit;
+            if (velocity[axis] > 0.0D) {
+                axisEntry = (obstacleMin[axis] - movingMax[axis]) / velocity[axis];
+                axisExit = (obstacleMax[axis] - movingMin[axis]) / velocity[axis];
+            } else {
+                axisEntry = (obstacleMax[axis] - movingMin[axis]) / velocity[axis];
+                axisExit = (obstacleMin[axis] - movingMax[axis]) / velocity[axis];
+            }
+            entry = Math.max(entry, axisEntry);
+            exit = Math.min(exit, axisExit);
+            if (entry > exit + EPSILON) return null;
+        }
+        return exit < -EPSILON || entry > maxDistance + EPSILON
+                ? null : Mth.clamp(entry, 0.0D, maxDistance);
     }
 
     // Add the intersecting sublevel
