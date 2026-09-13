@@ -166,12 +166,49 @@ dependencies {
     runtimeOnly "dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}"
 }
 
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+sourceSets.test {
+    compileClasspath += configurations.compileClasspath
+    runtimeClasspath += configurations.compileClasspath
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    // Vanilla bootstrap reads translations from the generated Minecraft resources.
+    classpath += fileTree(layout.buildDirectory.dir('moddev/artifacts')) {
+        include '*minecraft-resources.jar'
+    }
+}
+
 tasks.withType(JavaCompile).configureEach {
     dependsOn validateLocalDependencies
     options.encoding = 'UTF-8'
 }
 
+tasks.register('verifyLinkedKineticDocs') {
+    group = 'verification'
+    inputs.files('library-wiki.md', 'wiki-changes.md')
+    doLast {
+        String wiki = file('library-wiki.md').getText('UTF-8')
+        ['LinkedKineticBlockEntity', 'resolveKineticLink()', 'refreshKineticLink()',
+         'rebuildKineticNetworkOnLoad()'].each { name ->
+            if (!wiki.contains('`' + name + '`')) {
+                throw new GradleException('Missing linked kinetic API documentation: ' + name)
+            }
+        }
+        if (!file('wiki-changes.md').getText('UTF-8').contains('LinkedKineticBlockEntity')) {
+            throw new GradleException('Missing linked kinetic API migration notes')
+        }
+    }
+}
+
 tasks.named('check') {
+    dependsOn tasks.named('verifyLinkedKineticDocs')
     dependsOn validateLibraryBoundary
     dependsOn validateMixinConfig
 }

@@ -9,6 +9,7 @@ package com.rieno.gadgetsandgizmos.lib;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.rieno.gadgetsandgizmos.lib.compat.PhysicsStaffPowerTracker;
+import com.rieno.gadgetsandgizmos.lib.compat.PhysicsStaffWorldPowerRegistry;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
@@ -47,5 +48,6 @@ public final class PhysicsStaffPowerEvents {
     @SubscribeEvent
     public static void serverStopping(ServerStoppingEvent event) {
         PhysicsStaffPowerTracker.get(event.getServer()).beginShutdown(event.getServer());
+        PhysicsStaffWorldPowerRegistry.clear(event.getServer());
     }
 }
