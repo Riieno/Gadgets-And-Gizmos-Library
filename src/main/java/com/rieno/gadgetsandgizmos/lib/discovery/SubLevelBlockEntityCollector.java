@@ -75,6 +75,16 @@ public final class SubLevelBlockEntityCollector {
         return findSubLevel(level, subLevelId);
     }
 
+    // Resolve a target level without forcing the sublevel or its chunks to load
+    public static @Nullable Level resolveTargetLevel(@Nullable Level level, @Nullable UUID subLevelId) {
+        if (level == null || subLevelId == null) {
+            return level;
+        }
+
+        Object subLevel = getSubLevel(level, subLevelId);
+        return subLevel instanceof Level targetLevel ? targetLevel : null;
+    }
+
     // Find the sublevel
     private static @Nullable SubLevel findSubLevel(Level level, UUID subLevelId) {
         SubLevelContainer container = getContainer(level);
@@ -271,6 +281,32 @@ public final class SubLevelBlockEntityCollector {
         }
 
         return new ArrayList<>(blockEntities.values());
+    }
+
+    // Find one typed block entity across levels that are already loaded
+    public static <T extends BlockEntity> @Nullable T findLoadedIncludingSubLevels(
+            @Nullable Level level, @Nullable BlockPos pos, @Nullable Class<T> type) {
+        if (level == null || pos == null || type == null) {
+            return null;
+        }
+
+        Level rootLevel = resolveServerLevel(level);
+        if (rootLevel == null) {
+            rootLevel = level;
+        }
+        if (rootLevel.isLoaded(pos)) {
+            BlockEntity rootBlockEntity = rootLevel.getBlockEntity(pos);
+            if (type.isInstance(rootBlockEntity)) {
+                return type.cast(rootBlockEntity);
+            }
+        }
+        for (Object subLevel : getSubLevels(rootLevel)) {
+            BlockEntity blockEntity = getBlockEntity(subLevel, pos);
+            if (type.isInstance(blockEntity)) {
+                return type.cast(blockEntity);
+            }
+        }
+        return null;
     }
 
     // Find the actor block entity
