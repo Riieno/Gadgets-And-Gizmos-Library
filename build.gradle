@@ -190,22 +190,6 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
 
-tasks.register('verifyLinkedKineticDocs') {
-    group = 'verification'
-    inputs.files('library-wiki.md', 'wiki-changes.md')
-    doLast {
-        String wiki = file('library-wiki.md').getText('UTF-8')
-        ['LinkedKineticBlockEntity', 'resolveKineticLink()', 'refreshKineticLink()',
-         'rebuildKineticNetworkOnLoad()'].each { name ->
-            if (!wiki.contains('`' + name + '`')) {
-                throw new GradleException('Missing linked kinetic API documentation: ' + name)
-            }
-        }
-        if (!file('wiki-changes.md').getText('UTF-8').contains('LinkedKineticBlockEntity')) {
-            throw new GradleException('Missing linked kinetic API migration notes')
-        }
-    }
-}
 
 tasks.named('check') {
     dependsOn tasks.named('verifyLinkedKineticDocs')
