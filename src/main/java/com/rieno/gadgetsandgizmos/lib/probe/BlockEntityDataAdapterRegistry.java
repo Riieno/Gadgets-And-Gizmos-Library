@@ -17,6 +17,8 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 // Register typed block entity data adapters without reflective setter discovery
@@ -44,6 +46,26 @@ public final class BlockEntityDataAdapterRegistry {
     // Get the writable data ports
     public static Map<String, String> writableData(BlockEntity target) {
         return dataPorts(target, false);
+    }
+
+    // Get explicitly grouped readable data ports
+    public static Map<String, Map<String, String>> readableDataPortGroups(BlockEntity target) {
+        return dataPortGroups(target, true);
+    }
+
+    // Get explicitly grouped writable data ports
+    public static Map<String, Map<String, String>> writableDataPortGroups(BlockEntity target) {
+        return dataPortGroups(target, false);
+    }
+
+    // Check whether dynamic data ports are ready to be refreshed
+    public static boolean isDataSchemaReady(BlockEntity target) {
+        return !(target instanceof BlockEntityDataProvider provider) || provider.isGraphDataSchemaReady();
+    }
+
+    // Get the revision for dynamic data ports
+    public static long dataSchemaRevision(BlockEntity target) {
+        return target instanceof BlockEntityDataProvider provider ? provider.graphDataSchemaRevision() : 0L;
     }
 
     // Get the writable data options
@@ -118,6 +140,41 @@ public final class BlockEntityDataAdapterRegistry {
         return false;
     }
 
+    // Write registered data values as one batch
+    public static boolean writeAll(BlockEntity target, Map<String, GraphValue> values) {
+        if (target == null || values == null || values.isEmpty()) {
+            return false;
+        }
+        Map<String, GraphValue> remaining = new LinkedHashMap<>();
+        values.forEach((port, value) -> {
+            if (port != null && !port.isBlank() && value != null) {
+                remaining.put(port, value);
+            }
+        });
+        if (remaining.isEmpty()) {
+            return false;
+        }
+
+        boolean changed = false;
+        if (target instanceof BlockEntityDataProvider provider) {
+            Map<String, String> writable = provider.graphWritableData();
+            Map<String, GraphValue> providerValues = new LinkedHashMap<>();
+            for (String port : new ArrayList<>(remaining.keySet())) {
+                String type = writable.get(port);
+                if (type != null && !BlockEntityDataAccessPolicy.isItemContentMutation(port, type)) {
+                    providerValues.put(port, remaining.remove(port));
+                }
+            }
+            if (!providerValues.isEmpty()) {
+                changed |= provider.writeGraphValues(Collections.unmodifiableMap(providerValues));
+            }
+        }
+        for (Map.Entry<String, GraphValue> entry : remaining.entrySet()) {
+            changed |= write(target, entry.getKey(), entry.getValue());
+        }
+        return changed;
+    }
+
     // Build the readable or writable port map
     private static Map<String, String> dataPorts(BlockEntity target, boolean readable) {
         Map<String, String> ports = new LinkedHashMap<>();
@@ -144,6 +201,37 @@ public final class BlockEntityDataAdapterRegistry {
             }
         }
         return Collections.unmodifiableMap(ports);
+    }
+
+    // Get the provider ports assigned to explicit MAP groups
+    private static Map<String, Map<String, String>> dataPortGroups(BlockEntity target, boolean readable) {
+        if (!(target instanceof BlockEntityDataProvider provider)) {
+            return Map.of();
+        }
+        Map<String, String> declared = readable ? provider.graphReadableData() : provider.graphWritableData();
+        Map<String, Map<String, String>> configured = readable
+                ? provider.graphReadableDataPortGroups() : provider.graphWritableDataPortGroups();
+        if (configured == null || configured.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Map<String, String>> result = new LinkedHashMap<>();
+        Set<String> groupedPorts = new HashSet<>();
+        configured.forEach((group, ports) -> {
+            if (group == null || group.isBlank() || ports == null || ports.isEmpty()) {
+                return;
+            }
+            Map<String, String> entries = new LinkedHashMap<>();
+            ports.keySet().forEach(port -> {
+                String type = declared.get(port);
+                if (port != null && type != null && groupedPorts.add(port)) {
+                    entries.put(port, type);
+                }
+            });
+            if (!entries.isEmpty()) {
+                result.put(group, Collections.unmodifiableMap(entries));
+            }
+        });
+        return Collections.unmodifiableMap(result);
     }
 
     // Find every matching data adapter in priority order

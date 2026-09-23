@@ -27,6 +27,13 @@ public final class ReactiveCollisionAvoidance {
     private ReactiveCollisionAvoidance() {
     }
 
+    // Motion away from a surface must not inhibit propulsion that leaves it
+    public static boolean probeMotionDirection(Vec3 velocity, Vec3 travelDirection, double minimumSpeed){
+        return velocity != null && travelDirection != null
+                && velocity.lengthSqr() > Math.max(0.0D, minimumSpeed) * Math.max(0.0D, minimumSpeed)
+                && velocity.dot(travelDirection) > 0.0D;
+    }
+
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================
@@ -84,14 +91,14 @@ public final class ReactiveCollisionAvoidance {
                 .add(escape.scale(blend)), travel);
     }
 
-    // Score clearance while preferring a direction away from current travel
+    // Score clearance while preferring the least disruptive safe direction.
     private static double escapeScore(
             EscapeCandidate candidate,
             Vec3 travel,
             double minimumClearance
     ) {
-        double opposition = (1.0D - candidate.direction().dot(travel)) * 0.5D;
-        return candidate.clearance() + opposition * minimumClearance * 0.35D;
+        double alignment = (1.0D + candidate.direction().dot(travel)) * 0.5D;
+        return candidate.clearance() + alignment * minimumClearance * 0.35D;
     }
 
     // Store one reactive collision request

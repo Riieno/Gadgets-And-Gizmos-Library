@@ -52,7 +52,9 @@ public interface ScmControlMode {
             double propulsion,
             boolean avoidCollisions,
             boolean preferForward,
-            boolean reverseRecovery
+            boolean reverseRecovery,
+            double pathCurvature,
+            double steeringFeedForward
     ) {
         // Initialize the control input
         public ControlInput {
@@ -71,8 +73,29 @@ public interface ScmControlMode {
             forwardClearance = Math.max(0.0D, finite(forwardClearance));
             reverseClearance = Math.max(0.0D, finite(reverseClearance));
             travelSpeedLimit = Math.max(0.0D, finite(travelSpeedLimit));
-            propulsion = Double.isFinite(propulsion) && propulsion >= 0.0D
-                    ? Mth.clamp(propulsion, 0.0D, 1.0D) : -1.0D;
+            propulsion = ScmSpeedControl.propulsionRequest(propulsion);
+            pathCurvature = finite(pathCurvature);
+            steeringFeedForward = Mth.clamp(
+                    finite(steeringFeedForward), -1.0D, 1.0D);
+        }
+
+        // Preserve the previous complete host contract without curvature feed-forward.
+        public ControlInput(
+                Vec3 position, Vec3 velocity, Vec3 angularVelocity,
+                Vec3 forward, Vec3 up, Vec3 right,
+                Vec3 target, Vec3 pathDirection, Vec3 accumulatedError,
+                double targetSpeed, double tolerance, double distanceResponse,
+                boolean transitWaypoint,
+                double forwardClearance, double reverseClearance,
+                double travelSpeedLimit, double propulsion,
+                boolean avoidCollisions, boolean preferForward,
+                boolean reverseRecovery
+        ) {
+            this(position, velocity, angularVelocity, forward, up, right,
+                    target, pathDirection, accumulatedError,
+                    targetSpeed, tolerance, distanceResponse, transitWaypoint,
+                    forwardClearance, reverseClearance, travelSpeedLimit, propulsion,
+                    avoidCollisions, preferForward, reverseRecovery, 0.0D, 0.0D);
         }
 
         // Preserve the original host contract without opting into a dedicated propulsion group.
@@ -88,7 +111,7 @@ public interface ScmControlMode {
                     target, pathDirection, accumulatedError,
                     targetSpeed, tolerance, distanceResponse, false,
                     forwardClearance, reverseClearance, targetSpeed, -1.0D,
-                    avoidCollisions, preferForward, false);
+                    avoidCollisions, preferForward, false, 0.0D, 0.0D);
         }
 
         // Preserve explicit reverse recovery for hosts using the original speed contract.
@@ -105,7 +128,7 @@ public interface ScmControlMode {
                     target, pathDirection, accumulatedError,
                     targetSpeed, tolerance, distanceResponse, false,
                     forwardClearance, reverseClearance, targetSpeed, -1.0D,
-                    avoidCollisions, preferForward, reverseRecovery);
+                    avoidCollisions, preferForward, reverseRecovery, 0.0D, 0.0D);
         }
 
         // Check whether the host supplied a dedicated direction-independent propulsion level.

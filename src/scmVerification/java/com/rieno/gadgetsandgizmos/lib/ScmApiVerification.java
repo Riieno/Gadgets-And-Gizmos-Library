@@ -4,7 +4,10 @@ import com.rieno.gadgetsandgizmos.lib.control.IDirectControlReceiver;
 import com.rieno.gadgetsandgizmos.lib.graph.GraphValue;
 import com.rieno.gadgetsandgizmos.lib.navigation.OrientedHull;
 import com.rieno.gadgetsandgizmos.lib.navigation.GroundPathPlanner;
+import com.rieno.gadgetsandgizmos.lib.navigation.GroundSupportSafety;
 import com.rieno.gadgetsandgizmos.lib.navigation.RouteTrafficPriority;
+import com.rieno.gadgetsandgizmos.lib.navigation.SplineMagnetism;
+import com.rieno.gadgetsandgizmos.lib.navigation.WaypointSpline;
 import com.rieno.gadgetsandgizmos.lib.scm.AutopilotDebugSnapshot;
 import com.rieno.gadgetsandgizmos.lib.navigation.SablePathfinder;
 import com.rieno.gadgetsandgizmos.lib.physics.SableTransformApi;
@@ -15,6 +18,8 @@ import com.rieno.gadgetsandgizmos.lib.scm.ScmControlMode;
 import com.rieno.gadgetsandgizmos.lib.scm.ScmControlModeRegistry;
 import com.rieno.gadgetsandgizmos.lib.scm.ScmControlAxes;
 import com.rieno.gadgetsandgizmos.lib.scm.ScmSpeedControl;
+import com.rieno.gadgetsandgizmos.lib.scm.ScmSteeringMode;
+import com.rieno.gadgetsandgizmos.lib.scm.ScmTankSteering;
 import com.rieno.gadgetsandgizmos.lib.scm.ScmTarget;
 import com.rieno.gadgetsandgizmos.lib.shipping.ShipDockScheduler;
 import dev.ryanhcode.sable.companion.math.Pose3d;
@@ -86,6 +91,27 @@ public final class ScmApiVerification {
             }
         }
         require(frames == 24, "All 24 signed frames covered");
+        require(ScmSteeringMode.predict(true, 2, 2, 4, true) == ScmSteeringMode.TANK
+                        && ScmSteeringMode.FOUR_WHEEL.wheelDemand(
+                        1.0D, -4.0D, -4.0D, 4.0D) < 0.0D
+                        && ScmSteeringMode.TANK.cutsLongitudinalPower(1.0D),
+                "Steering mode prediction, axle phase or tank isolation failed");
+        require(ScmTankSteering.stableYaw(0.04D) == 0.0D
+                        && ScmTankSteering.isTurning(0.25D),
+                "Tank straight-line yaw deadband failed");
+        WaypointSpline magnetSpline = WaypointSpline.of(List.of(
+                Vec3.ZERO, new Vec3(20.0D, 0.0D, 0.0D)));
+        Vec3 magnetPosition = new Vec3(5.0D, 4.0D, 3.0D);
+        SplineMagnetism.Guidance magnet = SplineMagnetism.guide(
+                magnetPosition, magnetSpline.project(magnetPosition), 4.0D, 3.0D,
+                SplineMagnetism.AxisPolicy.HORIZONTAL);
+        require(magnet.active() && magnet.travelDirection().x > 0.0D
+                        && magnet.travelDirection().z < 0.0D
+                        && magnet.travelDirection().y == 0.0D,
+                "Horizontal spline magnet guidance failed");
+        require(GroundSupportSafety.supportedDistance(
+                        10.0D, 0.5D, 1.0D, distance -> distance < 4.0D) == 3.5D,
+                "Ground support gap detection failed");
         verifyAutopilotGroups();
         List<String> exclusiveSignals = new ArrayList<>();
         IDirectControlReceiver exclusiveReceiver = (channel, value) ->
@@ -103,10 +129,10 @@ public final class ScmApiVerification {
         ScmSpeedControl.Demand cruiseSpeed = ScmSpeedControl.plan(
                 new ScmSpeedControl.Request(8.0D, 8.0D, 8.0D,
                         0.75D, 0.35D));
-        require(cruiseSpeed.exclusive() && cruiseSpeed.acceleration() == 0.75D
+        require(cruiseSpeed.exclusive() && cruiseSpeed.acceleration() == 0.0D
                         && cruiseSpeed.deceleration() == 0.0D
                         && cruiseSpeed.brake() == 0.0D,
-                "Cruise speed did not remain on the direction-independent Acceleration channel");
+                "Acceleration did not settle after reaching the permitted speed");
         ScmSpeedControl.Demand reducedSpeed = ScmSpeedControl.plan(
                 new ScmSpeedControl.Request(8.0D, 4.0D, 8.0D,
                         0.75D, 0.35D));
@@ -309,6 +335,12 @@ public final class ScmApiVerification {
                 SablePathfinder.DebugRouteStyle.CACHED);
         require(cachedDebugRoute.style() == SablePathfinder.DebugRouteStyle.CACHED,
                 "Pathfinder cached debug routes lost their rendering style");
+        SablePathfinder.DebugRoute guidingDebugRoute = new SablePathfinder.DebugRoute(
+                "guiding-verification", Vec3.ZERO, new Vec3(6.0D, 0.0D, 0.0D),
+                route.waypoints(), route.outcome(), List.of(), true,
+                SablePathfinder.DebugRouteStyle.SPLINE_GUIDING);
+        require(guidingDebugRoute.style() == SablePathfinder.DebugRouteStyle.SPLINE_GUIDING,
+                "Pathfinder spline debug routes lost their capture stage");
 
         SablePathfinder.QueuedPlan queued = SablePathfinder.queue(detour);
         require(!queued.debugRoute("queued-verification-live").checkedSegments().isEmpty(),
@@ -449,6 +481,13 @@ public final class ScmApiVerification {
                         && Math.abs(raisedGroundProjection.distanceToRouteSqr() - 4.0D)
                         < 1.0E-8D,
                 "Ground route projection incorrectly included center-of-mass height");
+        Vec3 trackingTarget = SablePathfinder.routeLegTrackingTarget(
+                Vec3.ZERO, new Vec3(10.0D, 0.0D, 0.0D),
+                new Vec3(3.0D, 0.0D, 2.0D),
+                SablePathfinder.RouteMode.GROUND, 2.0D);
+        require(trackingTarget.distanceToSqr(
+                        new Vec3(5.0D, 0.0D, 0.0D)) < 1.0E-8D,
+                "Route tracking replaced a small cross-track error with a separate rejoin path");
         SablePathfinder.RouteProjection suffixProjection = SablePathfinder.routeProjection(
                 List.of(new SablePathfinder.Waypoint(new Vec3(4.0D, 0.0D, 0.0D),
                                 SablePathfinder.RouteMode.GROUND),
@@ -847,6 +886,12 @@ public final class ScmApiVerification {
             near(ScmControlAxes.yawTorque(up, 0.6), up.scale(-0.6));
             require(ScmControlAxes.yawRightDemand(ScmControlAxes.yawTorque(up, 0.6), up, false) > 0,
                     "Manual right action round trip");
+            require(ScmControlAxes.wheelSteeringDemand(
+                            ScmControlAxes.yawTorque(up, 0.6), up, false) < 0,
+                    "Forward right yaw uses Offroad's stable left-minus-right input sign");
+            require(ScmControlAxes.wheelSteeringDemand(
+                            ScmControlAxes.yawTorque(up, 0.6), up, true) > 0,
+                    "Reverse steering inverts the Offroad input exactly once");
             ScmControlMode.ControlOutput cruise = car.navigate(carInput(forward, forward.scale(50),
                     forward.scale(2), false));
             require(cruise.force().dot(forward) > 0, "Distant target must not be treated as one block away");

@@ -49,6 +49,8 @@ public final class SablePathfinder {
     // Completion-time shortcutting is cosmetic and must not become an unbounded collision burst.
     private static final int MAX_COMPLETED_ROUTE_SHORTCUT_VALIDATIONS = 128;
     private static final int MAX_ROUTE_GRAPH_BRANCH_SEARCH = 65_536;
+    private static final int ROUTE_REJOIN_PROJECTION_SAMPLES = 12;
+    private static final int ROUTE_REJOIN_PROJECTION_REFINEMENTS = 6;
     private static final List<GridStep> SPATIAL_STEPS = spatialSteps();
     private static final List<GridStep> PLANAR_STEPS = planarSteps();
 
@@ -193,7 +195,10 @@ public final class SablePathfinder {
                     previous, current, legStart, legEnd, padding);
             if (overlaps) {
                 furthestOverlappedLeg = legIndex;
-            } else if (furthestOverlappedLeg >= 0) {
+            } else {
+                // Only a contiguous run beginning at the active leg may move
+                // the cursor. Searching across a gap lets a crossing/looping
+                // suffix masquerade as already-travelled route geometry.
                 break;
             }
             legStart = legEnd;
@@ -249,23 +254,45 @@ public final class SablePathfinder {
             Vec3 routeOrigin,
             Vec3 currentPosition
     ) {
+        return routeProjection(waypoints, nextWaypointIndex, routeOrigin,
+                currentPosition, 0.0D);
+    }
+
+    /**
+     * Project onto the nearest continuous point in the remaining ordered route
+     * without allowing the active-leg candidate to precede committed progress.
+     */
+    public static RouteProjection routeProjection(
+            List<Waypoint> waypoints,
+            int nextWaypointIndex,
+            Vec3 routeOrigin,
+            Vec3 currentPosition,
+            double minimumFirstLegProgress
+    ) {
         List<Waypoint> route = waypoints == null ? List.of() : waypoints;
         if (route.isEmpty()) return RouteProjection.none();
         int first = Math.max(0, Math.min(nextWaypointIndex, route.size() - 1));
         Vec3 position = finite(currentPosition) ? currentPosition : Vec3.ZERO;
+        double firstFloor = Math.max(0.0D, Math.min(1.0D,
+                Double.isFinite(minimumFirstLegProgress)
+                        ? minimumFirstLegProgress : 0.0D));
         RouteProjection selected = RouteProjection.none();
         for (int index = first; index < route.size(); index++) {
             Waypoint waypoint = route.get(index);
             if (waypoint == null) continue;
+            Vec3 legStart = routeLegStart(route, index, routeOrigin, position);
             RouteProjection candidate = routeLegProjection(
-                    index, routeLegStart(route, index, routeOrigin, position),
+                    index, legStart,
                     waypoint.position(), position, waypoint.mode());
+            candidate = clampedRouteProjection(candidate, legStart,
+                    waypoint.position(), position, waypoint.mode(),
+                    index == first ? firstFloor : 0.0D);
             if (!selected.found()
                     || candidate.distanceToRouteSqr()
                     < selected.distanceToRouteSqr() - EPSILON
                     || Math.abs(candidate.distanceToRouteSqr()
                     - selected.distanceToRouteSqr()) <= EPSILON
-                    && candidate.nextWaypointIndex() > selected.nextWaypointIndex()) {
+                    && candidate.nextWaypointIndex() < selected.nextWaypointIndex()) {
                 selected = candidate;
             }
         }
@@ -312,6 +339,81 @@ public final class SablePathfinder {
         }
         return new RouteProjection(nextWaypointIndex, projection, progress,
                 distance.lengthSqr());
+    }
+
+    // Clamp one projection to an ordered progress floor and recompute its exact route position.
+    private static RouteProjection clampedRouteProjection(
+            RouteProjection projection,
+            Vec3 legStart,
+            Vec3 legEnd,
+            Vec3 currentPosition,
+            RouteMode mode,
+            double minimumProgress
+    ) {
+        if (projection == null || !projection.found()) return RouteProjection.none();
+        Vec3 current = finite(currentPosition) ? currentPosition : Vec3.ZERO;
+        Vec3 start = finite(legStart) ? legStart : current;
+        Vec3 end = finite(legEnd) ? legEnd : start;
+        double floor = Double.isFinite(minimumProgress)
+                ? Math.max(0.0D, Math.min(1.0D, minimumProgress)) : 0.0D;
+        double progress = Math.max(floor, Math.max(0.0D,
+                Math.min(1.0D, projection.legProgress())));
+        Vec3 position = start.add(end.subtract(start).scale(progress));
+        Vec3 distance = current.subtract(position);
+        if (mode == RouteMode.GROUND) {
+            distance = new Vec3(distance.x, 0.0D, distance.z);
+        }
+        return new RouteProjection(projection.nextWaypointIndex(), position,
+                progress, distance.lengthSqr());
+    }
+
+    /**
+     * Aim ahead from the live projection on one retained leg. This keeps small cross-track errors
+     * under continuous route tracking without replacing the retained route with a temporary path.
+     */
+    public static Vec3 routeLegTrackingTarget(
+            Vec3 legStart,
+            Vec3 legEnd,
+            Vec3 currentPosition,
+            RouteMode mode,
+            double lookahead
+    ) {
+        return routeLegTrackingTarget(legStart, legEnd, currentPosition,
+                mode, lookahead, 0.0D);
+    }
+
+    /**
+     * Aim ahead on one retained leg without allowing transient off-course or
+     * recovery motion to move the tracking cursor behind already-committed
+     * route progress.
+     */
+    public static Vec3 routeLegTrackingTarget(
+            Vec3 legStart,
+            Vec3 legEnd,
+            Vec3 currentPosition,
+            RouteMode mode,
+            double lookahead,
+            double minimumLegProgress
+    ) {
+        Vec3 position = finite(currentPosition) ? currentPosition : Vec3.ZERO;
+        Vec3 start = finite(legStart) ? legStart : position;
+        Vec3 end = finite(legEnd) ? legEnd : start;
+        Vec3 segment = end.subtract(start);
+        Vec3 measured = mode == RouteMode.GROUND
+                ? new Vec3(segment.x, 0.0D, segment.z) : segment;
+        double length = measured.length();
+        if (length <= EPSILON) return end;
+        RouteProjection projection = routeLegProjection(
+                0, start, end, position, mode);
+        double progress = Math.max(
+                Math.max(0.0D, Math.min(1.0D, projection.legProgress())),
+                Math.max(0.0D, Math.min(1.0D,
+                        Double.isFinite(minimumLegProgress)
+                                ? minimumLegProgress : 0.0D)));
+        double safeLookahead = Double.isFinite(lookahead)
+                ? Math.max(0.0D, lookahead) : 0.0D;
+        double lead = Math.min(1.0D, progress + safeLookahead / length);
+        return start.add(segment.scale(lead));
     }
 
     // Orient reusable safe-route geometry toward either matching endpoint.
@@ -538,7 +640,7 @@ public final class SablePathfinder {
         return new RouteRejoinScan(RouteRejoin.none(), limit, limit >= route.size());
     }
 
-    // Find the nearest remaining route leg which can accept a live rejoin.
+    // Find the first ordered route leg which can accept a live rejoin.
     public static RouteLegRejoin findRouteLegRejoin(
             @Nullable Level rootLevel,
             List<Waypoint> waypoints,
@@ -553,7 +655,7 @@ public final class SablePathfinder {
                 routeOrigin, currentPosition, safety, validator, maximum).rejoin();
     }
 
-    // Scan forward from the nearest remaining route leg using a bounded validation budget.
+    // Scan forward from the current ordered route leg using a bounded validation budget.
     public static RouteLegRejoinScan scanRouteLegRejoin(
             @Nullable Level rootLevel,
             List<Waypoint> waypoints,
@@ -564,23 +666,54 @@ public final class SablePathfinder {
             Validator validator,
             int maximumLegChecks
     ) {
+        return scanRouteLegRejoin(rootLevel, waypoints, nextWaypointIndex,
+                routeOrigin, currentPosition, safety, validator,
+                maximumLegChecks, 0.0D);
+    }
+
+    /**
+     * Scan ordered route legs while clamping the first leg to progress which
+     * the caller has already committed. This prevents a temporary excursion
+     * from authorizing a rejoin behind the vehicle's destination progress.
+     */
+    public static RouteLegRejoinScan scanRouteLegRejoin(
+            @Nullable Level rootLevel,
+            List<Waypoint> waypoints,
+            int nextWaypointIndex,
+            Vec3 routeOrigin,
+            Vec3 currentPosition,
+            Safety safety,
+            Validator validator,
+            int maximumLegChecks,
+            double minimumFirstLegProgress
+    ) {
         List<Waypoint> route = waypoints == null ? List.of() : waypoints;
         if (route.isEmpty() || validator == null) return RouteLegRejoinScan.empty();
         int requestedFirst = Math.max(0, Math.min(nextWaypointIndex, route.size() - 1));
         Vec3 current = finite(currentPosition) ? currentPosition : Vec3.ZERO;
-        RouteProjection nearest = routeProjection(
-                route, requestedFirst, routeOrigin, current);
-        if (!nearest.found()) return RouteLegRejoinScan.empty();
-        int first = nearest.nextWaypointIndex();
+        // Rejoin the current ordered leg before considering any later leg.
+        // Geometric proximity to a crossing or loop is not route progress.
+        // The active-leg floor keeps its continuous projection at or ahead of
+        // progress which the caller already committed toward the destination.
+        int first = requestedFirst;
         int maximum = Math.max(1, maximumLegChecks);
         int limit = Math.min(route.size(), first + maximum);
         Safety envelope = safety == null ? Safety.DEFAULT : safety;
         for (int index = first; index < limit; index++) {
             Waypoint endpoint = route.get(index);
             if (endpoint == null) continue;
+            Vec3 legStart = routeLegStart(route, index, routeOrigin, current);
             RouteProjection projection = routeLegProjection(
-                    index, routeLegStart(route, index, routeOrigin, current),
-                    endpoint.position(), current, endpoint.mode());
+                    index, legStart, endpoint.position(), current, endpoint.mode());
+            projection = clampedRouteProjection(projection, legStart,
+                    endpoint.position(), current, endpoint.mode(), 0.0D);
+            if (index == requestedFirst) {
+                double floor = Math.max(0.0D, Math.min(1.0D,
+                        Double.isFinite(minimumFirstLegProgress)
+                                ? minimumFirstLegProgress : 0.0D));
+                projection = clampedRouteProjection(projection, legStart,
+                        endpoint.position(), current, endpoint.mode(), floor);
+            }
             Vec3 onwardTarget = endpoint.position();
             RouteMode onwardMode = endpoint.mode();
             if (projection.position().distanceToSqr(onwardTarget) <= EPSILON
@@ -607,10 +740,8 @@ public final class SablePathfinder {
                 }
             }
             // A new obstacle may split a long retained leg after the nearest
-            // projection. Keep the leg endpoint as a local-detour rejoin when
-            // its following suffix is still live-clear. This also gives a
-            // blocked final leg a target beyond the obstruction instead of an
-            // empty scan which forces its consumer to stop forever.
+            // projection. Locate the first onward-clear continuous point past
+            // it, rather than regressing to the authored endpoint/waypoint.
             if (onward != null && onward.result() == TraversalResult.BLOCKED
                     && projection.position().distanceToSqr(endpoint.position()) > EPSILON) {
                 Waypoint suffixEndpoint = null;
@@ -624,6 +755,24 @@ public final class SablePathfinder {
                         rootLevel, endpoint.position(), suffixEndpoint.position(),
                         envelope, suffixEndpoint.mode()));
                 if (suffix != null && suffix.result() == TraversalResult.CLEAR) {
+                    RouteProjection onwardClear = firstOnwardClearProjection(
+                            rootLevel, index, legStart, endpoint.position(),
+                            projection.legProgress(), current, envelope,
+                            endpoint.mode(), validator);
+                    if (onwardClear.found()) {
+                        Traversal direct = validator.validate(new Query(
+                                rootLevel, current, onwardClear.position(),
+                                envelope, endpoint.mode()));
+                        if (direct != null
+                                && direct.result() != TraversalResult.UNAVAILABLE) {
+                            return new RouteLegRejoinScan(new RouteLegRejoin(
+                                    index, onwardClear.position(),
+                                    direct.result() == TraversalResult.CLEAR),
+                                    index + 1, index + 1 >= route.size());
+                        }
+                    }
+                    // Keep the endpoint only as the final bounded fallback
+                    // when no interior point can preserve a clear suffix.
                     Traversal direct = validator.validate(new Query(
                             rootLevel, current, endpoint.position(),
                             envelope, endpoint.mode()));
@@ -638,6 +787,62 @@ public final class SablePathfinder {
         }
         return new RouteLegRejoinScan(
                 RouteLegRejoin.none(), limit, limit >= route.size());
+    }
+
+    // Find the nearest interior point after a split which preserves the clear remainder of its leg.
+    private static RouteProjection firstOnwardClearProjection(
+            @Nullable Level rootLevel,
+            int waypointIndex,
+            Vec3 legStart,
+            Vec3 legEnd,
+            double minimumProgress,
+            Vec3 currentPosition,
+            Safety safety,
+            RouteMode mode,
+            Validator validator
+    ) {
+        Vec3 start = finite(legStart) ? legStart : Vec3.ZERO;
+        Vec3 end = finite(legEnd) ? legEnd : start;
+        Vec3 current = finite(currentPosition) ? currentPosition : start;
+        double floor = Double.isFinite(minimumProgress)
+                ? Math.max(0.0D, Math.min(1.0D, minimumProgress)) : 0.0D;
+        if (floor >= 1.0D - EPSILON) return RouteProjection.none();
+        Vec3 segment = end.subtract(start);
+        double blockedProgress = floor;
+        double clearProgress = Double.NaN;
+        for (int sample = 1; sample <= ROUTE_REJOIN_PROJECTION_SAMPLES; sample++) {
+            double progress = floor + (1.0D - floor)
+                    * sample / ROUTE_REJOIN_PROJECTION_SAMPLES;
+            Vec3 candidate = start.add(segment.scale(progress));
+            Traversal onward = validator.validate(new Query(
+                    rootLevel, candidate, end, safety, mode));
+            if (onward != null && onward.result() == TraversalResult.CLEAR) {
+                clearProgress = progress;
+                break;
+            }
+            blockedProgress = progress;
+        }
+        if (!Double.isFinite(clearProgress)) return RouteProjection.none();
+        for (int refinement = 0;
+             refinement < ROUTE_REJOIN_PROJECTION_REFINEMENTS; refinement++) {
+            double progress = (blockedProgress + clearProgress) * 0.5D;
+            Vec3 candidate = start.add(segment.scale(progress));
+            Traversal onward = validator.validate(new Query(
+                    rootLevel, candidate, end, safety, mode));
+            if (onward != null && onward.result() == TraversalResult.CLEAR) {
+                clearProgress = progress;
+            } else {
+                blockedProgress = progress;
+            }
+        }
+        if (clearProgress >= 1.0D - EPSILON) return RouteProjection.none();
+        Vec3 position = start.add(segment.scale(clearProgress));
+        Vec3 distance = current.subtract(position);
+        if (mode == RouteMode.GROUND) {
+            distance = new Vec3(distance.x, 0.0D, distance.z);
+        }
+        return new RouteProjection(waypointIndex, position,
+                clearProgress, distance.lengthSqr());
     }
 
     // Create a Sable collision validator which never loads an absent root or plot chunk
@@ -2360,10 +2565,16 @@ public final class SablePathfinder {
 
     // Select a diagnostic route's meaning without coupling the planner to a particular transport or UI.
     public enum DebugRouteStyle {
-        // A current vehicle route or live planner result; use outcome colours.
+        // A current vehicle route or live planner result; render cyan
         LIVE,
         // A completed, retained route cache; render distinctly from live steering.
-        CACHED
+        CACHED,
+        // An authored spline currently controlled only by live navigation.
+        SPLINE_UNLOCKED,
+        // An authored spline using a compliant transverse capture joint.
+        SPLINE_GUIDING,
+        // An authored spline using a rigid transverse capture joint.
+        SPLINE_RIGID
     }
 
     // Describe one bounded planner segment validation for diagnostic rendering only.

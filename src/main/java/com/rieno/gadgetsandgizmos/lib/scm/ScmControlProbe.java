@@ -31,6 +31,12 @@ public interface ScmControlProbe {
         return "";
     }
 
+    // Speed controls can regulate analogue effort independently of direction selectors
+    default boolean controlsSpeed(){ return false; }
+
+    // Check whether this compatibility probe owns the target and suppresses generic fallbacks
+    default boolean suppressesFallbackProbes() { return false; }
+
     // Get the minimum control
     double minControl();
 

@@ -156,10 +156,20 @@ public final class WaypointProgressTracker {
     public record Observation(boolean captured, boolean stalled,
                               boolean regressing, double distance,
                               double bestDistance, long ticksWithoutProgress) {
+        /** Require both physical endpoint capture and ordered curve progress. */
+        public boolean capturedAtRouteProgress(
+                double routeProgress,
+                double minimumProgress
+        ) {
+            if (!captured || !Double.isFinite(routeProgress)) return false;
+            double threshold = Double.isFinite(minimumProgress)
+                    ? clamp(minimumProgress, 0.0D, 1.0D) : 0.0D;
+            return routeProgress >= threshold;
+        }
+
         // Check whether the current route must be replaced
         public boolean requiresReplan() {
             return stalled || regressing;
         }
     }
 }
-

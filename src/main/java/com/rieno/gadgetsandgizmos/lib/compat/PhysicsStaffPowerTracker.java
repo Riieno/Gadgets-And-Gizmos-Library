@@ -127,6 +127,7 @@ public final class PhysicsStaffPowerTracker extends SavedData {
         removeLockOwnership(level.dimension(), subLevelId);
         StaffState state = staffStates.computeIfAbsent(staffId, ignored -> new StaffState(staffId, player.getUUID()));
         state.ownerId = player.getUUID();
+        state.worldPowered = false;
         state.addLock(level.dimension(), subLevelId);
         setDirty();
     }
@@ -135,7 +136,40 @@ public final class PhysicsStaffPowerTracker extends SavedData {
     public void onDragUpdated(ServerLevel level, ServerPlayer player, UUID staffId, UUID subLevelId) {
         StaffState state = staffStates.computeIfAbsent(staffId, ignored -> new StaffState(staffId, player.getUUID()));
         state.ownerId = player.getUUID();
+        state.worldPowered = false;
         state.activeDrag = new AssemblyRef(level.dimension(), subLevelId);
+    }
+
+    // Transfer retained locks to a loaded world power source
+    public void moveToWorldPower(MinecraftServer server, UUID staffId) {
+        if (server == null || staffId == null) return;
+        StaffState state = staffStates.get(staffId);
+        if (state == null) return;
+        stopDragging(server, state);
+        state.activeDrag = null;
+        state.worldPowered = true;
+        setDirty();
+    }
+
+    // Transfer retained locks from a world source back to a player's inventory staff
+    public void moveToInventoryPower(MinecraftServer server, UUID staffId, UUID ownerId) {
+        if (server == null || staffId == null || ownerId == null) return;
+        StaffState state = staffStates.get(staffId);
+        if (state == null) return;
+        state.ownerId = ownerId;
+        state.activeDrag = null;
+        state.worldPowered = false;
+        setDirty();
+    }
+
+    // Release locks retained by a removed world power source
+    public void releaseWorldPoweredStaff(MinecraftServer server, UUID staffId) {
+        if (server == null || staffId == null) return;
+        StaffState state = staffStates.get(staffId);
+        if (state == null || !state.worldPowered) return;
+        releaseState(server, state);
+        staffStates.remove(staffId);
+        setDirty();
     }
 
     // Get the locked count
@@ -230,6 +264,10 @@ public final class PhysicsStaffPowerTracker extends SavedData {
 
     // Update the state
     private boolean tickState(MinecraftServer server, StaffState state) {
+        if (state.worldPowered) {
+            return tickWorldPoweredState(server, state);
+        }
+
         ServerPlayer player = server.getPlayerList().getPlayer(state.ownerId);
         if (player == null) {
 
@@ -250,6 +288,11 @@ public final class PhysicsStaffPowerTracker extends SavedData {
         }
 
         if (state.activeDrag != null && getSubLevel(server, state.activeDrag) == null) {
+            state.activeDrag = null;
+        }
+
+        if (state.activeDrag != null && playerHasEnteredDraggedAssembly(player, state.activeDrag)) {
+            stopDragging(server, state);
             state.activeDrag = null;
         }
 
@@ -279,6 +322,45 @@ public final class PhysicsStaffPowerTracker extends SavedData {
             return false;
         }
 
+        return true;
+    }
+
+    // Check whether a player entered the assembly they are dragging
+    private static boolean playerHasEnteredDraggedAssembly(ServerPlayer player, AssemblyRef activeDrag) {
+        if (player == null || activeDrag == null || !player.serverLevel().dimension().equals(activeDrag.dimension)) {
+            return false;
+        }
+        return PhysicsStaffInteractionGuard.isPlayerOnConnectedTargetSubLevel(
+                player, activeDrag.subLevelId);
+    }
+
+    // Update a state supplied by a placed world power source
+    private boolean tickWorldPoweredState(MinecraftServer server, StaffState state) {
+        state.activeDrag = null;
+        if (state.lockedAssemblies.isEmpty()) return false;
+
+        PhysicsStaffWorldPowerSource source = PhysicsStaffWorldPowerRegistry.find(server, state.staffId);
+        if (source == null) return true;
+        PhysicsStaffWorldPowerSource.Status status = source.physicsStaffPowerStatus();
+        if (status == PhysicsStaffWorldPowerSource.Status.STARTING) return true;
+        if (status != PhysicsStaffWorldPowerSource.Status.AVAILABLE) {
+            releaseState(server, state);
+            return false;
+        }
+
+        double totalDrainPerSecond = getDrainPerSecond(server, state);
+        if (totalDrainPerSecond <= 0.0D) return true;
+
+        state.pendingAirDrain += totalDrainPerSecond / 20.0D;
+        int airCost = (int) Math.floor(state.pendingAirDrain);
+        if (airCost <= 0) return true;
+
+        state.pendingAirDrain -= airCost;
+        if (!source.consumePhysicsStaffPower(airCost)
+                || source.physicsStaffPowerStatus() != PhysicsStaffWorldPowerSource.Status.AVAILABLE) {
+            releaseState(server, state);
+            return false;
+        }
         return true;
     }
 
@@ -471,6 +553,8 @@ public final class PhysicsStaffPowerTracker extends SavedData {
         private AssemblyRef activeDrag;
         // Pending air drain
         private double pendingAirDrain;
+        // Uses a placed world power source
+        private boolean worldPowered;
 
         // Initialize the staff state
         private StaffState(UUID staffId, UUID ownerId) {
@@ -486,6 +570,7 @@ public final class PhysicsStaffPowerTracker extends SavedData {
 
             StaffState state = new StaffState(tag.getUUID("StaffId"), tag.getUUID("OwnerId"));
             state.pendingAirDrain = tag.getDouble("PendingAirDrain");
+            state.worldPowered = tag.getBoolean("WorldPowered");
             ListTag locks = tag.getList("Locks", Tag.TAG_COMPOUND);
             for (Tag lockTag : locks) {
                 CompoundTag lockData = (CompoundTag) lockTag;
@@ -505,6 +590,7 @@ public final class PhysicsStaffPowerTracker extends SavedData {
             tag.putUUID("StaffId", staffId);
             tag.putUUID("OwnerId", ownerId);
             tag.putDouble("PendingAirDrain", pendingAirDrain);
+            tag.putBoolean("WorldPowered", worldPowered);
             ListTag locks = new ListTag();
             for (Map.Entry<ResourceKey<Level>, Set<UUID>> entry : lockedAssemblies.entrySet()) {
                 for (UUID subLevelId : entry.getValue()) {

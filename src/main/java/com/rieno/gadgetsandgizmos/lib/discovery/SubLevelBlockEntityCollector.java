@@ -18,6 +18,7 @@ import dev.ryanhcode.sable.sublevel.tracking_points.SubLevelTrackingPointSavedDa
 import dev.ryanhcode.sable.sublevel.tracking_points.TrackingPoint;
 import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.TicketType;
 import net.minecraft.world.level.ChunkPos;
@@ -81,6 +82,16 @@ public final class SubLevelBlockEntityCollector {
         }
 
         return findSubLevel(level, subLevelId);
+    }
+
+    // Resolve a target level without forcing the sublevel or its chunks to load
+    public static @Nullable Level resolveTargetLevel(@Nullable Level level, @Nullable UUID subLevelId) {
+        if (level == null || subLevelId == null) {
+            return level;
+        }
+
+        Object subLevel = getSubLevel(level, subLevelId);
+        return subLevel instanceof Level targetLevel ? targetLevel : null;
     }
 
     // Find the sublevel
@@ -192,6 +203,44 @@ public final class SubLevelBlockEntityCollector {
         return new ArrayList<>(container.getAllSubLevels());
     }
 
+    /**
+     * Resolve the containing server dimension from Sable's live container or
+     * persistent tracking-point index without loading the SubLevel or any of
+     * its chunks.
+     */
+    public static @Nullable ServerLevel findContainingServerLevel(
+            @Nullable MinecraftServer server,
+            @Nullable UUID subLevelId
+    ) {
+        if (server == null || subLevelId == null) {
+            return null;
+        }
+        for (ServerLevel level : server.getAllLevels()) {
+            if (findSubLevel(level, subLevelId) != null
+                    || hasPersistedSubLevel(level, subLevelId)) {
+                return level;
+            }
+        }
+        return null;
+    }
+
+    // Check Sable's durable tracking-point index without requesting a chunk ticket.
+    private static boolean hasPersistedSubLevel(ServerLevel level, UUID subLevelId) {
+        try {
+            SubLevelTrackingPointSavedData trackingData =
+                    SubLevelTrackingPointSavedData.getOrLoad(level);
+            for (Map.Entry<UUID, TrackingPoint> entry : trackingData.getAllTrackingPoints()) {
+                TrackingPoint trackingPoint = entry.getValue();
+                if (trackingPoint != null && trackingPoint.inSubLevel()
+                        && subLevelId.equals(trackingPoint.subLevelID())) {
+                    return true;
+                }
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+        }
+        return false;
+    }
+
     // Get the container
     private static @Nullable SubLevelContainer getContainer(@Nullable Level level) {
         if (level == null) {
@@ -279,6 +328,32 @@ public final class SubLevelBlockEntityCollector {
         }
 
         return new ArrayList<>(blockEntities.values());
+    }
+
+    // Find one typed block entity across levels that are already loaded
+    public static <T extends BlockEntity> @Nullable T findLoadedIncludingSubLevels(
+            @Nullable Level level, @Nullable BlockPos pos, @Nullable Class<T> type) {
+        if (level == null || pos == null || type == null) {
+            return null;
+        }
+
+        Level rootLevel = resolveServerLevel(level);
+        if (rootLevel == null) {
+            rootLevel = level;
+        }
+        if (rootLevel.isLoaded(pos)) {
+            BlockEntity rootBlockEntity = rootLevel.getBlockEntity(pos);
+            if (type.isInstance(rootBlockEntity)) {
+                return type.cast(rootBlockEntity);
+            }
+        }
+        for (Object subLevel : getSubLevels(rootLevel)) {
+            BlockEntity blockEntity = getBlockEntity(subLevel, pos);
+            if (type.isInstance(blockEntity)) {
+                return type.cast(blockEntity);
+            }
+        }
+        return null;
     }
 
     /**

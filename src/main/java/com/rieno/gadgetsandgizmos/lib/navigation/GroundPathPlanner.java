@@ -12,11 +12,12 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 
 /**
- * Bounded reverse recovery planning for blocked steering vehicles.
+ * Bounded pose-aware recovery planning for steering vehicles.
  *
- * <p>The planner uses a bicycle model: every move is a sampled reverse arc
+ * <p>The planner uses a bicycle model: every move is a sampled forward or reverse arc
  * whose radius comes from the wheelbase and steering limit. This
  * prevents consumers from treating a car as a point which can turn in place
  * or move sideways. World, collision, wheel and suspension data remain
@@ -41,12 +42,170 @@ public final class GroundPathPlanner {
         return search(request, false);
     }
 
+    // Bound live avoidance while preserving a fully checked motion prefix
+    public static Plan planForwardRecovery(PoseRequest request, BooleanSupplier workAvailable){
+        return search(boundedRequest(request, workAvailable), DrivePolicy.FORWARD_ONLY,
+                Vec3.ZERO, 0.0D, workAvailable);
+    }
+
+    /**
+     * Build a committed multi-point recovery manoeuvre. The search may change
+     * between forward and reverse, but every gear change is represented by a
+     * distinct waypoint/curve so a controller never has to infer gear from a
+     * noisy instantaneous heading error.
+     */
+    public static Plan planRecoveryManeuver(PoseRequest request) {
+        Objects.requireNonNull(request, "request");
+        if (!request.capabilities().allowReverse()) return search(request, false);
+        return search(request, DrivePolicy.BOTH, Vec3.ZERO, 0.0D);
+    }
+
+    // Return only a certified prefix when the host's work allowance expires
+    public static Plan planRecoveryManeuver(PoseRequest request, BooleanSupplier workAvailable){
+        PoseRequest bounded = boundedRequest(request, workAvailable);
+        return search(bounded, bounded.capabilities().allowReverse()
+                ? DrivePolicy.BOTH : DrivePolicy.FORWARD_ONLY, Vec3.ZERO, 0.0D, workAvailable);
+    }
+
     /**
      * Build a forward-only bicycle path which reaches a retained route while
      * aligned with its direction of travel.
      */
     public static Plan planForwardRouteRejoin(RouteRejoinRequest request) {
         Objects.requireNonNull(request, "request");
+        return planRouteRejoin(request, false);
+    }
+
+    /**
+     * Build a direction-aligned retained-route rejoin which may use a
+     * multi-point forward/reverse manoeuvre when a forward-only turn cannot
+     * satisfy the vehicle's turning radius or the live collision envelope.
+     */
+    public static Plan planRouteRejoin(RouteRejoinRequest request) {
+        Objects.requireNonNull(request, "request");
+        return planRouteRejoin(request, request.capabilities().allowReverse());
+    }
+
+    // Bound a route merge without changing the original planner API
+    public static Plan planRouteRejoin(RouteRejoinRequest request, BooleanSupplier workAvailable){
+        Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(workAvailable, "workAvailable");
+        RouteRejoinRequest bounded = new RouteRejoinRequest(
+                request.start(), request.forward(), request.routePosition(), request.routeDirection(),
+                request.maximumRouteAdvance(), request.capabilities(), request.searchRadius(),
+                request.stepDistance(), request.maxExpansions(),
+                (start, end) -> workAvailable.getAsBoolean() && request.poseValidator().isClear(start, end));
+        return planRouteRejoin(bounded, request.capabilities().allowReverse(), workAvailable, false);
+    }
+
+    // Keep world validation inside the host's bounded operation
+    private static PoseRequest boundedRequest(PoseRequest request, BooleanSupplier workAvailable){
+        Objects.requireNonNull(request, "request");
+        Objects.requireNonNull(workAvailable, "workAvailable");
+        return new PoseRequest(request.start(), request.target(), request.forward(),
+                request.capabilities(), request.searchRadius(), request.stepDistance(),
+                request.maxExpansions(),
+                (start, end) -> workAvailable.getAsBoolean() && request.poseValidator().isClear(start, end));
+    }
+
+    /**
+     * Measure how far a route-rejoin pose may move along the current straight without crossing
+     * a real bend. Dense spline samples therefore provide a useful alignment runway instead of
+     * restricting the bicycle planner to one very short sampling chord.
+     */
+    public static double forwardRouteMergeAdvance(
+            Vec3 routePosition,
+            Vec3 routeDirection,
+            List<Vec3> routeWaypoints,
+            int firstWaypointIndex,
+            double maximumHeadingChange,
+            double maximumLateralDeviation
+    ) {
+        List<Vec3> route = routeWaypoints == null ? List.of() : routeWaypoints;
+        if (route.isEmpty()) return 0.0D;
+        Vec3 origin = finite(routePosition);
+        Vec3 direction = horizontalUnit(routeDirection, Vec3.ZERO);
+        int first = Math.max(0, Math.min(firstWaypointIndex, route.size() - 1));
+        double headingLimit = clamp(Math.abs(finite(maximumHeadingChange)), 0.0D, Math.PI);
+        double lateralLimit = Math.max(0.0D, finite(maximumLateralDeviation));
+        Vec3 previous = origin;
+        double advance = 0.0D;
+        for (int index = first; index < route.size(); index++) {
+            Vec3 next = finite(route.get(index));
+            Vec3 segment = horizontal(next.subtract(previous));
+            double segmentLength = segment.length();
+            if (segmentLength <= 1.0E-8D) {
+                previous = next;
+                continue;
+            }
+            Vec3 segmentDirection = segment.scale(1.0D / segmentLength);
+            double headingChange = Math.acos(clamp(
+                    direction.dot(segmentDirection), -1.0D, 1.0D));
+            Vec3 offset = horizontal(next.subtract(origin));
+            double along = offset.dot(direction);
+            double lateral = offset.subtract(direction.scale(along)).length();
+            if (headingChange > headingLimit || along + 1.0E-8D < advance
+                    || lateral > lateralLimit + 1.0E-8D) break;
+            advance = Math.max(advance, along);
+            previous = next;
+        }
+        return advance;
+    }
+
+    /**
+     * Resolve one ordered ground-route point ahead of a current leg projection.
+     * This preserves the route's local tangent while allowing a vehicle with a
+     * real turning radius to choose a merge point beyond dense curve samples.
+     */
+    public static RouteTarget routeTargetAhead(
+            Vec3 routeOrigin,
+            List<Vec3> routeWaypoints,
+            int nextWaypointIndex,
+            double legProgress,
+            double advance
+    ) {
+        List<Vec3> route = routeWaypoints == null ? List.of() : routeWaypoints;
+        if (route.isEmpty()) return RouteTarget.none();
+        int index = Math.max(0, Math.min(nextWaypointIndex, route.size() - 1));
+        double progress = clamp(finite(legProgress), 0.0D, 1.0D);
+        Vec3 start = index == 0 ? finite(routeOrigin) : finite(route.get(index - 1));
+        Vec3 end = finite(route.get(index));
+        Vec3 current = start.lerp(end, progress);
+        Vec3 tangent = horizontalUnit(end.subtract(current), end.subtract(start));
+        double remainingAdvance = Math.max(0.0D, finite(advance));
+        while (true) {
+            Vec3 segment = end.subtract(current);
+            double length = horizontal(segment).length();
+            if (length > 1.0E-8D && remainingAdvance <= length) {
+                double fraction = remainingAdvance / length;
+                return new RouteTarget(current.lerp(end, fraction),
+                        horizontalUnit(segment, tangent), index,
+                        progress + (1.0D - progress) * fraction, true);
+            }
+            if (length > 1.0E-8D) {
+                remainingAdvance -= length;
+                tangent = horizontalUnit(segment, tangent);
+            }
+            if (index >= route.size() - 1) {
+                return new RouteTarget(end, tangent, index, 1.0D, true);
+            }
+            current = end;
+            progress = 0.0D;
+            index++;
+            end = finite(route.get(index));
+        }
+    }
+
+    private static Plan planRouteRejoin(
+            RouteRejoinRequest request,
+            boolean allowReverse
+    ) {
+        return planRouteRejoin(request, allowReverse, () -> true, true);
+    }
+
+    // Stop expanding when no more world validation is allowed
+    private static Plan planRouteRejoin(RouteRejoinRequest request, boolean allowReverse,
+                                       BooleanSupplier workAvailable, boolean tryDirectMerge){
         Vec3 start = finite(request.start());
         Vec3 routePoint = finite(request.routePosition());
         Vec3 routeDirection = horizontalUnit(
@@ -66,10 +225,14 @@ public final class GroundPathPlanner {
                 start, target, forward, request.capabilities(),
                 request.searchRadius(), request.stepDistance(),
                 request.maxExpansions(), request.poseValidator());
-        Plan directMerge = shortestForwardPosePath(
-                movement, routeDirection, Math.toRadians(12.0D));
-        if (directMerge != null) return directMerge;
-        return search(movement, false, routeDirection, Math.toRadians(12.0D));
+        if(tryDirectMerge){
+            Plan directMerge = shortestForwardPosePath(
+                    movement, routeDirection, Math.toRadians(12.0D));
+            if(directMerge != null) return directMerge;
+        }
+        return search(movement,
+                allowReverse ? DrivePolicy.BOTH : DrivePolicy.FORWARD_ONLY,
+                routeDirection, Math.toRadians(12.0D), workAvailable);
     }
 
     // Try the four forward Dubins curve/straight/curve solutions before using the bounded search.
@@ -379,6 +542,104 @@ public final class GroundPathPlanner {
     }
 
     /**
+     * Follow a continuous waypoint spline using its travel tangent and cross-track error.
+     * The look-ahead grows while off route so a vehicle joins in the route direction instead
+     * of repeatedly steering across the spline. Curvature ahead provides the matching speed cap.
+     */
+    public static ForwardRouteControl forwardSplineControl(
+            WaypointSpline spline,
+            WaypointSpline.Projection projection,
+            Vec3 position,
+            VehicleCapabilities capabilities,
+            double lookahead,
+            double requestedSpeed,
+            double maximumLateralAcceleration,
+            double brakingAcceleration,
+            double responseSeconds,
+            double minimumCornerSpeed
+    ) {
+        Vec3 current = finite(position);
+        double maximumSpeed = Math.max(0.0D, finite(requestedSpeed));
+        if (spline == null || projection == null || !projection.found()) {
+            return ForwardRouteControl.clear(Vec3.ZERO, maximumSpeed);
+        }
+        VehicleCapabilities vehicle = capabilities == null
+                ? new VehicleCapabilities(2.0D, Math.toRadians(30.0D),
+                0.0D, 0.0D, 0.0D, true) : capabilities;
+        double baseLookahead = Math.max(0.75D, finite(lookahead));
+        double joinLookahead = Math.max(baseLookahead,
+                Math.max(vehicle.minimumTurningRadius() * 1.25D,
+                        projection.distance() * 1.75D));
+        WaypointSpline.TrackingTarget target = spline.trackingTarget(
+                projection, joinLookahead);
+        if (!target.found()) return ForwardRouteControl.clear(Vec3.ZERO, maximumSpeed);
+
+        Vec3 routeTangent = horizontalUnit(projection.tangent(),
+                target.position().subtract(current));
+        Vec3 targetTangent = horizontalUnit(target.tangent(), routeTangent);
+        // Small offsets get small corrections; larger offsets aim at the
+        // forward curve target instead of the nearest point beside the vehicle.
+        Vec3 offset = new Vec3(projection.position().x - current.x, 0.0D,
+                projection.position().z - current.z);
+        Vec3 crossTrack = offset.subtract(routeTangent.scale(offset.dot(routeTangent)));
+        Vec3 tracking = routeTangent.scale(joinLookahead).add(crossTrack);
+        if(crossTrack.length() > 0.35D) tracking = target.position().subtract(current);
+        Vec3 steering = horizontalUnit(tracking, routeTangent);
+        double previewDistance = Math.max(1.0E-6D, Math.min(
+                target.distanceAlongRoute() - projection.distanceAlongRoute(),
+                Math.max(0.5D, vehicle.wheelbase() * 0.5D)));
+        WaypointSpline.RoutePoint steeringPreview = spline.pointAtDistance(
+                projection.distanceAlongRoute() + previewDistance);
+        double signedCurvature = signedYawAngle(routeTangent,
+                horizontalUnit(steeringPreview.tangent(), targetTangent)) / previewDistance;
+        double steeringFeedForward = clamp(Math.atan(
+                vehicle.wheelbase() * signedCurvature)
+                / vehicle.maximumSteeringRadians(), -1.0D, 1.0D);
+
+        double horizon = Math.min(spline.length() - projection.distanceAlongRoute(),
+                Math.max(joinLookahead * 2.0D, vehicle.minimumTurningRadius() * 4.0D));
+        double sampleDistance = Math.max(0.35D,
+                Math.min(1.5D, vehicle.minimumTurningRadius() * 0.25D));
+        Vec3 previousTangent = routeTangent;
+        double strongestCurvature = 0.0D;
+        double strongestDistance = Double.POSITIVE_INFINITY;
+        double strongestTurn = 0.0D;
+        for (double distance = sampleDistance; distance <= horizon + 1.0E-8D;
+             distance += sampleDistance) {
+            double sampledDistance = Math.min(horizon, distance);
+            WaypointSpline.RoutePoint sample = spline.pointAtDistance(
+                    projection.distanceAlongRoute() + sampledDistance);
+            Vec3 tangent = horizontalUnit(sample.tangent(), previousTangent);
+            double turn = Math.acos(clamp(previousTangent.dot(tangent), -1.0D, 1.0D));
+            double curvature = turn / sampleDistance;
+            if (curvature > strongestCurvature) {
+                strongestCurvature = curvature;
+                strongestDistance = Math.max(0.0D, sampledDistance - sampleDistance);
+                strongestTurn = turn;
+            }
+            previousTangent = tangent;
+            if (sampledDistance >= horizon) break;
+        }
+        if (strongestCurvature <= 1.0E-6D) {
+            return ForwardRouteControl.clear(steering, maximumSpeed);
+        }
+        double radius = Math.max(vehicle.minimumTurningRadius(),
+                1.0D / strongestCurvature);
+        double cornerSpeed = Math.min(maximumSpeed, Math.max(
+                Math.max(0.0D, finite(minimumCornerSpeed)),
+                Math.sqrt(Math.max(1.0E-6D, finite(maximumLateralAcceleration)) * radius)));
+        double braking = Math.max(1.0E-6D, finite(brakingAcceleration));
+        double responseDistance = braking * Math.max(0.0D, finite(responseSeconds));
+        double permittedSpeed = -responseDistance + Math.sqrt(
+                responseDistance * responseDistance + cornerSpeed * cornerSpeed
+                        + 2.0D * braking * Math.max(0.0D, strongestDistance));
+        return new ForwardRouteControl(steering, target.segmentIndex(), target.position(),
+                strongestDistance, strongestTurn, radius, cornerSpeed,
+                Math.min(maximumSpeed, permittedSpeed), signedCurvature,
+                steeringFeedForward, true);
+    }
+
+    /**
      * Return whether a cached reverse manoeuvre should be replaced by direct
      * forward travel. The host supplies clearance from its own full-hull probe.
      */
@@ -417,15 +678,25 @@ public final class GroundPathPlanner {
     }
 
     private static Plan search(PoseRequest request, boolean reverse) {
-        return search(request, reverse, Vec3.ZERO, 0.0D);
+        return search(request,
+                reverse ? DrivePolicy.REVERSE_ONLY : DrivePolicy.FORWARD_ONLY,
+                Vec3.ZERO, 0.0D);
     }
 
     private static Plan search(
             PoseRequest request,
-            boolean reverse,
+            DrivePolicy drivePolicy,
             Vec3 requestedCompletionHeading,
             double completionHeadingTolerance
     ) {
+        return search(request, drivePolicy, requestedCompletionHeading,
+                completionHeadingTolerance, () -> true);
+    }
+
+    // Retain accepted geometry even when expensive validation has exhausted its allowance
+    private static Plan search(PoseRequest request, DrivePolicy drivePolicy,
+                               Vec3 requestedCompletionHeading, double completionHeadingTolerance,
+                               BooleanSupplier workAvailable){
         Vec3 start = finite(request.start());
         Vec3 requestedTarget = finite(request.target());
         Vec3 target = new Vec3(requestedTarget.x, start.y, requestedTarget.z);
@@ -453,18 +724,17 @@ public final class GroundPathPlanner {
         SearchNode bestSafe = null;
         double bestSafeScore = Double.POSITIVE_INFINITY;
         int expansions = 0;
-        while (!frontier.isEmpty() && expansions++ < request.maxExpansions()) {
+        while (!frontier.isEmpty() && expansions++ < request.maxExpansions()
+                && workAvailable.getAsBoolean()) {
             QueueEntry entry = frontier.poll();
             State current = states.get(entry.node());
             if (current == null || entry.cost() > current.cost() + 1.0E-8D) {
                 continue;
             }
             if (!closed.add(entry.node())) continue;
-            if (!entry.node().equals(origin)) {
-                if (entry.node().reverse() == reverse && entry.score() < bestSafeScore) {
-                    bestSafe = entry.node();
-                    bestSafeScore = entry.score();
-                }
+            if (!entry.node().equals(origin) && entry.score() < bestSafeScore) {
+                bestSafe = entry.node();
+                bestSafeScore = entry.score();
             }
             if (!entry.node().equals(origin)
                     && canFinish(current, target, request,
@@ -476,33 +746,49 @@ public final class GroundPathPlanner {
                 return buildPlan(entry.node(), states, target, entry.node().reverse(), true);
             }
 
-            for (int turn : TURN_CHOICES) {
-                Transition transition = transition(
-                        current, reverse, turn, step, request.capabilities());
-                SearchNode next = key(start, transition.end(), transition.heading(), reverse, grid);
-                if (closed.contains(next)
-                        || !withinWindow(next, request.searchRadius(), grid)) {
-                    continue;
+            for (boolean reverse : drivePolicy.directions(current.reverse())) {
+                for (int turn : TURN_CHOICES) {
+                    if(!workAvailable.getAsBoolean()) break;
+                    Transition transition = transition(
+                            current, reverse, turn, step, request.capabilities());
+                    SearchNode next = key(start, transition.end(), transition.heading(), reverse, grid);
+                    if (closed.contains(next)
+                            || !withinWindow(next, request.searchRadius(), grid)) {
+                        continue;
+                    }
+                    if (!trace(transition, request.poseValidator())) continue;
+                    boolean gearChanged = !entry.node().equals(origin)
+                            && reverse != current.reverse();
+                    double moveCost = transition.length() * (reverse ? 1.16D : 1.0D)
+                            + (turn == 0 ? 0.0D : step * 0.12D)
+                            + (gearChanged ? step * 1.10D : 0.0D)
+                            + (entry.node().equals(origin) && reverse ? step * 0.20D : 0.0D);
+                    double cost = current.cost() + moveCost;
+                    State known = states.get(next);
+                    if (known != null && known.cost() <= cost + 1.0E-8D) continue;
+                    State accepted = new State(transition.end(), transition.heading(), cost,
+                            entry.node(), transition.samples(), transition.curve(), reverse);
+                    states.put(next, accepted);
+                    double score = cost + routePoseHeuristic(
+                            transition.end(), target, transition.heading(), reverse,
+                            completionHeading,
+                            request.capabilities().minimumTurningRadius());
+                    frontier.add(new QueueEntry(next, cost, score));
+                    // Every accepted successor has already passed the exact
+                    // pose sweep. Retain the best one immediately so even a
+                    // search which exhausts its budget while expanding the
+                    // origin returns actionable safe motion instead of an
+                    // empty plan and a parked vehicle.
+                    if (score < bestSafeScore) {
+                        bestSafe = next;
+                        bestSafeScore = score;
+                    }
                 }
-                if (!trace(transition, request.poseValidator())) continue;
-                double moveCost = transition.length() * (reverse ? 1.28D : 1.0D)
-                        + (turn == 0 ? 0.0D : step * 0.12D)
-                        + (reverse && !entry.node().reverse() ? step * 0.55D : 0.0D);
-                double cost = current.cost() + moveCost;
-                State known = states.get(next);
-                if (known != null && known.cost() <= cost + 1.0E-8D) continue;
-                State accepted = new State(transition.end(), transition.heading(), cost,
-                        entry.node(), transition.samples(), transition.curve(), reverse);
-                states.put(next, accepted);
-                frontier.add(new QueueEntry(next, cost,
-                        cost + routePoseHeuristic(
-                                transition.end(), target, transition.heading(), reverse,
-                                completionHeading,
-                                request.capabilities().minimumTurningRadius())));
             }
         }
         return bestSafe == null ? new Plan(List.of(), List.of(), false, false)
-                : buildPlan(bestSafe, states, null, reverse, false);
+                : buildPlan(bestSafe, states, null,
+                states.get(bestSafe).reverse(), false);
     }
 
     private static boolean canFinish(
@@ -744,6 +1030,14 @@ public final class GroundPathPlanner {
                 ? Vec3.ZERO : new Vec3(value.x, 0.0D, value.z);
     }
 
+    // Measure horizontal yaw with the same physical sign used by SCM torque controls.
+    private static double signedYawAngle(Vec3 from, Vec3 to) {
+        Vec3 first = horizontalUnit(from, Vec3.ZERO);
+        Vec3 second = horizontalUnit(to, first);
+        return Math.atan2(first.z * second.x - first.x * second.z,
+                clamp(first.dot(second), -1.0D, 1.0D));
+    }
+
     private static Vec3 projectToSegment(Vec3 point, Vec3 start, Vec3 end) {
         Vec3 segment = end.subtract(start);
         double lengthSqr = segment.lengthSqr();
@@ -806,8 +1100,27 @@ public final class GroundPathPlanner {
             double tangentDistance,
             double cornerSpeed,
             double permittedSpeed,
+            double signedCurvature,
+            double steeringFeedForward,
             boolean turnAhead
     ) {
+        // Preserve the original route-control result contract for integrations without curvature input.
+        public ForwardRouteControl(
+                Vec3 steeringDirection,
+                int cornerWaypointIndex,
+                Vec3 corner,
+                double distanceToCorner,
+                double turnRadians,
+                double tangentDistance,
+                double cornerSpeed,
+                double permittedSpeed,
+                boolean turnAhead
+        ) {
+            this(steeringDirection, cornerWaypointIndex, corner,
+                    distanceToCorner, turnRadians, tangentDistance,
+                    cornerSpeed, permittedSpeed, 0.0D, 0.0D, turnAhead);
+        }
+
         public ForwardRouteControl {
             steeringDirection = horizontalUnit(steeringDirection, Vec3.ZERO);
             cornerWaypointIndex = Math.max(-1, cornerWaypointIndex);
@@ -818,6 +1131,8 @@ public final class GroundPathPlanner {
             tangentDistance = Math.max(0.0D, finite(tangentDistance));
             cornerSpeed = Math.max(0.0D, finite(cornerSpeed));
             permittedSpeed = Math.max(0.0D, finite(permittedSpeed));
+            signedCurvature = finite(signedCurvature);
+            steeringFeedForward = clamp(finite(steeringFeedForward), -1.0D, 1.0D);
         }
 
         // Return unconstrained straight-route control.
@@ -825,7 +1140,7 @@ public final class GroundPathPlanner {
             double permitted = Math.max(0.0D, finite(speed));
             return new ForwardRouteControl(steeringDirection, -1, Vec3.ZERO,
                     Double.POSITIVE_INFINITY, 0.0D, 0.0D,
-                    permitted, permitted, false);
+                    permitted, permitted, 0.0D, 0.0D, false);
         }
     }
 
@@ -866,6 +1181,22 @@ public final class GroundPathPlanner {
         }
     }
 
+    // Rotate one horizontal direction toward another without changing its length.
+    private static Vec3 rotateTowards(Vec3 from, Vec3 to, double maximumRadians) {
+        Vec3 start = horizontalUnit(from, to);
+        Vec3 target = horizontalUnit(to, start);
+        double angle = Math.acos(clamp(start.dot(target), -1.0D, 1.0D));
+        if (angle <= maximumRadians) return target;
+        double signed = Math.atan2(start.x * target.z - start.z * target.x,
+                start.dot(target));
+        double turn = Math.copySign(Math.max(0.0D, finite(maximumRadians)), signed);
+        double cosine = Math.cos(turn);
+        double sine = Math.sin(turn);
+        return horizontalUnit(new Vec3(
+                start.x * cosine - start.z * sine, 0.0D,
+                start.x * sine + start.z * cosine), start);
+    }
+
     /** Inputs for a direction-aligned retained-route rejoin. */
     public record RouteRejoinRequest(
             Vec3 start,
@@ -897,6 +1228,27 @@ public final class GroundPathPlanner {
         }
     }
 
+    /** A point and tangent on an ordered route, suitable for a pose-aligned merge. */
+    public record RouteTarget(
+            Vec3 position,
+            Vec3 direction,
+            int nextWaypointIndex,
+            double legProgress,
+            boolean found
+    ) {
+        public RouteTarget {
+            position = finite(position);
+            direction = horizontalUnit(direction, Vec3.ZERO);
+            nextWaypointIndex = Math.max(-1, nextWaypointIndex);
+            legProgress = clamp(finite(legProgress), 0.0D, 1.0D);
+        }
+
+        /** Return an unavailable ordered-route target. */
+        public static RouteTarget none() {
+            return new RouteTarget(Vec3.ZERO, Vec3.ZERO, -1, 0.0D, false);
+        }
+    }
+
     // Validate the complete ground vehicle sweep between two poses
     @FunctionalInterface
     public interface PoseValidator {
@@ -916,6 +1268,21 @@ public final class GroundPathPlanner {
     /** A logical control checkpoint at the end of a collision-tested maneuver. */
     public record Waypoint(Vec3 position, boolean reverse) {
         public Waypoint { position = position == null ? Vec3.ZERO : position; }
+    }
+
+    // Brake at the next gear change or committed path end, not at a moving steering sample
+    public static double remainingManeuverDistance(Vec3 position, List<Curve> curves, int curveIndex){
+        if(curves == null || curveIndex < 0 || curveIndex >= curves.size()) return 0.0D;
+        Curve current = curves.get(curveIndex);
+        double remaining = current.length() * (1.0D - current.nearestFraction(finite(position)));
+        for(int idx = curveIndex + 1; idx < curves.size(); idx++){
+            Curve next = curves.get(idx);
+            if(next.reverse() != current.reverse()
+                    || current.end().distanceToSqr(next.start()) > 0.01D) break;
+            remaining += next.length();
+            current = next;
+        }
+        return Math.max(0.0D, remaining);
     }
 
     /**
@@ -1069,6 +1436,20 @@ public final class GroundPathPlanner {
         }
 
         public static Plan empty() { return new Plan(List.of(), List.of(), List.of(), true, false); }
+    }
+
+    private enum DrivePolicy {
+        FORWARD_ONLY,
+        REVERSE_ONLY,
+        BOTH;
+
+        private boolean[] directions(boolean currentReverse) {
+            return switch (this) {
+                case FORWARD_ONLY -> new boolean[]{false};
+                case REVERSE_ONLY -> new boolean[]{true};
+                case BOTH -> new boolean[]{currentReverse, !currentReverse};
+            };
+        }
     }
 
     private record SearchNode(int x, int z, int heading, boolean reverse) { }

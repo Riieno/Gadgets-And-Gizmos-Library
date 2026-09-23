@@ -86,12 +86,18 @@ public abstract class SimulatedPhysicsStaffActionPacketMixin {
                     .clearActiveDrag(serverPlayer.getUUID());
         }
 
-        if (!PhysicsStaffInteractionGuard.authorizeTarget(serverPlayer, subLevel)) {
-            PhysicsStaffPowerTracker.get(serverPlayer.server).clearActiveDrag(serverPlayer.getUUID());
-            PhysicsStaffServerHandler.get((ServerLevel) serverPlayer.level())
-                    .stopDragging(serverPlayer.getUUID());
-            callbackInfo.cancel();
-            return;
+        if (action != PhysicsStaffAction.STOP_DRAG) {
+            boolean isMovementAction = action == PhysicsStaffAction.START_DRAG;
+            boolean targetAuthorized = isMovementAction
+                    ? PhysicsStaffInteractionGuard.authorizeMovementTarget(serverPlayer, subLevel)
+                    : PhysicsStaffInteractionGuard.authorizeTarget(serverPlayer, subLevel);
+            if (!targetAuthorized) {
+                PhysicsStaffPowerTracker.get(serverPlayer.server).clearActiveDrag(serverPlayer.getUUID());
+                PhysicsStaffServerHandler.get((ServerLevel) serverPlayer.level())
+                        .stopDragging(serverPlayer.getUUID());
+                callbackInfo.cancel();
+                return;
+            }
         }
 
         if (!holdingPoweredStaff) {

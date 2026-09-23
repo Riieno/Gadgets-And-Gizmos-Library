@@ -9,11 +9,11 @@ package com.rieno.gadgetsandgizmos.lib.mixin;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.rieno.gadgetsandgizmos.lib.kinetics.GadgetsNGizmosKineticGuard;
+import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticHostBlock;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticPos;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticProvider;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
-import com.llamalad7.mixinextras.sugar.Local;
 import com.simibubi.create.content.kinetics.base.GeneratingKineticBlockEntity;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
 import com.simibubi.create.foundation.blockEntity.SmartBlockEntity;
@@ -142,22 +142,28 @@ public abstract class VirtualKineticBlockEntityMixin extends SmartBlockEntity {
         }
     }
 
-    // Switch the virtual kinetics
-    @Inject(method = "switchToBlockState", at = @At("TAIL"))
-    private static void ct$switchVirtualKinetics(Level world, BlockPos pos, BlockState state, CallbackInfo ci,
-                                                 @Local BlockEntity be) {
-        if (!(be instanceof VirtualKineticProvider provider)) {
+    // Prepare the virtual kinetics for a block state switch
+    @Inject(method = "switchToBlockState", at = @At("HEAD"))
+    private static void ct$prepareVirtualKineticSwitch(Level world, BlockPos pos, BlockState state, CallbackInfo ci) {
+        if (world.isClientSide) {
             return;
         }
+        BlockState prev = world.getBlockState(pos);
+        BlockEntity be = world.getBlockEntity(pos);
+        if (prev == state || !(be instanceof VirtualKineticProvider provider)) return;
+
+        boolean equivalent = state.getBlock() instanceof VirtualKineticHostBlock host
+                && host.ct$areVirtualKineticStatesEquivalent(prev, state);
         for (KineticBlockEntity virtual : provider.ct$getVirtualKinetics()) {
-            if (!virtual.hasNetwork()) {
-                continue;
-            }
-            virtual.getOrCreateNetwork().remove(virtual);
-            virtual.detachKinetics();
-            virtual.removeSource();
-            if (virtual instanceof GeneratingKineticBlockEntity generating) {
-                generating.reActivateSource = true;
+            if (!equivalent) {
+                if (virtual.hasNetwork()) {
+                    virtual.getOrCreateNetwork().remove(virtual);
+                }
+                virtual.detachKinetics();
+                virtual.removeSource();
+                if (virtual instanceof GeneratingKineticBlockEntity generating) {
+                    generating.reActivateSource = true;
+                }
             }
         }
     }

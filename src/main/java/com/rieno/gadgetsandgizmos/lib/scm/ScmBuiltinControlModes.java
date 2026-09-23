@@ -14,7 +14,7 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.Set;
 
-// Define the built-in airship, plane and car SCM control modes
+// Define the built-in airship, ground/sea and plane SCM control modes
 public final class ScmBuiltinControlModes {
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -26,9 +26,13 @@ public final class ScmBuiltinControlModes {
 
     public static final String NAMESPACE = "createthrusters";
     public static final ResourceLocation AIRSHIP_ID = id("airship");
+    public static final ResourceLocation GROUND_SEA_ID = id("car");
     public static final ResourceLocation PLANE_ID = id("plane");
-    public static final ResourceLocation CAR_ID = id("car");
-    private static final Set<ResourceLocation> BUILTINS = Set.of(AIRSHIP_ID, PLANE_ID, CAR_ID);
+    public static final ResourceLocation IK_ID = id("ik");
+    /** Retain the original serialized API name for saved profiles and integrations. */
+    public static final ResourceLocation CAR_ID = GROUND_SEA_ID;
+    private static final Set<ResourceLocation> BUILTINS = Set.of(
+            AIRSHIP_ID, GROUND_SEA_ID, PLANE_ID, IK_ID);
     private static final double MIN_CLEARANCE = 3.0D;
 
     /*--------------------------------------------------------##---------------------------------------------------------
@@ -46,8 +50,9 @@ public final class ScmBuiltinControlModes {
     // Register the defaults
     static void registerDefaults() {
         ScmControlModeRegistry.register(new AirshipMode());
+        ScmControlModeRegistry.register(new GroundSeaMode());
         ScmControlModeRegistry.register(new PlaneMode());
-        ScmControlModeRegistry.register(new CarMode());
+        ScmControlModeRegistry.register(new LeggedMode());
     }
 
     /*--------------------------------------------------------##---------------------------------------------------------
@@ -135,21 +140,21 @@ public final class ScmBuiltinControlModes {
         }
     }
 
-    // Handle the car mode
-    private static final class CarMode implements ScmControlMode {
+    // Handle the ground/sea mode
+    private static final class GroundSeaMode implements ScmControlMode {
         // Get the id
         @Override
         public ResourceLocation id() {
-            return CAR_ID;
+            return GROUND_SEA_ID;
         }
 
-        // Get the car mode display name
+        // Get the ground/sea mode display name
         @Override
         public String displayName() {
-            return "Car";
+            return "Ground/Sea";
         }
 
-        // Navigate the car mode
+        // Navigate the ground/sea mode
         @Override
         public ControlOutput navigate(ControlInput input) {
             Vec3 worldUp = new Vec3(0.0D, 1.0D, 0.0D);
@@ -195,8 +200,13 @@ public final class ScmBuiltinControlModes {
             Vec3 facingPath = dir < 0.0D ? path.scale(-1.0D) : path;
             double yawError = signedAngle(forward, facingPath, worldUp);
             double yawRate = input.angularVelocity().dot(worldUp);
-            double steering = Mth.clamp(yawError * 1.5D - yawRate * 0.65D, -1.0D, 1.0D);
-            if (Math.abs(throttle) < 0.04D && Math.abs(yawError) > 0.2D) {
+            // Retain the heading request while damping the measured turn rate.
+            // This is a steering PD term, not a binary left/right selector.
+            double steering = ScmControlAxes.groundSteeringDemand(
+                    yawError, yawRate, input.steeringFeedForward());
+            if (Math.abs(throttle) < 0.04D && Math.abs(yawError) > 0.2D
+                    && Math.abs(currentSpeed) < 0.25D && desiredSpeed > 1.0E-4D
+                    && (!input.hasPropulsionRequest() || input.propulsion() > 1.0E-5D)) {
                 throttle = dir * 0.12D;
             }
             return new ControlOutput(
@@ -331,6 +341,29 @@ public final class ScmBuiltinControlModes {
         // Deceleration channel; this value never changes the selected gear.
         double brakingBand = Math.max(0.25D, limit * 0.15D);
         return -Mth.clamp(-error / brakingBand, 0.0D, 1.0D);
+    }
+
+    // Handle legged locomotion body guidance
+    private static final class LeggedMode implements ScmControlMode {
+        private final GroundSeaMode ground = new GroundSeaMode();
+
+        // Get the id
+        @Override
+        public ResourceLocation id() {
+            return IK_ID;
+        }
+
+        // Get the legged mode display name
+        @Override
+        public String displayName() {
+            return "IK";
+        }
+
+        // Reuse ground guidance while the host applies each solved limb target
+        @Override
+        public ControlOutput navigate(ControlInput input) {
+            return ground.navigate(input);
+        }
     }
 
     // Get the signed angle

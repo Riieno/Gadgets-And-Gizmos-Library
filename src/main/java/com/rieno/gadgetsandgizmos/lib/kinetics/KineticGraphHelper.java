@@ -10,6 +10,7 @@ package com.rieno.gadgetsandgizmos.lib.kinetics;
 
 import com.simibubi.create.content.kinetics.RotationPropagator;
 import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
+import net.minecraft.core.BlockPos;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.reflect.Method;
@@ -62,6 +63,16 @@ public final class KineticGraphHelper {
         } catch (ReflectiveOperationException ignored) {
             return Collections.emptyList();
         }
+    }
+
+    // Add the diagonal positions used by large cogwheel meshing
+    public static List<BlockPos> addLargeCogwheelPropagationLocations(BlockPos origin, List<BlockPos> neighbours) {
+        BlockPos.betweenClosedStream(new BlockPos(-1, -1, -1), new BlockPos(1, 1, 1))
+                .filter(offset -> offset.distSqr(BlockPos.ZERO) == 2.0D)
+                .map(origin::offset)
+                .filter(pos -> !neighbours.contains(pos))
+                .forEach(neighbours::add);
+        return neighbours;
     }
 
     // Get the rotation speed modifier

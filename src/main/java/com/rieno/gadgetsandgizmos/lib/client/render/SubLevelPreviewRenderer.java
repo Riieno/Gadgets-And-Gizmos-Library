@@ -6,6 +6,8 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.blaze3d.vertex.VertexSorting;
+import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
+import dev.engine_room.flywheel.api.visualization.VisualizationManager;
 import dev.ryanhcode.sable.api.sublevel.ClientSubLevelContainer;
 import dev.ryanhcode.sable.sublevel.ClientSubLevel;
 import dev.ryanhcode.sable.sublevel.plot.PlotChunkHolder;
@@ -124,14 +126,14 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
     }
 
     /**
-     * Optional renderer for details owned by an optional mod. The normal
-     * block-entity renderer is still called afterwards unless Create's
-     * Flywheel-only kinetic fallback rendered the entity itself.
+     * Optional renderer for details owned by an optional mod. Returning true
+     * marks the kinetic geometry as complete, preventing the shared fallback
+     * from drawing a second copy of the block model.
      */
     @FunctionalInterface
     public interface BlockEntityPreviewDecorator {
-        void render(BlockEntity blockEntity, BlockState state, PoseStack pose,
-                    MultiBufferSource buffers, int light, int overlay);
+        boolean render(BlockEntity blockEntity, BlockState state, PoseStack pose,
+                       MultiBufferSource buffers, int light, int overlay);
     }
 
     private record RayHit(float distance, Direction face) {
@@ -210,7 +212,6 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         Map<BlockKey, SnapshotBlock> normalized = new LinkedHashMap<>();
         if (snapshot != null) for (SnapshotBlock block : snapshot) {
             if (block == null || block.subLevelId() == null || block.state().isAir()
-                    || block.state().getRenderShape() == RenderShape.INVISIBLE
                     || normalized.size() >= maximumBlocks) {
                 continue;
             }
@@ -438,7 +439,8 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
                     chunk.findBlocks(state -> !state.isAir(), (position, state) -> {
                         if (blocks.size() >= maximumBlocks) {
                             truncated = true;
-                        } else if (state.getRenderShape() != RenderShape.INVISIBLE) {
+                        } else if (state.getRenderShape() != RenderShape.INVISIBLE
+                                || state.hasBlockEntity()) {
                             blocks.add(new PreviewBlock(bodyId, position.immutable(), state));
                         }
                     });
@@ -734,12 +736,25 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
                     net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY, data, null);
         }
         if (entity != null) try {
-            if (!CreateKineticPreviewRenderer.render(entity, block.state(), pose, buffers, LightTexture.FULL_BRIGHT)) {
-                for (BlockEntityPreviewDecorator decorator : decorators) {
-                    decorator.render(entity, block.state(), pose, buffers, LightTexture.FULL_BRIGHT,
-                            net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY);
+            // Flywheel deliberately suppresses Create's compatibility BERs in
+            // a visualized level. Give integration-owned renderers first claim
+            // so the shared fallback cannot duplicate their static housing.
+            boolean decorated = false;
+            for (BlockEntityPreviewDecorator decorator : decorators) {
+                if (decorator.render(entity, block.state(), pose, buffers, LightTexture.FULL_BRIGHT,
+                        net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY)) {
+                    decorated = true;
+                    break;
                 }
-                minecraft.getBlockEntityRenderDispatcher().renderItem(entity, pose, buffers, LightTexture.FULL_BRIGHT,
+            }
+            if (!decorated) {
+                CreateKineticPreviewRenderer.render(
+                        entity, block.state(), pose, buffers, LightTexture.FULL_BRIGHT);
+            }
+            if (!(entity instanceof KineticBlockEntity)
+                    || !VisualizationManager.supportsVisualization(entity.getLevel())) {
+                minecraft.getBlockEntityRenderDispatcher().renderItem(entity, pose, buffers,
+                        LightTexture.FULL_BRIGHT,
                         net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY);
             }
         } catch (RuntimeException | LinkageError ignored) {
@@ -756,8 +771,13 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         pose.translate(0.5F, 0.5F, 0.5F);
         pose.mulPose(orientation);
         pose.translate(-0.5F, -0.5F, -0.5F);
-        minecraft.getBlockRenderer().renderSingleBlock(block.state(), pose, buffers, LightTexture.FULL_BRIGHT,
-                net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY, ModelData.EMPTY, null);
+        if (!CreateBeltPreviewRenderer.render(block.state(), pose, buffers,
+                LightTexture.FULL_BRIGHT)) {
+            minecraft.getBlockRenderer().renderSingleBlock(block.state(), pose, buffers,
+                    LightTexture.FULL_BRIGHT,
+                    net.minecraft.client.renderer.texture.OverlayTexture.NO_OVERLAY,
+                    ModelData.EMPTY, null);
+        }
         pose.popPose();
     }
 

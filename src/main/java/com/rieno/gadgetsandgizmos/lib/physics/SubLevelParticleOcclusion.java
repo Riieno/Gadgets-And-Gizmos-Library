@@ -106,7 +106,7 @@ public final class SubLevelParticleOcclusion {
         Vec3 worldDirection = directionWorld.normalize();
         Vec3 endWorld = startWorld.add(worldDirection.scale(maxDistance));
         AABB worldBounds = new AABB(startWorld, endWorld).inflate(1.0D);
-        List<Object> subLevels = intersectingSubLevels(rootLevel, worldBounds);
+        List<Object> subLevels = intersectingSubLevels(rootLevel, worldBounds, null);
         if (containingSubLevel != null && !containsIdentity(subLevels, containingSubLevel)) {
             subLevels.add(0, containingSubLevel);
         }
@@ -129,6 +129,18 @@ public final class SubLevelParticleOcclusion {
             List<Object> subLevels,
             @Nullable Map<BlockGetter, LoadedBlockLookup> sharedLookups
     ) {
+        return findBlockingDistanceAcrossLevels(rootLevel, startWorld, endWorld, worldDirection,
+                maxDistance, includeRootLevel, excludedSubLevelIds, includeTaggedTransparentBlocks,
+                subLevels, sharedLookups, 0.0D);
+    }
+
+    // Resting contact may be ignored only when the requested movement leaves it
+    private static double findBlockingDistanceAcrossLevels(
+            Level rootLevel, Vec3 startWorld, Vec3 endWorld, Vec3 worldDirection,
+            double maxDistance, boolean includeRootLevel, Set<UUID> excludedSubLevelIds,
+            boolean includeTaggedTransparentBlocks, List<Object> subLevels,
+            @Nullable Map<BlockGetter, LoadedBlockLookup> sharedLookups, double initialContactAllowance
+    ){
         if (!includeRootLevel && subLevels.isEmpty()) {
             return maxDistance;
         }
@@ -136,7 +148,7 @@ public final class SubLevelParticleOcclusion {
         Double nearest = includeRootLevel
                 ? findBlockingDistanceInLevel(rootLevel, null, startWorld, endWorld,
                         startWorld, worldDirection, maxDistance, includeTaggedTransparentBlocks,
-                        loadedBlockLookup(rootLevel, sharedLookups))
+                        loadedBlockLookup(rootLevel, sharedLookups), initialContactAllowance)
                 : null;
 
         for (Object subLevel : subLevels) {
@@ -158,7 +170,7 @@ public final class SubLevelParticleOcclusion {
 
             Double subLevelDistance = findBlockingDistanceInLevel(subLevelLevel, subLevel, localStart, localEnd,
                     startWorld, worldDirection, maxDistance, includeTaggedTransparentBlocks,
-                    loadedBlockLookup(subLevelLevel, sharedLookups));
+                    loadedBlockLookup(subLevelLevel, sharedLookups), initialContactAllowance);
             nearest = nearestDistance(nearest, subLevelDistance);
         }
 
@@ -196,6 +208,18 @@ public final class SubLevelParticleOcclusion {
             int maximumProbesPerBounds,
             @Nullable ProbeCache probeCache
     ) {
+        return findProbedBoundsBlockingDistance(rootLevel, containingSubLevel, directionWorld,
+                maxDistance, movingBoundsWorld, includeRootLevel, excludedSubLevelIds,
+                includeTaggedTransparentBlocks, maximumProbesPerBounds, probeCache, 0.0D);
+    }
+
+    // Contact-aware probes allow takeoff without changing ordinary pathfinder queries
+    public static double findProbedBoundsBlockingDistance(
+            Level rootLevel, @Nullable Object containingSubLevel, Vec3 directionWorld,
+            double maxDistance, List<AABB> movingBoundsWorld, boolean includeRootLevel,
+            Set<UUID> excludedSubLevelIds, boolean includeTaggedTransparentBlocks,
+            int maximumProbesPerBounds, @Nullable ProbeCache probeCache, double initialContactAllowance
+    ){
         if (rootLevel == null || directionWorld == null
                 || directionWorld.lengthSqr() < EPSILON || maxDistance <= 0.0D
                 || movingBoundsWorld == null || movingBoundsWorld.isEmpty()) {
@@ -214,17 +238,19 @@ public final class SubLevelParticleOcclusion {
         if (queryBounds == null) {
             return maxDistance;
         }
-        List<Object> subLevels = intersectingSubLevels(rootLevel, queryBounds);
+        List<Object> subLevels = intersectingSubLevels(
+                rootLevel, queryBounds, probeCache);
         if (containingSubLevel != null
                 && !containsIdentity(subLevels, containingSubLevel)) {
             subLevels.add(0, containingSubLevel);
         }
         Map<BlockGetter, LoadedBlockLookup> sharedLookups = probeCache == null
                 ? new IdentityHashMap<>() : probeCache.lookups;
-        double nearest = findEnvelopeBlockingDistance(
-                dir, maxDistance, movingBoundsWorld,
-                subLevelWorldBounds(subLevels, excludedSubLevelIds));
-        if (nearest <= EPSILON) return 0.0D;
+        // Leading-face probes refine root and SubLevel collision shapes directly. Expanding every
+        // broad-phase SubLevel envelope into a complete swept-volume scan here multiplies work by
+        // every hull bound, direction and telemetry consumer. Immediate moving-body avoidance uses
+        // findSubLevelEnvelopeBlockingDistance separately and therefore remains conservative.
+        double nearest = maxDistance;
         Vec3 probeOffset = dir.scale(COLLISION_MARGIN * 2.0D);
         for (AABB bounds : movingBoundsWorld) {
             if (bounds == null) {
@@ -237,7 +263,8 @@ public final class SubLevelParticleOcclusion {
                 double distance = findBlockingDistanceAcrossLevels(
                         rootLevel, probeStart, probeEnd, dir, nearest,
                         includeRootLevel, excludedSubLevelIds,
-                        includeTaggedTransparentBlocks, subLevels, sharedLookups);
+                        includeTaggedTransparentBlocks, subLevels, sharedLookups,
+                        Math.max(0.0D, initialContactAllowance));
                 nearest = Math.min(nearest, distance);
                 if (nearest <= EPSILON) {
                     return 0.0D;
@@ -248,9 +275,10 @@ public final class SubLevelParticleOcclusion {
     }
 
     /**
-     * Find the first collision distance between translated moving bounds and
-     * fixed obstacle envelopes. This supplements block probes for sparse
-     * moving structures whose physical envelopes must not overlap.
+     * Find the first broad-phase overlap distance between translated moving
+     * bounds and fixed obstacle envelopes. An envelope is not a collision
+     * shape; callers requiring physical clearance must refine a candidate
+     * against block collision shapes.
      */
     public static double findEnvelopeBlockingDistance(
             Vec3 directionWorld,
@@ -282,15 +310,58 @@ public final class SubLevelParticleOcclusion {
         return Mth.clamp(nearest, 0.0D, maximum);
     }
 
+    /**
+     * Find the first broad-phase collision distance between a translated hull
+     * and every live, non-excluded Sable body in the root-level container.
+     *
+     * <p>This is intended for immediate moving-body safety overrides. Route
+     * planning should continue to use the collision-shape-refined queries so
+     * sparse SubLevel envelopes do not become permanent route obstacles.</p>
+     */
+    public static double findSubLevelEnvelopeBlockingDistance(
+            Level rootLevel,
+            Vec3 directionWorld,
+            double maxDistance,
+            List<AABB> movingBoundsWorld,
+            Set<UUID> excludedSubLevelIds,
+            @Nullable ProbeCache probeCache
+    ) {
+        if (rootLevel == null || directionWorld == null
+                || directionWorld.lengthSqr() < EPSILON || maxDistance <= 0.0D
+                || movingBoundsWorld == null || movingBoundsWorld.isEmpty()) {
+            return Math.max(0.0D, maxDistance);
+        }
+        Vec3 direction = directionWorld.normalize();
+        Vec3 maximumDelta = direction.scale(maxDistance);
+        AABB queryBounds = null;
+        for (AABB bounds : movingBoundsWorld) {
+            if (bounds == null) continue;
+            AABB swept = sweptBounds(bounds, maximumDelta).inflate(1.0D);
+            queryBounds = queryBounds == null ? swept : queryBounds.minmax(swept);
+        }
+        if (queryBounds == null) return maxDistance;
+        List<Object> subLevels = intersectingSubLevels(
+                rootLevel, queryBounds, probeCache);
+        return findEnvelopeBlockingDistance(
+                direction, maxDistance, movingBoundsWorld,
+                subLevelWorldBounds(subLevels, excludedSubLevelIds));
+    }
+
     // Handle the probe cache
     public static final class ProbeCache {
         // Tracked lookups
         private final Map<BlockGetter, LoadedBlockLookup> lookups =
                 new IdentityHashMap<>();
+        // Current root-level Sable bodies
+        private @Nullable Level subLevelRoot;
+        // Current root-level Sable body snapshot
+        private List<Object> subLevels = List.of();
 
         // Clear the probe cache
         public void clear() {
             lookups.clear();
+            subLevelRoot = null;
+            subLevels = List.of();
         }
     }
 
@@ -399,6 +470,21 @@ public final class SubLevelParticleOcclusion {
         }
     }
 
+    // Return no movement authority until a bounded exact sweep is complete
+    public static double findSweptBoundsBlockingDistance(
+            Level rootLevel, @Nullable Object containingSubLevel,
+            Vec3 anchorStartWorld, Vec3 directionWorld, double maxDistance,
+            List<AABB> movingBoundsWorld, boolean includeRootLevel,
+            Set<UUID> excludedSubLevelIds, boolean includeTaggedTransparentBlocks,
+            int maximumBlocks, long maximumNanos
+    ){
+        if(maximumBlocks <= 0 || maximumNanos <= 0L) return 0.0D;
+        SweptBoundsScan scan = beginSweptBoundsBlockingDistanceScan(rootLevel, containingSubLevel,
+                anchorStartWorld, directionWorld, maxDistance, movingBoundsWorld,
+                includeRootLevel, excludedSubLevelIds, includeTaggedTransparentBlocks);
+        return scan.advance(maximumBlocks, maximumNanos) ? scan.result() : 0.0D;
+    }
+
     // Find the swept bounds blocking distance
     public static double findSweptBoundsBlockingDistance(
             Level rootLevel,
@@ -434,7 +520,7 @@ public final class SubLevelParticleOcclusion {
         }
 
         List<Object> subLevels = intersectingSubLevels(
-                rootLevel, sweptWorldBounds);
+                rootLevel, sweptWorldBounds, null);
         if (containingSubLevel != null && !containsIdentity(subLevels, containingSubLevel)) {
             subLevels.add(0, containingSubLevel);
         }
@@ -534,7 +620,7 @@ public final class SubLevelParticleOcclusion {
         }
 
         List<Object> subLevels = intersectingSubLevels(
-                rootLevel, sweptWorldBounds);
+                rootLevel, sweptWorldBounds, null);
         if (containingSubLevel != null && !containsIdentity(subLevels, containingSubLevel)) {
             subLevels.add(0, containingSubLevel);
         }
@@ -637,7 +723,16 @@ public final class SubLevelParticleOcclusion {
             AABB localBoundsAtStart,
             boolean includeTaggedTransparentBlocks
     ) {
-        BlockState state = level.getBlockState(pos);
+        return sweptBoundsBlockIntersectionFraction(level, pos, level.getBlockState(pos),
+                localStart, localEnd, localBoundsAtStart, includeTaggedTransparentBlocks);
+    }
+
+    // Use an already loaded chunk state during incremental hull sweeps
+    private static @Nullable Double sweptBoundsBlockIntersectionFraction(
+            BlockGetter level, BlockPos pos, BlockState state,
+            Vec3 localStart, Vec3 localEnd, AABB localBoundsAtStart,
+            boolean includeTaggedTransparentBlocks
+    ){
         if (state.isAir() || (!includeTaggedTransparentBlocks
                 && AllTags.AllBlockTags.FAN_TRANSPARENT.matches(state))) {
             return null;
@@ -757,6 +852,7 @@ public final class SubLevelParticleOcclusion {
     private static final class SweptBoundsLevelScan {
         // Level
         private final BlockGetter level;
+        private final LoadedBlockLookup lookup;
         // Local start
         private final Vec3 localStart;
         // Local end
@@ -821,6 +917,7 @@ public final class SubLevelParticleOcclusion {
                 boolean includeTaggedTransparentBlocks
         ) {
             this.level = level;
+            this.lookup = new LoadedBlockLookup(level, false);
             this.localStart = localStart;
             this.localEnd = localEnd;
             this.localBoundsAtStart = localBoundsAtStart;
@@ -884,7 +981,8 @@ public final class SubLevelParticleOcclusion {
                     z = fromZ;
                     pos.set(chunkMinX, minY, chunkMinZ);
                     chunkPrepared = true;
-                    if (!isLoaded(level, pos)) {
+                    if (!lookup.moveTo(pos)) {
+                        processed++;
                         advanceChunk();
                         continue;
                     }
@@ -894,7 +992,7 @@ public final class SubLevelParticleOcclusion {
                 nearestFraction = nearestDistance(
                         nearestFraction,
                         sweptBoundsBlockIntersectionFraction(
-                                level, pos, localStart, localEnd,
+                                level, pos, lookup.blockState(pos), localStart, localEnd,
                                 localBoundsAtStart,
                                 includeTaggedTransparentBlocks));
                 processed++;
@@ -1087,22 +1185,40 @@ public final class SubLevelParticleOcclusion {
     // Get the intersecting sub levels
     private static List<Object> intersectingSubLevels(
             Level level,
-            AABB worldBounds
+            AABB worldBounds,
+            @Nullable ProbeCache probeCache
     ) {
         List<Object> res = new ArrayList<>();
-        boolean spatialQuerySucceeded = false;
+        if (probeCache != null && probeCache.subLevelRoot == level) {
+            for (Object candidate : probeCache.subLevels) {
+                addIntersectingSubLevel(res, candidate, worldBounds);
+            }
+            return res;
+        }
         try {
             for (SubLevel subLevel : Sable.HELPER.getAllIntersecting(
                     level, new BoundingBox3d(worldBounds))) {
                 addIntersectingSubLevel(res, subLevel, worldBounds);
             }
-            spatialQuerySucceeded = true;
         } catch (RuntimeException | LinkageError ignored) {
         }
-        if (!spatialQuerySucceeded) {
-            for (Object candidate : SubLevelBlockEntityCollector.getSubLevels(level)) {
-                addIntersectingSubLevel(res, candidate, worldBounds);
+        if (probeCache == null && !res.isEmpty()) return res;
+        // Sable's spatial index may legally be empty while newly loaded or moving bodies are
+        // already present in the container. Merge the authoritative container snapshot so a
+        // cached reactive query never makes another vehicle invisible for that tick. Uncached
+        // planner scans use this fallback only when the spatial index returned no candidates.
+        List<Object> known;
+        if (probeCache != null && probeCache.subLevelRoot == level) {
+            known = probeCache.subLevels;
+        } else {
+            known = SubLevelBlockEntityCollector.getSubLevels(level);
+            if (probeCache != null) {
+                probeCache.subLevelRoot = level;
+                probeCache.subLevels = List.copyOf(known);
             }
+        }
+        for (Object candidate : known) {
+            addIntersectingSubLevel(res, candidate, worldBounds);
         }
         return res;
     }
@@ -1225,7 +1341,7 @@ public final class SubLevelParticleOcclusion {
     private static @Nullable Double findBlockingDistanceInLevel(BlockGetter level, @Nullable Object subLevel,
             Vec3 localStart, Vec3 localEnd, Vec3 worldStart, Vec3 worldDirection, double maxDistance,
             boolean includeTaggedTransparentBlocks,
-            LoadedBlockLookup lookup) {
+            LoadedBlockLookup lookup, double initialContactAllowance) {
         Vec3 localDelta = localEnd.subtract(localStart);
         if (localDelta.lengthSqr() < EPSILON) {
             return null;
@@ -1259,7 +1375,7 @@ public final class SubLevelParticleOcclusion {
             }
             Double distance = findBlockShapeDistance(level, lookup, subLevel, current,
                     localStart, localDelta, worldStart, worldDirection,
-                    maxDistance, includeTaggedTransparentBlocks);
+                    maxDistance, includeTaggedTransparentBlocks, initialContactAllowance);
             nearest = nearestDistance(nearest, distance);
             if (nearest != null) {
                 return nearest;
@@ -1294,7 +1410,8 @@ public final class SubLevelParticleOcclusion {
             Vec3 worldStart,
             Vec3 worldDirection,
             double maxDistance,
-            boolean includeTaggedTransparentBlocks
+            boolean includeTaggedTransparentBlocks,
+            double initialContactAllowance
     ) {
         VoxelShape shape = lookup.collisionShape(pos, includeTaggedTransparentBlocks);
         if (shape.isEmpty()) {
@@ -1303,16 +1420,16 @@ public final class SubLevelParticleOcclusion {
 
         double[] nearestT = {Double.POSITIVE_INFINITY};
         if (shape == Shapes.block()) {
-            Double hit = intersectSegment(localStart, localDelta,
-                    new AABB(pos).inflate(COLLISION_MARGIN));
+            Double hit = contactAwareIntersection(localStart, localDelta,
+                    new AABB(pos).inflate(COLLISION_MARGIN), initialContactAllowance);
             if (hit != null) nearestT[0] = hit;
         } else {
             shape.forAllBoxes((minX, minY, minZ, maxX, maxY, maxZ) -> {
-                Double hit = intersectSegment(localStart, localDelta,
+                Double hit = contactAwareIntersection(localStart, localDelta,
                         new AABB(
                                 pos.getX() + minX, pos.getY() + minY, pos.getZ() + minZ,
                                 pos.getX() + maxX, pos.getY() + maxY, pos.getZ() + maxZ)
-                                .inflate(COLLISION_MARGIN));
+                                .inflate(COLLISION_MARGIN), initialContactAllowance);
                 if (hit != null) nearestT[0] = Math.min(nearestT[0], hit);
             });
         }
@@ -1329,6 +1446,13 @@ public final class SubLevelParticleOcclusion {
         double distance = worldHit.subtract(worldStart).dot(worldDirection);
         return distance >= -EPSILON && distance <= maxDistance + EPSILON
                 ? Math.max(0.0D, distance) : null;
+    }
+
+    // Do not treat a shallow contact that is being left as a new obstruction
+    static @Nullable Double contactAwareIntersection(Vec3 start, Vec3 delta, AABB bounds, double allowance){
+        Double hit = intersectSegment(start, delta, bounds);
+        return allowance > 0.0D && hit != null && hit <= EPSILON
+                && leavesInitialContact(start, delta, bounds, allowance) ? null : hit;
     }
 
     // Get the intersect segment

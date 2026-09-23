@@ -10,7 +10,9 @@ package com.rieno.gadgetsandgizmos.lib.compat;
 
 import com.mapter.aeroclaims.claim.Claim;
 import com.mapter.aeroclaims.claim.ClaimManager;
+import com.rieno.gadgetsandgizmos.lib.physics.SableAssemblyTopologyCache;
 import dev.ryanhcode.sable.Sable;
+import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
@@ -36,6 +38,8 @@ public final class PhysicsStaffInteractionGuard {
     private static final long MESSAGE_COOLDOWN_MS = 1000L;
     private static final Map<UUID, Long> LAST_MESSAGE_TIME = new ConcurrentHashMap<>();
     private static final Map<UUID, Integer> INITIALIZING_SUB_LEVELS =
+            new ConcurrentHashMap<>();
+    private static final Map<UUID, SableAssemblyTopologyCache> MOVEMENT_TOPOLOGIES =
             new ConcurrentHashMap<>();
 
     /*--------------------------------------------------------##---------------------------------------------------------
@@ -68,18 +72,24 @@ public final class PhysicsStaffInteractionGuard {
         if (!PhysicsStaffPowerHooks.isHoldingPoweredPhysicsStaff(player)) {
             return true;
         }
-
-        if (isPlayerOnTargetSubLevel(player, targetSubLevelId)) {
-            showFailureMessage(player, "item.createthrusters.physics_staff.error.on_target_sublevel");
-            return false;
-        }
-
         if (ModList.get().isLoaded(AEROCLAIMS_MOD_ID)
                 && !AeroClaimsAccess.canAccess(player, targetSubLevelId)) {
             showFailureMessage(player, "item.createthrusters.physics_staff.error.claim_denied");
             return false;
         }
 
+        return true;
+    }
+
+    // Authorize a physics staff movement target
+    public static boolean authorizeMovementTarget(ServerPlayer player, UUID targetSubLevelId) {
+        if (!authorizeTarget(player, targetSubLevelId)) {
+            return false;
+        }
+        if (isPlayerOnConnectedTargetSubLevel(player, targetSubLevelId)) {
+            showFailureMessage(player, "item.createthrusters.physics_staff.error.on_target_sublevel");
+            return false;
+        }
         return true;
     }
 
@@ -111,6 +121,7 @@ public final class PhysicsStaffInteractionGuard {
     // Clear the initialization targets
     public static void clearInitializationTargets() {
         INITIALIZING_SUB_LEVELS.clear();
+        MOVEMENT_TOPOLOGIES.clear();
         LAST_MESSAGE_TIME.clear();
     }
 
@@ -123,6 +134,29 @@ public final class PhysicsStaffInteractionGuard {
 
         SubLevel trackingSubLevel = Sable.HELPER.getTrackingSubLevel(player);
         return trackingSubLevel != null && targetSubLevelId.equals(trackingSubLevel.getUniqueId());
+    }
+
+    // Check if the target is the player's sublevel or a connected nested sublevel
+    public static boolean isPlayerOnConnectedTargetSubLevel(ServerPlayer player, UUID targetSubLevelId) {
+        if (player == null || targetSubLevelId == null
+                || !PhysicsStaffPowerHooks.isHoldingPoweredPhysicsStaff(player)) {
+            return false;
+        }
+
+        SubLevel trackingSubLevel = Sable.HELPER.getTrackingSubLevel(player);
+        if (trackingSubLevel == null) {
+            return false;
+        }
+        if (targetSubLevelId.equals(trackingSubLevel.getUniqueId())) {
+            return true;
+        }
+        if (!(trackingSubLevel instanceof ServerSubLevel trackedServerSubLevel)) {
+            return false;
+        }
+
+        SableAssemblyTopologyCache topology = MOVEMENT_TOPOLOGIES.computeIfAbsent(
+                player.getUUID(), ignored -> new SableAssemblyTopologyCache());
+        return topology.get(trackedServerSubLevel).loadedBodyIds().contains(targetSubLevelId);
     }
 
     // Show the failure message

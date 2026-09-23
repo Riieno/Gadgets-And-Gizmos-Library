@@ -9,6 +9,7 @@ package com.rieno.gadgetsandgizmos.lib.physics;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import dev.ryanhcode.sable.api.physics.constraint.PhysicsConstraintHandle;
+import dev.ryanhcode.sable.api.physics.constraint.GenericConstraintHandle;
 import org.joml.Quaterniond;
 import org.joml.Quaterniondc;
 import org.joml.Vector3dc;
@@ -80,6 +81,15 @@ public final class SableConstraintApi {
                 .newInstance(posA, posB, orientationA, orientationB, lockedAxes);
     }
 
+    // Create one compatible rotary constraint configuration
+    public static Object rotaryConfiguration(Vector3dc posA, Vector3dc posB,
+                                             Vector3dc axisA, Vector3dc axisB)
+            throws ReflectiveOperationException {
+        return configurationClass("RotaryConstraintConfiguration", "rotary")
+                .getConstructor(Vector3dc.class, Vector3dc.class, Vector3dc.class, Vector3dc.class)
+                .newInstance(posA, posB, axisA, axisB);
+    }
+
     // Add one compatible constraint
     public static Object addConstraint(Object pipeline, Object bodyA, Object bodyB, Object config)
             throws ReflectiveOperationException {
@@ -129,6 +139,11 @@ public final class SableConstraintApi {
             throws ReflectiveOperationException {
         if (handle == null || frame < 1 || frame > 2) {
             throw new IllegalArgumentException("A valid constraint handle and frame are required");
+        }
+        if(handle instanceof GenericConstraintHandle generic){
+            if(frame == 1) generic.setFrame1(pos, orientation);
+            else generic.setFrame2(pos, orientation);
+            return;
         }
         handle.getClass().getMethod("setFrame" + frame, Vector3dc.class, Quaterniondc.class)
                 .invoke(handle, pos, orientation);

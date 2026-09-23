@@ -166,10 +166,30 @@ dependencies {
     runtimeOnly "dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}"
 }
 
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+sourceSets.test {
+    compileClasspath += configurations.compileClasspath
+    runtimeClasspath += configurations.compileClasspath
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    // Vanilla bootstrap reads translations from the generated Minecraft resources.
+    classpath += fileTree(layout.buildDirectory.dir('moddev/artifacts')) {
+        include '*minecraft-resources.jar'
+    }
+}
+
 tasks.withType(JavaCompile).configureEach {
     dependsOn validateLocalDependencies
     options.encoding = 'UTF-8'
 }
+
 
 tasks.named('check') {
     dependsOn validateLibraryBoundary

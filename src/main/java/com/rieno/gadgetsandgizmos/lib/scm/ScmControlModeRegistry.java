@@ -84,6 +84,11 @@ public final class ScmControlModeRegistry {
         return MODES.keySet().stream().map(ScmControlModeRegistry::serialize).toList();
     }
 
+    // Get the display name for a serialized mode
+    public static synchronized String displayName(@Nullable String id) {
+        return resolve(id).displayName();
+    }
+
     // Get the serialize
     public static String serialize(ResourceLocation id) {
         return ScmBuiltinControlModes.NAMESPACE.equals(id.getNamespace())

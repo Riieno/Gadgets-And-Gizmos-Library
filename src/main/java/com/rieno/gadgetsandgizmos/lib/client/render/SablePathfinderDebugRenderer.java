@@ -68,8 +68,7 @@ public final class SablePathfinderDebugRenderer {
             VertexConsumer lines,
             SablePathfinder.DebugRoute route
     ) {
-        RouteColor color = route.style() == SablePathfinder.DebugRouteStyle.CACHED
-                ? RouteColor.CACHED : RouteColor.forOutcome(route.outcome());
+        RouteColor color = RouteColor.forRoute(route.style());
         for (SablePathfinder.DebugSegment checked : route.checkedSegments()) {
             if (checked == null) {
                 continue;
@@ -172,18 +171,23 @@ public final class SablePathfinderDebugRenderer {
 
     // Store the route color for an outcome.
     private record RouteColor(float red, float green, float blue) {
-        // Keep completed retained routes visually distinct from live guidance and search probes.
+        // Keep live guidance and retained routes visually distinct from search probes
+        private static final RouteColor LIVE = new RouteColor(0.25F, 0.85F, 1.0F);
         private static final RouteColor CACHED = new RouteColor(1.0F, 0.55F, 0.08F);
+        private static final RouteColor SPLINE_UNLOCKED = new RouteColor(1.0F, 0.25F, 0.20F);
+        private static final RouteColor SPLINE_GUIDING = new RouteColor(1.0F, 0.85F, 0.12F);
+        private static final RouteColor SPLINE_RIGID = new RouteColor(0.15F, 1.0F, 0.45F);
         // Distinguish a requested destination connection from collision-validated route geometry.
         private static final RouteColor PENDING_TARGET = new RouteColor(1.0F, 0.90F, 0.25F);
 
-        // Resolve one route outcome color
-        private static RouteColor forOutcome(SablePathfinder.Outcome outcome) {
-            return switch (outcome == null ? SablePathfinder.Outcome.BLOCKED : outcome) {
-                case COMPLETE -> new RouteColor(0.25F, 0.85F, 1.0F);
-                case UNAVAILABLE -> new RouteColor(1.0F, 0.72F, 0.20F);
-                case LIMIT_REACHED -> new RouteColor(0.85F, 0.35F, 1.0F);
-                case BLOCKED -> new RouteColor(1.0F, 0.25F, 0.25F);
+        // Resolve route ownership independently from the live search-ray result
+        private static RouteColor forRoute(SablePathfinder.DebugRouteStyle style) {
+            return switch (style == null ? SablePathfinder.DebugRouteStyle.LIVE : style) {
+                case CACHED -> CACHED;
+                case SPLINE_UNLOCKED -> SPLINE_UNLOCKED;
+                case SPLINE_GUIDING -> SPLINE_GUIDING;
+                case SPLINE_RIGID -> SPLINE_RIGID;
+                case LIVE -> LIVE;
             };
         }
 
