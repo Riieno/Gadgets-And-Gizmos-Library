@@ -178,6 +178,38 @@ public final class SableAssemblyTopologyApi {
         }
     }
 
+    /**
+     * Return the root plus every loaded body retained through Sable loading
+     * dependencies. These bodies are intentionally separate from structural
+     * topology, so callers can apply their own ownership policy.
+     */
+    public static List<ServerSubLevel> loadingDependencyBodies(@Nullable ServerSubLevel root) {
+        if (!usable(root)) return List.of();
+        try {
+            Map<UUID, ServerSubLevel> available = loadedBodies(root);
+            available.put(root.getUniqueId(), root);
+            Map<UUID, ServerSubLevel> found = new LinkedHashMap<>();
+            Deque<ServerSubLevel> pending = new ArrayDeque<>();
+            found.put(root.getUniqueId(), root);
+            pending.addLast(root);
+            while (!pending.isEmpty()) {
+                ServerSubLevel owner = pending.removeFirst();
+                for (BlockEntitySubLevelActor actor : actors(owner)) {
+                    for (ServerSubLevel target : loadingDependencies(actor, available)) {
+                        if (found.putIfAbsent(target.getUniqueId(), target) == null) {
+                            pending.addLast(target);
+                        }
+                    }
+                }
+            }
+            return found.values().stream()
+                    .sorted(Comparator.comparing(ServerSubLevel::getUniqueId, UUID_ORDER))
+                    .toList();
+        } catch (RuntimeException | LinkageError err) {
+            return List.of();
+        }
+    }
+
     // Get the loaded bodies
     private static Map<UUID, ServerSubLevel> loadedBodies(ServerSubLevel root) {
         Map<UUID, ServerSubLevel> loaded = new LinkedHashMap<>();
@@ -209,6 +241,29 @@ public final class SableAssemblyTopologyApi {
             return List.of();
         }
         return actors;
+    }
+
+    // Get loaded Sable loading dependencies for one actor
+    private static List<ServerSubLevel> loadingDependencies(
+            BlockEntitySubLevelActor actor,
+            Map<UUID, ServerSubLevel> available
+    ) {
+        List<ServerSubLevel> dependencies = new ArrayList<>();
+        try {
+            Iterable<SubLevel> values = actor.sable$getLoadingDependencies();
+            if (values != null) {
+                for (SubLevel value : values) {
+                    if (value instanceof ServerSubLevel target && usable(target)
+                            && available.containsKey(target.getUniqueId())) {
+                        dependencies.add(target);
+                    }
+                }
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            return List.of();
+        }
+        dependencies.sort(Comparator.comparing(ServerSubLevel::getUniqueId, UUID_ORDER));
+        return dependencies;
     }
 
     // Include the sable assembly topology API

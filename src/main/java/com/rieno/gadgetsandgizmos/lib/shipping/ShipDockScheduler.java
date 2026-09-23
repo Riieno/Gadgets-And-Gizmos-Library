@@ -9,9 +9,11 @@ package com.rieno.gadgetsandgizmos.lib.shipping;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -33,11 +35,6 @@ public final class ShipDockScheduler {
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     private static final long REQUEST_TIMEOUT_TICKS = 100L;
-    private static final long MAX_FAIRNESS_TICKS = 6_000L;
-    private static final double ETA_WEIGHT = 1.0D;
-    private static final double DISTANCE_WEIGHT = 0.05D;
-    private static final double FAIRNESS_WEIGHT = 0.25D;
-    private static final double UNKNOWN_PRIORITY_SCORE = 1.0E12D;
     private static final double ARRIVAL_READY_DISTANCE = 16.0D;
     private static final long ARRIVAL_READY_ETA_TICKS = 40L;
     private static final Map<MinecraftServer, ShipDockScheduler> INSTANCES =
@@ -58,8 +55,6 @@ public final class ShipDockScheduler {
     private final Map<UUID, Integer> nextConnectorOffsets = new HashMap<>();
     // Next sequence
     private long nextSequence;
-    // Current game time
-    private long currentGameTime;
     // Tracks whether ship dock scheduler is shutting down
     private boolean shuttingDown;
 
@@ -104,6 +99,52 @@ public final class ShipDockScheduler {
         }
     }
 
+    /**
+     * Resolve a queue holding point and move it outside retained-route
+     * corridors. This changes only parking geometry; leases and route
+     * ownership remain unchanged.
+     */
+    public static Vec3 resolveHoldingPosition(
+            Vec3 anchor,
+            Vec3 outwardDirection,
+            HoldingPlacement placement,
+            double verticalOffset,
+            Collection<List<Vec3>> retainedRoutes,
+            double routeClearance
+    ) {
+        Vec3 origin = finite(anchor);
+        Vec3 outward = horizontalUnit(
+                outwardDirection, new Vec3(0.0D, 0.0D, 1.0D));
+        Vec3 lateral = new Vec3(-outward.z, 0.0D, outward.x);
+        HoldingPlacement safe = placement == null
+                ? HoldingPlacement.NONE : placement;
+        Vec3 preferredSide = lateral.scale(safe.lateral() < 0.0D ? -1.0D : 1.0D);
+        Vec3 resolved = origin
+                .add(outward.scale(safe.outward()))
+                .add(lateral.scale(safe.lateral()))
+                .add(0.0D, Double.isFinite(verticalOffset) ? verticalOffset : 0.0D, 0.0D);
+        double clearance = Double.isFinite(routeClearance)
+                ? Math.max(0.0D, routeClearance) : 0.0D;
+        Collection<List<Vec3>> routes = retainedRoutes == null
+                ? List.of() : retainedRoutes;
+        for (int pass = 0; pass < 8 && clearance > 0.0D; pass++) {
+            RouteClearance nearest = nearestRoute(resolved, routes);
+            if (!nearest.found() || nearest.distance() + 1.0E-6D >= clearance) break;
+            Vec3 normal = new Vec3(
+                    -nearest.direction().z, 0.0D, nearest.direction().x);
+            if (normal.lengthSqr() <= 1.0E-12D) {
+                normal = horizontalUnit(
+                        resolved.subtract(nearest.position()), preferredSide);
+            }
+            double side = normal.dot(resolved.subtract(nearest.position()));
+            if (Math.abs(side) <= 1.0E-8D) side = normal.dot(preferredSide);
+            resolved = resolved.add(normal.scale(Math.copySign(
+                    clearance - nearest.distance() + 0.25D,
+                    Math.abs(side) <= 1.0E-8D ? 1.0D : side)));
+        }
+        return resolved;
+    }
+
     // Request the ship dock scheduler
     public synchronized Lease request(
             UUID requester,
@@ -142,7 +183,6 @@ public final class ShipDockScheduler {
         if (shuttingDown || requester == null || requester.ownerId() == null) {
             return Lease.NONE;
         }
-        currentGameTime = Math.max(currentGameTime, gameTime);
         cleanup(gameTime);
         List<DockSlot> candidates = candidateDocks == null ? List.of()
                 : List.copyOf(new LinkedHashSet<>(candidateDocks));
@@ -201,7 +241,6 @@ public final class ShipDockScheduler {
         if (shuttingDown) {
             return;
         }
-        currentGameTime = Math.max(currentGameTime, gameTime);
         cleanup(gameTime);
         DockRequest req = requests.get(requester);
         if (req != null) {
@@ -288,8 +327,9 @@ public final class ShipDockScheduler {
 
     // Rebalance the ship dock scheduler
     private void rebalance() {
+        List<DockRequest> ordered = orderedRequests();
         Set<DockSlot> claimedOwnedSlots = new HashSet<>();
-        for (DockRequest req : orderedRequests()) {
+        for (DockRequest req : ordered) {
             DockSlot ownedSlot = req.ownedDock != null
                     && req.candidates.contains(req.ownedDock) ? req.ownedDock : null;
             if (ownedSlot == null || claimedOwnedSlots.stream().anyMatch(slot -> conflicts(slot, ownedSlot))) {
@@ -310,7 +350,7 @@ public final class ShipDockScheduler {
                 assign(req, ownedSlot);
             }
         }
-        for (DockRequest req : orderedRequests()) {
+        for (DockRequest req : ordered) {
             if (req.assignedDock == null) {
                 continue;
             }
@@ -321,11 +361,11 @@ public final class ShipDockScheduler {
                 releaseAssignment(req);
                 continue;
             }
-            if (!isCommitted(req) && shouldYieldAssignment(req)) {
+            if (!isCommitted(req) && shouldYieldAssignment(req, ordered)) {
                 releaseAssignment(req);
             }
         }
-        for (DockRequest req : orderedRequests()) {
+        for (DockRequest req : ordered) {
             if (req.assignedDock != null) {
                 continue;
             }
@@ -426,17 +466,73 @@ public final class ShipDockScheduler {
                         conflicts(firstCandidate, secondCandidate)));
     }
 
+    // Find the nearest horizontal point on any retained route.
+    private static RouteClearance nearestRoute(
+            Vec3 position,
+            Collection<List<Vec3>> routes
+    ) {
+        RouteClearance selected = RouteClearance.none();
+        for (List<Vec3> route : routes) {
+            if (route == null || route.isEmpty()) continue;
+            Vec3 previous = finite(route.getFirst());
+            if (route.size() == 1) {
+                double distance = horizontal(position.subtract(previous)).length();
+                if (distance < selected.distance()) {
+                    selected = new RouteClearance(
+                            previous, Vec3.ZERO, distance, true);
+                }
+                continue;
+            }
+            for (int index = 1; index < route.size(); index++) {
+                Vec3 next = finite(route.get(index));
+                Vec3 segment = horizontal(next.subtract(previous));
+                double lengthSqr = segment.lengthSqr();
+                double progress = lengthSqr <= 1.0E-12D ? 1.0D
+                        : Math.max(0.0D, Math.min(1.0D,
+                        horizontal(position.subtract(previous)).dot(segment) / lengthSqr));
+                Vec3 projection = previous.add(next.subtract(previous).scale(progress));
+                double distance = horizontal(position.subtract(projection)).length();
+                if (distance < selected.distance()) {
+                    selected = new RouteClearance(
+                            projection,
+                            lengthSqr <= 1.0E-12D ? Vec3.ZERO : segment.normalize(),
+                            distance, true);
+                }
+                previous = next;
+            }
+        }
+        return selected;
+    }
+
+    private static Vec3 finite(Vec3 value) {
+        return value != null && Double.isFinite(value.x)
+                && Double.isFinite(value.y) && Double.isFinite(value.z)
+                ? value : Vec3.ZERO;
+    }
+
+    private static Vec3 horizontal(Vec3 value) {
+        Vec3 safe = finite(value);
+        return new Vec3(safe.x, 0.0D, safe.z);
+    }
+
+    private static Vec3 horizontalUnit(Vec3 value, Vec3 fallback) {
+        Vec3 safe = horizontal(value);
+        if (safe.lengthSqr() > 1.0E-12D) return safe.normalize();
+        safe = horizontal(fallback);
+        return safe.lengthSqr() > 1.0E-12D
+                ? safe.normalize() : new Vec3(0.0D, 0.0D, 1.0D);
+    }
+
     // Get the ordered requests
     private List<DockRequest> orderedRequests() {
         List<DockRequest> ordered = new ArrayList<>(requests.values());
         ordered.sort(Comparator
                 .comparing((DockRequest req) -> !isCommitted(req))
                 .thenComparing(req -> !req.priority.readyToDock())
-                .thenComparingDouble(this::priorityScore)
-                .thenComparingLong(req -> req.priority.etaTicks() < 0
-                        ? Long.MAX_VALUE : req.priority.etaTicks())
                 .thenComparingDouble(req -> req.priority.distanceBlocks())
                 .thenComparingLong(req -> req.sequence)
+                .thenComparingLong(req -> req.priority.etaTicks() < 0
+                        ? Long.MAX_VALUE : req.priority.etaTicks())
                 .thenComparing(req -> req.requester.ownerId())
                 .thenComparing(req -> req.requester.channel()));
         return ordered;
@@ -447,22 +543,8 @@ public final class ShipDockScheduler {
         return req.ownedDock != null || req.priority.committed();
     }
 
-    // Get the priority score
-    private double priorityScore(DockRequest req) {
-        double score = req.priority.etaTicks() < 0
-                ? UNKNOWN_PRIORITY_SCORE
-                : req.priority.etaTicks() * ETA_WEIGHT;
-        if (Double.isFinite(req.priority.distanceBlocks())) {
-            score += req.priority.distanceBlocks() * DISTANCE_WEIGHT;
-        }
-        long waited = Math.max(0L, currentGameTime - req.queuedAt);
-        score -= Math.min(waited, MAX_FAIRNESS_TICKS) * FAIRNESS_WEIGHT;
-        return score;
-    }
-
     // Check if this should yield assignment
-    private boolean shouldYieldAssignment(DockRequest req) {
-        List<DockRequest> ordered = orderedRequests();
+    private boolean shouldYieldAssignment(DockRequest req, List<DockRequest> ordered) {
         int requestIndex = ordered.indexOf(req);
         if (requestIndex < 0) {
             return false;
@@ -619,6 +701,19 @@ public final class ShipDockScheduler {
             outward = Double.isFinite(outward) ? Math.max(0.0D, outward) : 0.0D;
             lateral = Double.isFinite(lateral) ? lateral : 0.0D;
             vertical = Double.isFinite(vertical) ? Math.max(0.0D, vertical) : 0.0D;
+        }
+    }
+
+    // Store one nearest route point used only to clear a holding location.
+    private record RouteClearance(
+            Vec3 position,
+            Vec3 direction,
+            double distance,
+            boolean found
+    ) {
+        private static RouteClearance none() {
+            return new RouteClearance(
+                    Vec3.ZERO, Vec3.ZERO, Double.POSITIVE_INFINITY, false);
         }
     }
 

@@ -24,6 +24,7 @@ public record GraphDocumentSnapshot(
         List<Node> nodes,
         List<Edge> edges,
         List<FunctionGraph> functions,
+        Map<String, String> scmActionFunctions,
         Map<String, GraphValue> variables
 ) {
     // Initialize the graph document snapshot
@@ -34,6 +35,7 @@ public record GraphDocumentSnapshot(
         nodes = List.copyOf(nodes == null ? List.of() : nodes);
         edges = List.copyOf(edges == null ? List.of() : edges);
         functions = List.copyOf(functions == null ? List.of() : functions);
+        scmActionFunctions = Map.copyOf(scmActionFunctions == null ? Map.of() : scmActionFunctions);
         variables = Map.copyOf(variables == null ? Map.of() : variables);
     }
 

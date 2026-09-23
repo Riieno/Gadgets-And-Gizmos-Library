@@ -14,7 +14,7 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.Set;
 
-// Define the built-in airship, plane and car SCM control modes
+// Define the built-in airship, ground/sea and plane SCM control modes
 public final class ScmBuiltinControlModes {
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -26,9 +26,13 @@ public final class ScmBuiltinControlModes {
 
     public static final String NAMESPACE = "createthrusters";
     public static final ResourceLocation AIRSHIP_ID = id("airship");
+    public static final ResourceLocation GROUND_SEA_ID = id("car");
     public static final ResourceLocation PLANE_ID = id("plane");
-    public static final ResourceLocation CAR_ID = id("car");
-    private static final Set<ResourceLocation> BUILTINS = Set.of(AIRSHIP_ID, PLANE_ID, CAR_ID);
+    public static final ResourceLocation IK_ID = id("ik");
+    /** Retain the original serialized API name for saved profiles and integrations. */
+    public static final ResourceLocation CAR_ID = GROUND_SEA_ID;
+    private static final Set<ResourceLocation> BUILTINS = Set.of(
+            AIRSHIP_ID, GROUND_SEA_ID, PLANE_ID, IK_ID);
     private static final double MIN_CLEARANCE = 3.0D;
 
     /*--------------------------------------------------------##---------------------------------------------------------
@@ -46,8 +50,9 @@ public final class ScmBuiltinControlModes {
     // Register the defaults
     static void registerDefaults() {
         ScmControlModeRegistry.register(new AirshipMode());
+        ScmControlModeRegistry.register(new GroundSeaMode());
         ScmControlModeRegistry.register(new PlaneMode());
-        ScmControlModeRegistry.register(new CarMode());
+        ScmControlModeRegistry.register(new LeggedMode());
     }
 
     /*--------------------------------------------------------##---------------------------------------------------------
@@ -86,11 +91,30 @@ public final class ScmBuiltinControlModes {
         @Override
         public ControlOutput navigate(ControlInput input) {
             Vec3 error = input.target().subtract(input.position());
-            double desiredSpeed = targetSpeed(input, error.length());
+            double targetDistance = error.length();
+            boolean terminalCapture = !input.transitWaypoint()
+                    && targetDistance <= Math.max(2.0D, input.tolerance() * 2.0D);
+            double desiredSpeed = input.transitWaypoint()
+                    ? Math.min(input.targetSpeed(), input.travelSpeedLimit())
+                    : safeTargetSpeed(input, targetDistance);
             Vec3 desiredVelocity = input.pathDirection().scale(desiredSpeed);
             Vec3 force = desiredVelocity.subtract(input.velocity()).scale(0.6D)
                     .add(input.accumulatedError().scale(0.04D));
-            if (input.preferForward()) {
+            double driveStrength = input.hasPropulsionRequest()
+                    ? speedControlLevel(input, desiredSpeed)
+                    : Mth.clamp(force.length(), 0.0D, 1.0D);
+            if (input.hasPropulsionRequest() && !terminalCapture) {
+                double pathSpeed = input.velocity().dot(input.pathDirection());
+                double propulsion = propulsionDemand(input, pathSpeed, desiredSpeed);
+                Vec3 lateralVelocity = input.velocity().subtract(
+                        input.pathDirection().scale(pathSpeed));
+                force = input.pathDirection().scale(propulsion)
+                        .subtract(lateralVelocity.scale(0.25D))
+                        .add(input.accumulatedError().scale(0.04D));
+            }
+            boolean faceTravel = input.preferForward() && (input.transitWaypoint()
+                    || error.length() > Math.max(2, input.tolerance() * 2));
+            if (faceTravel) {
                 Vec3 forward = horizontal(input.forward());
                 Vec3 path = horizontal(input.pathDirection());
                 double alignment = Mth.clamp(forward.dot(path), -1.0D, 1.0D);
@@ -111,25 +135,26 @@ public final class ScmBuiltinControlModes {
             Vec3 torque = worldUp.scale(Mth.clamp(
                     yawError * 0.5D - input.angularVelocity().dot(worldUp) * 0.25D,
                     -1.0D, 1.0D));
-            return new ControlOutput(force, torque, true, 0.75D, 0.0D);
+            return new ControlOutput(
+                    force, torque, true, 0.75D, 0.0D, driveStrength);
         }
     }
 
-    // Handle the car mode
-    private static final class CarMode implements ScmControlMode {
+    // Handle the ground/sea mode
+    private static final class GroundSeaMode implements ScmControlMode {
         // Get the id
         @Override
         public ResourceLocation id() {
-            return CAR_ID;
+            return GROUND_SEA_ID;
         }
 
-        // Get the car mode display name
+        // Get the ground/sea mode display name
         @Override
         public String displayName() {
-            return "Car";
+            return "Ground/Sea";
         }
 
-        // Navigate the car mode
+        // Navigate the ground/sea mode
         @Override
         public ControlOutput navigate(ControlInput input) {
             Vec3 worldUp = new Vec3(0.0D, 1.0D, 0.0D);
@@ -139,36 +164,54 @@ public final class ScmBuiltinControlModes {
                 return new ControlOutput(Vec3.ZERO, Vec3.ZERO, false, 0.0D, 0.0D);
             }
             double alignment = Mth.clamp(forward.dot(path), -1.0D, 1.0D);
-            double dir = alignment < -0.35D ? -1.0D : 1.0D;
-            double clearance = dir > 0.0D
-                    ? input.forwardClearance() : input.reverseClearance();
-            if (dir > 0.0D && clearance <= MIN_CLEARANCE
-                    && input.reverseClearance() > clearance + 1.0D) {
-                dir = -1.0D;
-                clearance = input.reverseClearance();
-            }
-
-            double distance = horizontal(input.target().subtract(input.position())).length();
-            double desiredSpeed = targetSpeed(input, distance);
-            if (input.avoidCollisions()) {
-                desiredSpeed = Math.min(desiredSpeed, safeGroundSpeed(clearance));
-            }
+            // Reverse only for an explicit blocked-vehicle recovery. A target
+            // behind the car remains a forward turn instead of changing gear.
+            boolean reverseRequested = input.reverseRecovery();
+            double dir = reverseRequested ? -1.0D : 1.0D;
+            Vec3 offset = input.target().subtract(input.position());
+            double distance = Math.sqrt(offset.x * offset.x + offset.z * offset.z);
+            // Route waypoints are steering references, not stopping points.
+            // Reserve terminal braking for the actual command target so cars
+            // retain speed through consecutive, clear route legs.
+            double desiredSpeed = input.transitWaypoint()
+                    ? Math.min(input.targetSpeed(), input.travelSpeedLimit())
+                    : safeTargetSpeed(input, distance);
             double headingAlignment = Math.max(0.0D, dir * alignment);
-            desiredSpeed *= 0.12D + 0.88D * headingAlignment;
+            double headingSpeedFloor = input.transitWaypoint() ? 0.60D : 0.12D;
+            desiredSpeed *= headingSpeedFloor
+                    + (1.0D - headingSpeedFloor) * headingAlignment;
             double currentSpeed = input.velocity().dot(forward);
-            double throttle = Mth.clamp(
-                    (dir * desiredSpeed - currentSpeed) * 0.18D, -1.0D, 1.0D);
+            double throttle;
+            double driveStrength;
+            if (input.hasPropulsionRequest()) {
+                double requested = propulsionDemand(input, dir * currentSpeed, desiredSpeed);
+                // Steering selects direction and physical correction. The
+                // scalar speed channel holds the permitted speed independently
+                // of heading and never becomes reverse propulsion.
+                driveStrength = speedControlLevel(input, desiredSpeed);
+                throttle = dir * requested
+                        * (0.12D + 0.88D * headingAlignment);
+            } else {
+                throttle = Mth.clamp(
+                        (dir * desiredSpeed - currentSpeed) * 0.18D, -1.0D, 1.0D);
+                driveStrength = Math.abs(throttle);
+            }
 
             Vec3 facingPath = dir < 0.0D ? path.scale(-1.0D) : path;
             double yawError = signedAngle(forward, facingPath, worldUp);
             double yawRate = input.angularVelocity().dot(worldUp);
-            double steering = Mth.clamp(yawError * 1.5D - yawRate * 0.65D, -1.0D, 1.0D);
-            if (Math.abs(throttle) < 0.04D && Math.abs(yawError) > 0.2D) {
+            // Retain the heading request while damping the measured turn rate.
+            // This is a steering PD term, not a binary left/right selector.
+            double steering = ScmControlAxes.groundSteeringDemand(
+                    yawError, yawRate, input.steeringFeedForward());
+            if (Math.abs(throttle) < 0.04D && Math.abs(yawError) > 0.2D
+                    && Math.abs(currentSpeed) < 0.25D && desiredSpeed > 1.0E-4D
+                    && (!input.hasPropulsionRequest() || input.propulsion() > 1.0E-5D)) {
                 throttle = dir * 0.12D;
             }
             return new ControlOutput(
                     forward.scale(throttle), worldUp.scale(steering),
-                    false, 0.0D, dir);
+                    false, 0.0D, dir, driveStrength);
         }
     }
 
@@ -234,8 +277,10 @@ public final class ScmBuiltinControlModes {
             if (input.avoidCollisions() && input.forwardClearance() < MIN_CLEARANCE * 2.0D) {
                 throttle = Math.max(0.18D, throttle * 0.55D);
             }
+            double driveStrength = input.hasPropulsionRequest()
+                    ? speedControlLevel(input, desiredSpeed) : Math.abs(throttle);
             return new ControlOutput(input.forward().scale(throttle), torque,
-                    false, 0.0D, 1.0D);
+                    false, 0.0D, 1.0D, driveStrength);
         }
     }
 
@@ -248,9 +293,77 @@ public final class ScmBuiltinControlModes {
                 distance * Math.max(0.0D, input.distanceResponse()));
     }
 
-    // Get the safe ground speed
-    private static double safeGroundSpeed(double clearance) {
-        return Math.sqrt(5.0D * Math.max(0.0D, clearance - MIN_CLEARANCE));
+    // Get the target speed after the runtime's physical stopping envelope.
+    private static double safeTargetSpeed(ScmControlMode.ControlInput input, double distance) {
+        double target = targetSpeed(input, distance);
+        return Math.min(target, input.travelSpeedLimit());
+    }
+
+    // Convert the caller's safe speed envelope into a direction-independent
+    // analogue setpoint. Unlike force error, this remains active at cruise.
+    private static double speedControlLevel(
+            ScmControlMode.ControlInput input,
+            double desiredSpeed
+    ) {
+        if (!input.hasPropulsionRequest() || input.targetSpeed() <= 1.0E-5D) {
+            return 0.0D;
+        }
+        return input.propulsion() * Mth.clamp(
+                desiredSpeed / input.targetSpeed(), 0.0D, 1.0D);
+    }
+
+    // Convert a direct propulsion request into a progressive acceleration or
+    // braking command. A schedule throttle is a maximum actuator request, not
+    // a request to hold every acceleration group wide open until the last
+    // possible braking tick. Tracking the lower of the route speed and the
+    // runtime's stopping envelope gives a craft time to settle at a dock
+    // rather than over-shooting and attempting a wide recovery turn.
+    private static double propulsionDemand(
+            ScmControlMode.ControlInput input,
+            double travelSpeed,
+            double desiredSpeed
+    ) {
+        double limit = Math.min(Math.max(0.0D, desiredSpeed), input.travelSpeedLimit());
+        if (limit <= 1.0E-4D) {
+            return Mth.clamp(-travelSpeed * 0.45D, -1.0D, 0.0D);
+        }
+        double error = limit - travelSpeed;
+        // Keep full requested throttle while materially below the speed goal,
+        // then taper across the last quarter of the requested speed. This
+        // avoids an abrupt full-power/full-brake oscillation for high-thrust
+        // assemblies, while preserving normal acceleration from rest.
+        double accelerationBand = Math.max(0.35D, limit * 0.25D);
+        if (error >= 0.0D) {
+            return input.propulsion() * Mth.clamp(error / accelerationBand, 0.0D, 1.0D);
+        }
+        // When momentum has already exceeded the planned speed, return an
+        // opposing physical correction. The host routes its independent
+        // Deceleration channel; this value never changes the selected gear.
+        double brakingBand = Math.max(0.25D, limit * 0.15D);
+        return -Mth.clamp(-error / brakingBand, 0.0D, 1.0D);
+    }
+
+    // Handle legged locomotion body guidance
+    private static final class LeggedMode implements ScmControlMode {
+        private final GroundSeaMode ground = new GroundSeaMode();
+
+        // Get the id
+        @Override
+        public ResourceLocation id() {
+            return IK_ID;
+        }
+
+        // Get the legged mode display name
+        @Override
+        public String displayName() {
+            return "IK";
+        }
+
+        // Reuse ground guidance while the host applies each solved limb target
+        @Override
+        public ControlOutput navigate(ControlInput input) {
+            return ground.navigate(input);
+        }
     }
 
     // Get the signed angle

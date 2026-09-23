@@ -78,10 +78,36 @@ public final class SableAssemblyBoundsApi {
                 : referencePosition;
         double radiusX = Math.max(Math.abs(minX - reference.x), Math.abs(maxX - reference.x));
         double radiusZ = Math.max(Math.abs(minZ - reference.z), Math.abs(maxZ - reference.z));
+        double spatialRadiusSqr = 0.0D;
+        if (subLevels != null) {
+            for (SubLevel subLevel : subLevels) {
+                if (subLevel == null || subLevel.isRemoved()) {
+                    continue;
+                }
+                var bounds = subLevel.boundingBox();
+                if (bounds == null || !finiteBounds(
+                        bounds.minX(), bounds.minY(), bounds.minZ(),
+                        bounds.maxX(), bounds.maxY(), bounds.maxZ())) {
+                    continue;
+                }
+                for (double x : new double[]{bounds.minX(), bounds.maxX()}) {
+                    for (double y : new double[]{bounds.minY(), bounds.maxY()}) {
+                        for (double z : new double[]{bounds.minZ(), bounds.maxZ()}) {
+                            double dx = x - reference.x;
+                            double dy = y - reference.y;
+                            double dz = z - reference.z;
+                            spatialRadiusSqr = Math.max(spatialRadiusSqr,
+                                    dx * dx + dy * dy + dz * dz);
+                        }
+                    }
+                }
+            }
+        }
         return new Envelope(
                 Math.sqrt(radiusX * radiusX + radiusZ * radiusZ),
                 maxY - minY,
-                reference.y - minY);
+                reference.y - minY,
+                Math.sqrt(spatialRadiusSqr));
     }
 
     // Check if the bounds are finite and ordered
@@ -95,9 +121,17 @@ public final class SableAssemblyBoundsApi {
     }
 
     // Store the conservative assembly size around its control reference point
-    public record Envelope(double horizontalRadius, double height, double bottomOffset) {
+    public record Envelope(double horizontalRadius, double height, double bottomOffset,
+                           double spatialRadius) {
         // Default envelope
         public static final Envelope DEFAULT = new Envelope(1.0D, 1.0D, 0.5D);
+
+        // Initialize a standard non-rotating envelope
+        public Envelope(double horizontalRadius, double height, double bottomOffset) {
+            this(horizontalRadius, height, bottomOffset,
+                    Math.max(horizontalRadius,
+                            Math.max(bottomOffset, height - bottomOffset)));
+        }
 
         // Initialize the envelope
         public Envelope {
@@ -105,6 +139,16 @@ public final class SableAssemblyBoundsApi {
             height = finitePositive(height, 1.0D);
             bottomOffset = Double.isFinite(bottomOffset)
                     ? Math.max(0.0D, bottomOffset) : height * 0.5D;
+            spatialRadius = Math.max(
+                    finitePositive(spatialRadius, horizontalRadius),
+                    Math.max(horizontalRadius,
+                            Math.max(bottomOffset, height - bottomOffset)));
+        }
+
+        // Get a center-to-target arrival tolerance which covers the complete hull plus padding.
+        public double targetOverlapTolerance(double padding) {
+            double safePadding = Double.isFinite(padding) ? Math.max(0.0D, padding) : 0.0D;
+            return spatialRadius + safePadding;
         }
 
         // Normalize one positive finite value

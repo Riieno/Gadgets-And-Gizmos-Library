@@ -97,6 +97,10 @@ public final class ScmControlProbeRegistry {
             List<ScmControlProbe> probes = provider.factory().create(blockEntity, ctx);
             if (probes != null) {
                 probes.stream().filter(Objects::nonNull).forEach(res::add);
+                if (probes.stream().filter(Objects::nonNull)
+                        .anyMatch(ScmControlProbe::suppressesFallbackProbes)) {
+                    break;
+                }
             }
         }
         return List.copyOf(res);

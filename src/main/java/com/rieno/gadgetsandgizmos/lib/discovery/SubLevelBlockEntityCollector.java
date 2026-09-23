@@ -18,11 +18,13 @@ import dev.ryanhcode.sable.sublevel.tracking_points.SubLevelTrackingPointSavedDa
 import dev.ryanhcode.sable.sublevel.tracking_points.TrackingPoint;
 import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.TicketType;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import org.jetbrains.annotations.Nullable;
 
@@ -45,6 +47,13 @@ public final class SubLevelBlockEntityCollector {
 
     private static final TicketType<UUID> SUB_LEVEL_LOAD_TICKET = TicketType.create(
             "gadgetsngizmos:sable_sublevel_load", Comparator.comparing(UUID::toString), 40);
+
+    /** A loaded, non-air block in one Sable body. */
+    public record LoadedBlock(BlockPos position, BlockState state) {
+        public LoadedBlock {
+            position = position == null ? BlockPos.ZERO : position.immutable();
+        }
+    }
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -194,6 +203,44 @@ public final class SubLevelBlockEntityCollector {
         return new ArrayList<>(container.getAllSubLevels());
     }
 
+    /**
+     * Resolve the containing server dimension from Sable's live container or
+     * persistent tracking-point index without loading the SubLevel or any of
+     * its chunks.
+     */
+    public static @Nullable ServerLevel findContainingServerLevel(
+            @Nullable MinecraftServer server,
+            @Nullable UUID subLevelId
+    ) {
+        if (server == null || subLevelId == null) {
+            return null;
+        }
+        for (ServerLevel level : server.getAllLevels()) {
+            if (findSubLevel(level, subLevelId) != null
+                    || hasPersistedSubLevel(level, subLevelId)) {
+                return level;
+            }
+        }
+        return null;
+    }
+
+    // Check Sable's durable tracking-point index without requesting a chunk ticket.
+    private static boolean hasPersistedSubLevel(ServerLevel level, UUID subLevelId) {
+        try {
+            SubLevelTrackingPointSavedData trackingData =
+                    SubLevelTrackingPointSavedData.getOrLoad(level);
+            for (Map.Entry<UUID, TrackingPoint> entry : trackingData.getAllTrackingPoints()) {
+                TrackingPoint trackingPoint = entry.getValue();
+                if (trackingPoint != null && trackingPoint.inSubLevel()
+                        && subLevelId.equals(trackingPoint.subLevelID())) {
+                    return true;
+                }
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+        }
+        return false;
+    }
+
     // Get the container
     private static @Nullable SubLevelContainer getContainer(@Nullable Level level) {
         if (level == null) {
@@ -307,6 +354,35 @@ public final class SubLevelBlockEntityCollector {
             }
         }
         return null;
+    }
+
+    /**
+     * Read a bounded snapshot of the non-air blocks already loaded for a Sable
+     * body. This never creates chunk tickets and is suitable for previews sent
+     * to a client that is not currently tracking the craft itself.
+     */
+    public static List<LoadedBlock> getLoadedBlocks(@Nullable Object subLevel, int maximumBlocks) {
+        if (!(subLevel instanceof SubLevel sableSubLevel) || !isUsableSubLevel(sableSubLevel, null)) {
+            return List.of();
+        }
+        int limit = Math.max(1, maximumBlocks);
+        List<LoadedBlock> blocks = new ArrayList<>();
+        try {
+            for (PlotChunkHolder holder : sableSubLevel.getPlot().getLoadedChunks()) {
+                if (blocks.size() >= limit) break;
+                LevelChunk chunk = holder.getChunk();
+                if (chunk == null || chunk.isEmpty()) continue;
+                chunk.findBlocks(state -> !state.isAir(), (position, state) -> {
+                    if (blocks.size() < limit) {
+                        blocks.add(new LoadedBlock(position, state));
+                    }
+                });
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A body may be replaced while its chunk snapshot is being read.
+        }
+        blocks.sort(Comparator.comparing(LoadedBlock::position));
+        return List.copyOf(blocks);
     }
 
     // Find the actor block entity

@@ -11,6 +11,7 @@ package com.rieno.gadgetsandgizmos.lib.physics;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.api.entity.EntitySubLevelUtil;
 import dev.ryanhcode.sable.companion.math.BoundingBox3d;
+import dev.ryanhcode.sable.companion.math.Pose3dc;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
@@ -18,6 +19,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
+import org.joml.Vector3d;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -43,6 +45,22 @@ public final class SableTransformApi {
     =======================================================================================================================
 
     ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Transform a local point between body frames through their world poses.
+    public static Vec3 transformPositionBetween(Pose3dc targetPose, Pose3dc sourcePose, Vec3 pos){
+        Vector3d world = new Vector3d(pos.x, pos.y, pos.z);
+        sourcePose.transformPosition(world);
+        targetPose.transformPositionInverse(world);
+        return new Vec3(world.x, world.y, world.z);
+    }
+
+    // Rotate a local vector between body frames without translating, normalizing or reversing it.
+    public static Vec3 transformDirectionBetween(Pose3dc targetPose, Pose3dc sourcePose, Vec3 dir){
+        Vector3d world = new Vector3d(dir.x, dir.y, dir.z);
+        sourcePose.orientation().transform(world);
+        targetPose.orientation().transformInverse(world);
+        return new Vec3(world.x, world.y, world.z);
+    }
 
     // Convert one world direction to SubLevel space
     public static Vec3 toLocalDirection(@Nullable SubLevel subLevel, Vec3 dir) {
