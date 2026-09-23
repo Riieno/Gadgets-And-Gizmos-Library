@@ -45,7 +45,7 @@ public abstract class SimulatedPhysicsStaffDragPacketMixin {
             return;
         }
 
-        if (!PhysicsStaffInteractionGuard.authorizeTarget(player, subLevel())) {
+        if (!PhysicsStaffInteractionGuard.authorizeMovementTarget(player, subLevel())) {
             PhysicsStaffPowerTracker.get(player.server).clearActiveDrag(player.getUUID());
             PhysicsStaffServerHandler.get((ServerLevel) player.level()).stopDragging(player.getUUID());
             callbackInfo.cancel();

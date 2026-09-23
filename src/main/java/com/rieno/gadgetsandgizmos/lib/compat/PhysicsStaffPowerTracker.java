@@ -291,6 +291,11 @@ public final class PhysicsStaffPowerTracker extends SavedData {
             state.activeDrag = null;
         }
 
+        if (state.activeDrag != null && playerHasEnteredDraggedAssembly(player, state.activeDrag)) {
+            stopDragging(server, state);
+            state.activeDrag = null;
+        }
+
         if (state.isEmpty()) {
             return false;
         }
@@ -318,6 +323,15 @@ public final class PhysicsStaffPowerTracker extends SavedData {
         }
 
         return true;
+    }
+
+    // Check whether a player entered the assembly they are dragging
+    private static boolean playerHasEnteredDraggedAssembly(ServerPlayer player, AssemblyRef activeDrag) {
+        if (player == null || activeDrag == null || !player.serverLevel().dimension().equals(activeDrag.dimension)) {
+            return false;
+        }
+        return PhysicsStaffInteractionGuard.isPlayerOnConnectedTargetSubLevel(
+                player, activeDrag.subLevelId);
     }
 
     // Update a state supplied by a placed world power source

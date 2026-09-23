@@ -63,7 +63,13 @@ public abstract class SimulatedPhysicsStaffClientHandlerMixin {
         boolean stoppingDrag = action == PhysicsStaffAction.START_DRAG && dragSession != null;
         if (action != PhysicsStaffAction.STOP_DRAG
                 && !stoppingDrag
-                && (shouldBlockPoweredStaffAction() || gadgetsngizmos$targetsPlayersSubLevel(action))) {
+                && shouldBlockPoweredStaffAction()) {
+            callbackInfo.cancel();
+            return;
+        }
+        if (action == PhysicsStaffAction.START_DRAG
+                && !stoppingDrag
+                && gadgetsngizmos$targetsPlayersSubLevel()) {
             callbackInfo.cancel();
         }
     }
@@ -83,10 +89,10 @@ public abstract class SimulatedPhysicsStaffClientHandlerMixin {
     }
 
     // Check if the action targets the player sublevel
-    private boolean gadgetsngizmos$targetsPlayersSubLevel(PhysicsStaffAction action) {
+    private boolean gadgetsngizmos$targetsPlayersSubLevel() {
         LocalPlayer player = Minecraft.getInstance().player;
         if (player == null || !PhysicsStaffPowerHooks.isHoldingPoweredPhysicsStaff(player)
-                || action == PhysicsStaffAction.START_DRAG && dragSession != null) {
+                || dragSession != null) {
             return false;
         }
 

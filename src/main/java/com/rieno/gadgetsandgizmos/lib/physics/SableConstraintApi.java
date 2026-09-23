@@ -80,6 +80,15 @@ public final class SableConstraintApi {
                 .newInstance(posA, posB, orientationA, orientationB, lockedAxes);
     }
 
+    // Create one compatible rotary constraint configuration
+    public static Object rotaryConfiguration(Vector3dc posA, Vector3dc posB,
+                                             Vector3dc axisA, Vector3dc axisB)
+            throws ReflectiveOperationException {
+        return configurationClass("RotaryConstraintConfiguration", "rotary")
+                .getConstructor(Vector3dc.class, Vector3dc.class, Vector3dc.class, Vector3dc.class)
+                .newInstance(posA, posB, axisA, axisB);
+    }
+
     // Add one compatible constraint
     public static Object addConstraint(Object pipeline, Object bodyA, Object bodyB, Object config)
             throws ReflectiveOperationException {
