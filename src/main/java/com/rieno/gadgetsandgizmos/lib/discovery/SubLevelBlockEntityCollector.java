@@ -82,7 +82,9 @@ public final class SubLevelBlockEntityCollector {
         }
 
         Object subLevel = getSubLevel(level, subLevelId);
-        return subLevel instanceof Level targetLevel ? targetLevel : null;
+        // Sable bodies own plots in a Level; they are not Level instances.
+        // Block positions remain plot-space positions in that owning Level.
+        return subLevel instanceof SubLevel body && !body.isRemoved() ? body.getLevel() : null;
     }
 
     // Find the sublevel
