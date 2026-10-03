@@ -34,6 +34,7 @@ public final class ScmBuiltinControlModes {
     private static final Set<ResourceLocation> BUILTINS = Set.of(
             AIRSHIP_ID, GROUND_SEA_ID, PLANE_ID, IK_ID);
     private static final double MIN_CLEARANCE = 3.0D;
+    private static boolean ikEnabled;
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -52,7 +53,7 @@ public final class ScmBuiltinControlModes {
         ScmControlModeRegistry.register(new AirshipMode());
         ScmControlModeRegistry.register(new GroundSeaMode());
         ScmControlModeRegistry.register(new PlaneMode());
-        ScmControlModeRegistry.register(new LeggedMode());
+        if (ikEnabled) ScmControlModeRegistry.register(new LeggedMode());
     }
 
     /*--------------------------------------------------------##---------------------------------------------------------
@@ -66,6 +67,17 @@ public final class ScmBuiltinControlModes {
     // Check if this is builtin
     public static boolean isBuiltin(ResourceLocation id) {
         return BUILTINS.contains(id);
+    }
+
+    // Enable or remove the experimental IK control mode from the shared selector
+    public static synchronized void setIkEnabled(boolean enabled) {
+        ikEnabled = enabled;
+        ScmControlModeRegistry.setBuiltin(IK_ID, enabled ? new LeggedMode() : null);
+    }
+
+    // Check whether the experimental IK control mode is available
+    public static synchronized boolean isIkEnabled() {
+        return ikEnabled;
     }
 
     // Get the id

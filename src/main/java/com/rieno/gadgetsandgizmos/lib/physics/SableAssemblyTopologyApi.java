@@ -115,6 +115,14 @@ public final class SableAssemblyTopologyApi {
     public static Topology discover(@Nullable ServerSubLevel root,
                                     @Nullable ActorFilter filter,
                                     @Nullable ActorClassifier classifier) {
+        return discover(root, filter, classifier, List.of());
+    }
+
+    // Include explicit physical links from integrations which are not Sable actors
+    public static Topology discover(@Nullable ServerSubLevel root,
+                                    @Nullable ActorFilter filter,
+                                    @Nullable ActorClassifier classifier,
+                                    Collection<Edge> additionalConnections) {
         UUID rootId = id(root);
         if (!usable(root)) {
             return Topology.unavailable(rootId);
@@ -127,6 +135,12 @@ public final class SableAssemblyTopologyApi {
             loaded.put(rootId, root);
 
             Map<EdgeKey, SableAssemblyConnection.Kind> edgeKinds = new HashMap<>();
+            for(Edge edge : additionalConnections){
+                if(edge != null && loaded.containsKey(edge.firstSubLevelId())
+                        && loaded.containsKey(edge.secondSubLevelId())){
+                    merge(edgeKinds, edge.firstSubLevelId(), edge.secondSubLevelId(), edge.kind());
+                }
+            }
             for (ServerSubLevel owner : loaded.values()) {
                 for (BlockEntitySubLevelActor actor : actors(owner)) {
                     if (!include(effectiveFilter, owner, actor)) {

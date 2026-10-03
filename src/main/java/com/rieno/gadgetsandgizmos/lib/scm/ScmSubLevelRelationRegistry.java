@@ -164,6 +164,31 @@ public final class ScmSubLevelRelationRegistry {
         return Set.copyOf(resolved);
     }
 
+    // Order selected links from the root, rejecting branches, gaps and loops
+    public static List<Relation> orderedChain(UUID root, Collection<Relation> relations){
+        if(root == null || relations == null) return List.of();
+        Set<Relation> remaining = new LinkedHashSet<>(relations);
+        if(remaining.stream().anyMatch(relation -> relation == null || !relation.valid())) return List.of();
+        List<Relation> ordered = new ArrayList<>();
+        Set<UUID> visited = new LinkedHashSet<>();
+        UUID body = root;
+        visited.add(body);
+        while(!remaining.isEmpty()){
+            Relation next = null;
+            for(Relation relation : remaining){
+                if(!body.equals(relation.parentSubLevelId()) && !body.equals(relation.childSubLevelId())) continue;
+                if(next != null) return List.of();
+                next = relation;
+            }
+            if(next == null) return List.of();
+            body = body.equals(next.parentSubLevelId()) ? next.childSubLevelId() : next.parentSubLevelId();
+            if(!visited.add(body)) return List.of();
+            ordered.add(next);
+            remaining.remove(next);
+        }
+        return List.copyOf(ordered);
+    }
+
     // Store one block entity together with its owning sub-level id
     public record ScopedBlockEntity(UUID subLevelId, BlockEntity blockEntity) {
         // Check whether this points at a loaded block entity

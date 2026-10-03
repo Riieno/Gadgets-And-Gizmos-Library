@@ -58,7 +58,7 @@ public final class ScmLeggedLocomotion {
         return solve(input, limbs, contacts, BodyMotion.NONE, null, null);
     }
 
-    // Solve the commanded trajectories while retaining planted stance feet between ticks
+    // Solve the commanded trajectories while retaining stance surface heights between ticks
     public static Plan solve(
             Input input, Collection<Limb> limbs, Collection<Contact> contacts,
             BodyMotion bodyMotion, GaitState gaitState
@@ -87,8 +87,9 @@ public final class ScmLeggedLocomotion {
         for (Limb limb : ordered) {
             if (limb.kind() == LimbKind.ARM) continue;
             double phase = wrap(state.phase() + limb.phaseOffset());
-            if (phase < state.swingFraction()) continue;
+            if (moving(state) && phase < state.swingFraction()) continue;
             Contact contact = contactsById.get(limb.id());
+            if(contact != null && !contact.grounded()) continue;
             support.add(contact != null && contact.grounded() ? contact.position()
                     : limb.hipPosition().add(limb.defaultFootPosition()));
         }
@@ -97,17 +98,24 @@ public final class ScmLeggedLocomotion {
         for (Limb limb : ordered) {
             if (limb.kind() == LimbKind.ARM) continue;
             double phase = wrap(state.phase() + limb.phaseOffset());
-            boolean stance = phase >= state.swingFraction();
-            Vec3 foot = footTarget(state, limb, phase, stance, balance, motion);
+            boolean stance = !moving(state) || phase >= state.swingFraction();
+            Vec3 foot = footTarget(state, limb, phase, stance, motion);
             Contact contact = contactsById.get(limb.id());
-            if (contact != null && contact.grounded()) {
+            if(contact != null && contact.surfaceDetected()){
                 double terrainOffset = contact.footPosition().y - limb.defaultFootPosition().y;
                 foot = foot.add(0.0D, terrainOffset, 0.0D);
             }
             if (gaitState != null) {
-                foot = gaitState.resolveFoot(limb, foot, stance, contact, motion);
+                double swingProgress = Mth.clamp(phase / Math.max(EPSILON, state.swingFraction()),
+                        0.0D, 1.0D);
+                foot = gaitState.resolveFoot(limb, foot, stance, contact, motion,
+                        swingProgress, landingFoot(state, limb, motion),
+                        !moving(state) || motion.localVelocity().lengthSqr() > 0.01D);
             }
-            foot = foot.add(postureOffset(state, limb, pose));
+            // Limit the planted reach before adding lift so terrain cannot erase knee flexion
+            foot = minimumKneeBend(limb, foot);
+            double lift = stance ? 0.0D : Math.sin(Math.PI * phase / state.swingFraction()) * state.clearance();
+            foot = foot.add(0.0D, lift, 0.0D).add(postureOffset(state, limb, pose));
             foot = minimumKneeBend(limb, foot);
             targets.put(limb.id(), target(limb, foot, phase, stance));
         }
@@ -193,11 +201,37 @@ public final class ScmLeggedLocomotion {
         return new RedundantIkSolution(List.copyOf(deltas), error);
     }
 
+    private static boolean moving(Input input){
+        return horizontal(input.command()).lengthSqr() > EPSILON * EPSILON
+                || Math.abs(input.yawDemand()) > EPSILON;
+    }
+
     // Get the requested foot target during stance or swing
     private static Vec3 footTarget(
-            Input input, Limb limb, double phase, boolean stance,
-            Vec3 balance, BodyMotion motion
+            Input input, Limb limb, double phase, boolean stance, BodyMotion motion
     ) {
+        Vec3 strideVector = strideVector(input, limb, motion);
+        Vec3 nominal = limb.defaultFootPosition();
+        double swing = Math.max(EPSILON, input.swingFraction());
+        double stride;
+        if (stance) {
+            double stanceProgress = (phase - swing) / Math.max(EPSILON, 1.0D - swing);
+            stride = 0.5D - Mth.clamp(stanceProgress, 0.0D, 1.0D);
+        } else {
+            double swingProgress = Mth.clamp(phase / swing, 0.0D, 1.0D);
+            double easedSwing = swingProgress * swingProgress * (3.0D - 2.0D * swingProgress);
+            stride = easedSwing - 0.5D;
+        }
+        return nominal.add(strideVector.scale(stride));
+    }
+
+    // Get the next planted location at the front of the commanded step
+    private static Vec3 landingFoot(Input input, Limb limb, BodyMotion motion) {
+        return limb.defaultFootPosition().add(strideVector(input, limb, motion).scale(0.5D));
+    }
+
+    // Bound command, capture-point and turning offsets to the limb's reachable step
+    private static Vec3 strideVector(Input input, Limb limb, BodyMotion motion) {
         Vec3 command = horizontal(input.command());
         double commandStrength = Mth.clamp(command.length(), 0.0D, 1.0D);
         Vec3 direction = commandStrength <= EPSILON ? Vec3.ZERO : command.normalize();
@@ -209,21 +243,11 @@ public final class ScmLeggedLocomotion {
         travel = travel.add(capture.scale(commandStrength));
         Vec3 turn = new Vec3(-limb.hipPosition().z, 0.0D, limb.hipPosition().x)
                 .scale(input.yawDemand() * input.stepLength() * 0.5D);
-        Vec3 nominal = limb.defaultFootPosition();
-        double swing = Math.max(EPSILON, input.swingFraction());
-        double stride;
-        double lift = 0.0D;
-        if (stance) {
-            double stanceProgress = (phase - swing) / Math.max(EPSILON, 1.0D - swing);
-            stride = 0.5D - Mth.clamp(stanceProgress, 0.0D, 1.0D);
-        } else {
-            double swingProgress = Mth.clamp(phase / swing, 0.0D, 1.0D);
-            double easedSwing = swingProgress * swingProgress * (3.0D - 2.0D * swingProgress);
-            stride = easedSwing - 0.5D;
-            lift = Math.sin(Math.PI * swingProgress) * input.clearance();
+        Vec3 strideVector = travel.add(turn);
+        if (strideVector.lengthSqr() > maximumStep * maximumStep) {
+            return strideVector.normalize().scale(maximumStep);
         }
-        return nominal.add(travel.add(turn).scale(stride))
-                .subtract(horizontal(balance)).add(0.0D, lift, 0.0D);
+        return strideVector;
     }
 
     // Get the vertical foot offset requested by the current crouch or jump pose
@@ -432,7 +456,7 @@ public final class ScmLeggedLocomotion {
         double determinant = matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
                 - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
                 + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]);
-        if (Math.abs(determinant) <= EPSILON) return Vec3.ZERO;
+        if (Math.abs(determinant) <= 1.0E-18D) return Vec3.ZERO;
         double dx = value.x * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
                 - matrix[0][1] * (value.y * matrix[2][2] - matrix[1][2] * value.z)
                 + matrix[0][2] * (value.y * matrix[2][1] - matrix[1][1] * value.z);
@@ -592,14 +616,27 @@ public final class ScmLeggedLocomotion {
         }
     }
 
-    // Retain planted foot targets while the body moves over the ground
+    // Retain planted stance feet and start each swing from the measured touchdown pose
     public static final class GaitState {
         private final Map<String, StanceFoot> stanceFeet = new LinkedHashMap<>();
+        private final Map<String, SwingFoot> swingFeet = new LinkedHashMap<>();
+        private final Map<String, Limb> referenceLimbs = new LinkedHashMap<>();
         private double phase;
+
+        // Keep calibrated segment lengths while updating the hip in the current planning frame
+        public Limb referenceLimb(Limb limb){
+            Objects.requireNonNull(limb, "limb");
+            Limb ref = referenceLimbs.computeIfAbsent(limb.id(), ignored -> limb);
+            return new Limb(ref.id(), ref.kind(), limb.hipPosition(), ref.defaultFootPosition(),
+                    ref.coxaLength(), ref.upperLength(), ref.lowerLength(), ref.phaseOffset(),
+                    ref.yawOffset(), ref.hipOffset(), ref.kneeOffset());
+        }
 
         // Clear every retained foot target
         public void clear() {
             stanceFeet.clear();
+            swingFeet.clear();
+            referenceLimbs.clear();
             phase = 0.0D;
         }
 
@@ -613,18 +650,41 @@ public final class ScmLeggedLocomotion {
             return phase;
         }
 
-        // Resolve one foot target from its stance history and the observed body motion
+        // Hold stance against body motion and interpolate swing from lift-off to touchdown
         private Vec3 resolveFoot(
-                Limb limb, Vec3 requested, boolean stance, Contact contact, BodyMotion motion
+                Limb limb, Vec3 requested, boolean stance, Contact contact, BodyMotion motion,
+                double swingProgress, Vec3 landing, boolean anchorStance
         ) {
-            if (limb == null || !stance) {
-                if (limb != null) stanceFeet.remove(limb.id());
-                return requested;
+            if (limb == null) return requested;
+            if (!stance) {
+                StanceFoot planted = stanceFeet.remove(limb.id());
+                SwingFoot swing = swingFeet.get(limb.id());
+                Vec3 touchdown = contact != null && contact.surfaceDetected()
+                        ? new Vec3(landing.x, contact.footPosition().y, landing.z) : landing;
+                if (swing == null) {
+                    Vec3 start = planted == null ? requested
+                            : planted.position().subtract(motion.translation());
+                    swing = new SwingFoot(start, touchdown);
+                    swingFeet.put(limb.id(), swing);
+                } else {
+                    swing = new SwingFoot(swing.start().subtract(motion.translation()), touchdown);
+                    swingFeet.put(limb.id(), swing);
+                }
+                double progress = Mth.clamp(finite(swingProgress), 0.0D, 1.0D);
+                double easedProgress = progress * progress * (3.0D - 2.0D * progress);
+                return swing.start().lerp(swing.landing(), easedProgress);
             }
+            swingFeet.remove(limb.id());
             StanceFoot retained = stanceFeet.get(limb.id());
-            Vec3 target = retained == null ? requested : retained.position().subtract(motion.translation());
-            if (contact != null && contact.grounded()) {
-                target = new Vec3(target.x, contact.footPosition().y, target.z);
+            Vec3 target;
+            if (retained == null || !anchorStance) {
+                target = contact != null && contact.surfaceDetected()
+                        ? new Vec3(requested.x, contact.footPosition().y, requested.z) : requested;
+            } else {
+                target = retained.position().subtract(motion.translation());
+                if(contact != null && contact.surfaceDetected()){
+                    target = new Vec3(target.x, contact.footPosition().y, target.z);
+                }
             }
             stanceFeet.put(limb.id(), new StanceFoot(target));
             return target;
@@ -637,18 +697,34 @@ public final class ScmLeggedLocomotion {
                 limbs.stream().filter(Objects::nonNull).map(Limb::id).forEach(ids::add);
             }
             stanceFeet.keySet().removeIf(id -> !ids.contains(id));
+            swingFeet.keySet().removeIf(id -> !ids.contains(id));
+            referenceLimbs.keySet().removeIf(id -> !ids.contains(id));
         }
 
-        // Store one retained body-local foot target
+        // Store one retained body-local stance surface height
         private record StanceFoot(Vec3 position) {
             private StanceFoot {
                 position = finite(position);
             }
         }
+
+        // Store the lift-off and touchdown points for one continuous swing
+        private record SwingFoot(Vec3 start, Vec3 landing) {
+            private SwingFoot {
+                start = finite(start);
+                landing = finite(landing);
+            }
+        }
     }
 
     // Store a measured contact point for one foot
-    public record Contact(String limbId, boolean grounded, Vec3 position, Vec3 footPosition) {
+    public record Contact(String limbId, boolean grounded, Vec3 position, Vec3 footPosition,
+                          boolean surfaceDetected){
+        // Preserve contacts supplied by integrations that do not distinguish terrain from touch
+        public Contact(String limbId, boolean grounded, Vec3 position, Vec3 footPosition){
+            this(limbId, grounded, position, footPosition, grounded);
+        }
+
         // Initialize one contact with a shared support and limb-frame position
         public Contact(String limbId, boolean grounded, Vec3 position) {
             this(limbId, grounded, position, position);

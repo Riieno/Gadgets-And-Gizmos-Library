@@ -44,6 +44,11 @@ public enum ScmLeggedGait {
         return legCount;
     }
 
+    // Give a biped one swing half-cycle so exactly one foot clears the ground
+    public double swingFraction() {
+        return this == BIPED ? 0.5D : 0.35D;
+    }
+
     // Get every selectable gait in UI order
     public static List<ScmLeggedGait> selections() {
         return SELECTIONS;

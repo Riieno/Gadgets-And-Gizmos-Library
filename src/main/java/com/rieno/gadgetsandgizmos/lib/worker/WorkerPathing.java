@@ -14,6 +14,7 @@ import java.util.EnumSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Predicate;
 
 // Create live Sable path searches with the standard worker clearance envelope
 public final class WorkerPathing {
@@ -33,11 +34,25 @@ public final class WorkerPathing {
     // Queue a live route which may use clear air when the worker has a flight-granting equipment effect.
     public static SablePathfinder.QueuedPlan queue(Level rootLevel, Vec3 start, Vec3 target,
                                                     double maximumRange, boolean allowFlight) {
+        return queue(rootLevel, start, target, maximumRange, allowFlight, pos -> false);
+    }
+
+    // Keep optional worker routes outside cells reserved by a caller
+    public static SablePathfinder.QueuedPlan queue(Level rootLevel, Vec3 start, Vec3 target,
+                                                    double maximumRange, boolean allowFlight,
+                                                    Predicate<BlockPos> forbidden) {
         SablePathfinder.Validator collision = SablePathfinder.sableCollisionValidator(
                 SablePathfinder.CollisionOptions.DEFAULT,
                 new SablePathfinder.GroundContactPolicy(0.1D),
                 SablePathfinder.CollisionPrecision.SWEPT);
         SablePathfinder.Validator validator = query -> {
+            Vec3 delta = query.end().subtract(query.start());
+            int samples = Math.max(1, (int)Math.ceil(delta.length() * 2.0D));
+            for(int idx = 1; idx <= samples; idx++){
+                if(forbidden != null && forbidden.test(BlockPos.containing(
+                        query.start().add(delta.scale(idx / (double)samples)))))
+                    return SablePathfinder.Traversal.blocked();
+            }
             SablePathfinder.Traversal direct = collision.validate(query);
             if (direct.result() == SablePathfinder.TraversalResult.CLEAR
                     || query.mode() != SablePathfinder.RouteMode.GROUND
@@ -54,7 +69,7 @@ public final class WorkerPathing {
                 SablePathfinder.Location.world(target),
                 WORKER_SAFETY,
                 movement,
-                0.75D,
+                1.0D,
                 Math.max(8.0D, maximumRange),
                 4096,
                 0.6D,
@@ -63,12 +78,17 @@ public final class WorkerPathing {
 
     // Create a navigator which continually rebuilds short safe path prefixes from the live worker position
     public static LiveNavigator liveNavigator(double maximumRange) {
-        return new LiveNavigator(maximumRange, false);
+        return new LiveNavigator(maximumRange, false, null);
     }
 
     // Create a navigator which may select grounded or flight route legs.
     public static LiveNavigator liveNavigator(double maximumRange, boolean allowFlight) {
-        return new LiveNavigator(maximumRange, allowFlight);
+        return new LiveNavigator(maximumRange, allowFlight, null);
+    }
+
+    public static LiveNavigator liveNavigator(double maximumRange, boolean allowFlight,
+                                              Predicate<BlockPos> forbidden){
+        return new LiveNavigator(maximumRange, allowFlight, forbidden);
     }
 
     // Find the closest loaded ground position beside an interaction target
@@ -81,6 +101,12 @@ public final class WorkerPathing {
     // Find a reachable exterior face of one linked block or multiblock endpoint
     public static @Nullable Vec3 reachableInteractionPosition(Level level, Collection<BlockPos> blocks,
                                                                @Nullable Direction preferredFace, Vec3 origin) {
+        return reachableInteractionPosition(level, blocks, preferredFace, origin, pos -> false);
+    }
+
+    public static @Nullable Vec3 reachableInteractionPosition(Level level, Collection<BlockPos> blocks,
+                                                               @Nullable Direction preferredFace, Vec3 origin,
+                                                               Predicate<BlockPos> forbidden) {
         if (level == null || blocks == null || blocks.isEmpty()) return null;
         Set<BlockPos> members = new LinkedHashSet<>();
         for (BlockPos block : blocks) {
@@ -95,7 +121,8 @@ public final class WorkerPathing {
                 BlockPos column = member.relative(face);
                 for (int vertical = -1; vertical <= 1; vertical++) {
                     BlockPos candidate = column.offset(0, vertical, 0);
-                    if (!members.contains(candidate) && canStandAt(level, candidate)) candidates.add(candidate);
+                    if (!members.contains(candidate) && (forbidden == null || !forbidden.test(candidate))
+                            && canStandAt(level, candidate)) candidates.add(candidate);
                 }
             }
             if (face == preferredFace && !candidates.isEmpty()) {
@@ -150,15 +177,19 @@ public final class WorkerPathing {
     public static final class LiveNavigator {
         private final double maximumRange;
         private final boolean allowFlight;
+        private final Predicate<BlockPos> forbidden;
         private SablePathfinder.QueuedPlan planner;
         private List<SablePathfinder.Waypoint> route = List.of();
         private int routeIndex;
         private Vec3 target = Vec3.ZERO;
+        private Vec3 lastPosition;
+        private int stalledTicks;
 
         // Initialize the bounded live navigator
-        private LiveNavigator(double maximumRange, boolean allowFlight) {
+        private LiveNavigator(double maximumRange, boolean allowFlight, Predicate<BlockPos> forbidden) {
             this.maximumRange = Math.max(8.0D, maximumRange);
             this.allowFlight = allowFlight;
+            this.forbidden = forbidden;
         }
 
         // Find and follow one current safe prefix toward the supplied live destination
@@ -166,6 +197,14 @@ public final class WorkerPathing {
                                       int workBudget, double movementSpeed) {
             Vec3 position = current == null ? Vec3.ZERO : current;
             Vec3 nextDestination = destination == null ? position : destination;
+            if(lastPosition != null && lastPosition.distanceToSqr(position) < 1.0E-8D) stalledTicks++;
+            else stalledTicks = 0;
+            lastPosition = position;
+            if(stalledTicks >= 80){
+                clear();
+                stalledTicks = 0;
+                return new NavigationStep(NavigationState.UNAVAILABLE, position);
+            }
             if (arrivalDistanceSqr(position, nextDestination, allowFlight) <= 1.0E-6D) {
                 clear();
                 return new NavigationStep(NavigationState.ARRIVED, position);
@@ -191,10 +230,12 @@ public final class WorkerPathing {
                 }
                 return new NavigationStep(NavigationState.NAVIGATING, advanced);
             }
-            if (planner == null) planner = queue(level, position, nextDestination, maximumRange, allowFlight);
+            if (planner == null) planner = forbidden == null
+                    ? queue(level, position, nextDestination, maximumRange, allowFlight)
+                    : queue(level, position, nextDestination, maximumRange, allowFlight, forbidden);
             planner.advance(Math.max(1, workBudget));
             SablePathfinder.Result result = planner.result();
-            if (!result.waypoints().isEmpty()) {
+            if (planner.finished() && !result.waypoints().isEmpty()) {
                 route = result.waypoints();
                 routeIndex = 0;
                 planner = null;

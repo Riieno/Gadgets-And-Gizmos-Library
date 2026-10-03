@@ -43,6 +43,11 @@ public interface ScmControlProbe {
     // Get the maximum control
     double maxControl();
 
+    // Clamp a target in this probe's native domain, including equivalent rotary turns
+    default double clampControl(double control) {
+        return Math.max(minControl(), Math.min(maxControl(), control));
+    }
+
     // Get the neutral control
     default double neutralControl() {
         return 0.0D;

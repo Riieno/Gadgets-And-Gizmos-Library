@@ -9,6 +9,7 @@ package com.rieno.gadgetsandgizmos.lib.client;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.rieno.gadgetsandgizmos.lib.client.render.AreaHighlightRenderTypes;
+import com.rieno.gadgetsandgizmos.lib.client.render.SoftParticleRenderTypes;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.RegisterShadersEvent;
 
@@ -33,6 +34,11 @@ public final class GadgetsNGizmosLibraryClientBootstrap {
                 AreaHighlightRenderTypes.onRegisterShaders(evt);
             } catch (java.io.IOException err) {
                 throw new RuntimeException("Failed to register area highlight shader", err);
+            }
+            try {
+                SoftParticleRenderTypes.onRegisterShaders(evt);
+            } catch (java.io.IOException err) {
+                throw new RuntimeException("Failed to register soft particle shaders", err);
             }
         });
     }

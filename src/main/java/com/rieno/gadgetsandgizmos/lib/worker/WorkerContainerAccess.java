@@ -5,6 +5,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.capabilities.Capabilities;
 import net.neoforged.neoforge.energy.IEnergyStorage;
 import net.neoforged.neoforge.fluids.capability.IFluidHandler;
@@ -23,11 +24,20 @@ public final class WorkerContainerAccess {
     private WorkerContainerAccess() {
     }
 
+    // Read readiness from the owning world or Sable plot without retaining an unavailable result
+    public static boolean isLoaded(Level level, BlockPos pos){
+        return level != null && pos != null
+                && com.rieno.gadgetsandgizmos.lib.discovery.SubLevelBlockEntityCollector.isTargetLoaded(level,
+                com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi.containingId(level, pos), pos);
+    }
+
     // Get all item handlers, preferring the linked face without limiting worker access to it
     public static List<IItemHandler> itemHandlers(Level level, BlockPos pos, @Nullable Direction preferredSide) {
-        if (level == null || pos == null || !level.isLoaded(pos)) return List.of();
+        if (!isLoaded(level, pos)) return List.of();
         BlockState state = level.getBlockState(pos);
         BlockEntity blockEntity = level.getBlockEntity(pos);
+        IItemHandler combined = level.getCapability(Capabilities.ItemHandler.BLOCK, pos, state, blockEntity, null);
+        if(combined != null) return List.of(combined);
         List<IItemHandler> handlers = new ArrayList<>();
         Set<IItemHandler> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         add(handlers, seen, preferredSide == null ? null : level.getCapability(
@@ -42,7 +52,7 @@ public final class WorkerContainerAccess {
 
     // Get all fluid handlers, preferring the linked face without limiting worker access to it
     public static List<IFluidHandler> fluidHandlers(Level level, BlockPos pos, @Nullable Direction preferredSide) {
-        if (level == null || pos == null || !level.isLoaded(pos)) return List.of();
+        if (!isLoaded(level, pos)) return List.of();
         BlockState state = level.getBlockState(pos);
         BlockEntity blockEntity = level.getBlockEntity(pos);
         List<IFluidHandler> handlers = new ArrayList<>();
@@ -59,7 +69,7 @@ public final class WorkerContainerAccess {
 
     // Get all FE storages, preferring the linked face without limiting worker access to it
     public static List<IEnergyStorage> energyStorages(Level level, BlockPos pos, @Nullable Direction preferredSide) {
-        if (level == null || pos == null || !level.isLoaded(pos)) return List.of();
+        if (!isLoaded(level, pos)) return List.of();
         BlockState state = level.getBlockState(pos);
         BlockEntity blockEntity = level.getBlockEntity(pos);
         List<IEnergyStorage> storages = new ArrayList<>();
@@ -72,6 +82,24 @@ public final class WorkerContainerAccess {
             add(storages, seen, level.getCapability(Capabilities.EnergyStorage.BLOCK, pos, state, blockEntity, side));
         }
         return List.copyOf(storages);
+    }
+
+    // Get the item storage exposed by one portable item.
+    public static @Nullable IItemHandler itemHandler(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return null;
+        return stack.getCapability(Capabilities.ItemHandler.ITEM);
+    }
+
+    // Get the fluid storage exposed by one portable item.
+    public static @Nullable IFluidHandler fluidHandler(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return null;
+        return stack.getCapability(Capabilities.FluidHandler.ITEM);
+    }
+
+    // Get the FE storage exposed by one portable item.
+    public static @Nullable IEnergyStorage energyStorage(ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return null;
+        return stack.getCapability(Capabilities.EnergyStorage.ITEM);
     }
 
     // Add one non-duplicated handler

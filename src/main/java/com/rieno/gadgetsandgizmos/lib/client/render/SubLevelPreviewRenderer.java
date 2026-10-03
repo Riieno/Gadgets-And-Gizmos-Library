@@ -18,6 +18,7 @@ import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.core.BlockPos;
@@ -68,6 +69,8 @@ import java.util.function.Predicate;
 public final class SubLevelPreviewRenderer implements AutoCloseable {
     public static final int DEFAULT_MAX_RENDERED_BLOCKS = 16_384;
     private static final AtomicInteger TEXTURE_IDS = new AtomicInteger();
+    private static final ResourceLocation HIGHLIGHT_PLANE_TEXTURE =
+            ResourceLocation.withDefaultNamespace("textures/misc/white.png");
     private static final float FIELD_OF_VIEW = (float) Math.toRadians(42.0D);
     private static final float MIN_DISTANCE = 3.0F;
     private static final float MAX_DISTANCE = 512.0F;
@@ -86,12 +89,17 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
      * in the root body's coordinate frame, so it remains renderable and
      * pickable without a client-side Sable pose.
      */
-    public record SnapshotBlock(UUID subLevelId, BlockPos position, BlockState state, Vec3 rootPosition) {
+    public record SnapshotBlock(UUID subLevelId, BlockPos position, BlockState state, Vec3 rootPosition, Quaternionf orientation) {
         public SnapshotBlock {
             position = position == null ? BlockPos.ZERO : position.immutable();
             state = state == null ? net.minecraft.world.level.block.Blocks.AIR.defaultBlockState() : state;
             rootPosition = rootPosition == null ? Vec3.atLowerCornerOf(position) : rootPosition;
+            orientation = orientation == null ? new Quaternionf() : new Quaternionf(orientation);
         }
+        public SnapshotBlock(UUID subLevelId, BlockPos position, BlockState state, Vec3 rootPosition){
+            this(subLevelId, position, state, rootPosition, new Quaternionf());
+        }
+        @Override public Quaternionf orientation(){ return new Quaternionf(orientation); }
     }
 
     /** A caller-defined target together with a face resolved by the picker. */
@@ -106,7 +114,7 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         }
     }
 
-    /** An outline to render over a block or one of its faces. */
+    /** An outline to render over a block, or a translucent plane and outline over one of its faces. */
     public record Highlight(UUID subLevelId, BlockPos position, Direction face, int color) {
         public Highlight {
             position = position == null ? BlockPos.ZERO : position.immutable();
@@ -615,6 +623,8 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
                                   Collection<Highlight> highlights, PoseStack pose,
                                   MultiBufferSource.BufferSource buffers) {
         if (highlights == null || highlights.isEmpty()) return;
+        RenderType planeType = RenderType.entityTranslucentEmissive(HIGHLIGHT_PLANE_TEXTURE, true);
+        VertexConsumer planes = buffers.getBuffer(planeType);
         VertexConsumer lines = buffers.getBuffer(RenderType.lines());
         for (Highlight highlight : highlights) {
             if (highlight == null || highlight.subLevelId() == null || !isVisible(highlight.subLevelId(), highlight.position())) continue;
@@ -629,6 +639,9 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
             pose.mulPose(orientation);
             pose.translate(-0.5F, -0.5F, -0.5F);
             int color = highlight.color();
+            if (highlight.face() != null) {
+                renderFaceHighlightPlane(pose, planes, highlight.face(), color);
+            }
             LevelRenderer.renderLineBox(pose, lines, highlight.face() == null
                             ? new AABB(-0.018D, -0.018D, -0.018D, 1.018D, 1.018D, 1.018D)
                             : faceOutline(highlight.face()),
@@ -636,7 +649,75 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
                     (color & 0xFF) / 255.0F, 1.0F);
             pose.popPose();
         }
+        buffers.endBatch(planeType);
         buffers.endBatch(RenderType.lines());
+    }
+
+    // Draw the translucent selected-face plane
+    private static void renderFaceHighlightPlane(PoseStack pose, VertexConsumer consumer, Direction face, int color) {
+        float red = ((color >> 16) & 0xFF) / 255.0F;
+        float green = ((color >> 8) & 0xFF) / 255.0F;
+        float blue = (color & 0xFF) / 255.0F;
+        float min = -0.022F;
+        float max = 1.022F;
+        Matrix4f matrix = pose.last().pose();
+        switch (face) {
+            case DOWN -> addHighlightPlane(matrix, consumer,
+                    0.0F, min, 0.0F, 1.0F, min, 0.0F, 1.0F, min, 1.0F, 0.0F, min, 1.0F,
+                    red, green, blue, 0.45F, 0.0F, -1.0F, 0.0F);
+            case UP -> addHighlightPlane(matrix, consumer,
+                    0.0F, max, 1.0F, 1.0F, max, 1.0F, 1.0F, max, 0.0F, 0.0F, max, 0.0F,
+                    red, green, blue, 0.45F, 0.0F, 1.0F, 0.0F);
+            case NORTH -> addHighlightPlane(matrix, consumer,
+                    1.0F, 0.0F, min, 0.0F, 0.0F, min, 0.0F, 1.0F, min, 1.0F, 1.0F, min,
+                    red, green, blue, 0.45F, 0.0F, 0.0F, -1.0F);
+            case SOUTH -> addHighlightPlane(matrix, consumer,
+                    0.0F, 0.0F, max, 1.0F, 0.0F, max, 1.0F, 1.0F, max, 0.0F, 1.0F, max,
+                    red, green, blue, 0.45F, 0.0F, 0.0F, 1.0F);
+            case WEST -> addHighlightPlane(matrix, consumer,
+                    min, 0.0F, 0.0F, min, 0.0F, 1.0F, min, 1.0F, 1.0F, min, 1.0F, 0.0F,
+                    red, green, blue, 0.45F, -1.0F, 0.0F, 0.0F);
+            case EAST -> addHighlightPlane(matrix, consumer,
+                    max, 0.0F, 1.0F, max, 0.0F, 0.0F, max, 1.0F, 0.0F, max, 1.0F, 1.0F,
+                    red, green, blue, 0.45F, 1.0F, 0.0F, 0.0F);
+        }
+    }
+
+    // Add the double-sided highlight plane
+    private static void addHighlightPlane(Matrix4f matrix, VertexConsumer consumer,
+                                          float x1, float y1, float z1, float x2, float y2, float z2,
+                                          float x3, float y3, float z3, float x4, float y4, float z4,
+                                          float red, float green, float blue, float alpha,
+                                          float normalX, float normalY, float normalZ) {
+        addHighlightVertex(matrix, consumer, x1, y1, z1, 0.0F, 0.0F, red, green, blue, alpha,
+                normalX, normalY, normalZ);
+        addHighlightVertex(matrix, consumer, x2, y2, z2, 1.0F, 0.0F, red, green, blue, alpha,
+                normalX, normalY, normalZ);
+        addHighlightVertex(matrix, consumer, x3, y3, z3, 1.0F, 1.0F, red, green, blue, alpha,
+                normalX, normalY, normalZ);
+        addHighlightVertex(matrix, consumer, x4, y4, z4, 0.0F, 1.0F, red, green, blue, alpha,
+                normalX, normalY, normalZ);
+        addHighlightVertex(matrix, consumer, x4, y4, z4, 0.0F, 1.0F, red, green, blue, alpha,
+                -normalX, -normalY, -normalZ);
+        addHighlightVertex(matrix, consumer, x3, y3, z3, 1.0F, 1.0F, red, green, blue, alpha,
+                -normalX, -normalY, -normalZ);
+        addHighlightVertex(matrix, consumer, x2, y2, z2, 1.0F, 0.0F, red, green, blue, alpha,
+                -normalX, -normalY, -normalZ);
+        addHighlightVertex(matrix, consumer, x1, y1, z1, 0.0F, 0.0F, red, green, blue, alpha,
+                -normalX, -normalY, -normalZ);
+    }
+
+    // Add one highlight plane vertex
+    private static void addHighlightVertex(Matrix4f matrix, VertexConsumer consumer,
+                                           float x, float y, float z, float u, float v,
+                                           float red, float green, float blue, float alpha,
+                                           float normalX, float normalY, float normalZ) {
+        consumer.addVertex(matrix, x, y, z)
+                .setColor(red, green, blue, alpha)
+                .setUv(u, v)
+                .setOverlay(OverlayTexture.NO_OVERLAY)
+                .setLight(LightTexture.FULL_BRIGHT)
+                .setNormal(normalX, normalY, normalZ);
     }
 
     private void renderMarkers(ClientLevel level, ClientSubLevel root, float partialTick,
@@ -704,6 +785,8 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         Vector3f position = rootPosition(level, root, block.subLevelId(), block.position(), partialTick);
         Quaternionf orientation = rootOrientation(level, root, block.subLevelId(), partialTick);
         if (usingFallbackScene) {
+            SnapshotBlock snapshot = fallbackBlocks.get(new BlockKey(block.subLevelId(), block.position()));
+            if(snapshot != null) orientation = snapshot.orientation();
             renderFallbackBlock(minecraft, block, position, orientation, pose, buffers);
             return;
         }

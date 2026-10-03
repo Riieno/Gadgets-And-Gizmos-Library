@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 // Trace particles and ship clearance across the root world and every loaded Sable sub-level
 public final class SubLevelParticleOcclusion {
@@ -99,6 +100,33 @@ public final class SubLevelParticleOcclusion {
     public static double findBlockingDistance(Level rootLevel, @Nullable Object containingSubLevel,
             Vec3 startWorld, Vec3 directionWorld, double maxDistance, boolean includeRootLevel,
             Set<UUID> excludedSubLevelIds, boolean includeTaggedTransparentBlocks) {
+        return findBlockingDistance(rootLevel, containingSubLevel, startWorld, directionWorld,
+                maxDistance, includeRootLevel, excludedSubLevelIds, includeTaggedTransparentBlocks, null);
+    }
+
+    // Reuse loaded shapes and SubLevels across nearby traces in the same game tick
+    public static double findBlockingDistance(Level rootLevel, @Nullable Object containingSubLevel,
+            Vec3 startWorld, Vec3 directionWorld, double maxDistance, boolean includeRootLevel,
+            Set<UUID> excludedSubLevelIds, boolean includeTaggedTransparentBlocks,
+            @Nullable ProbeCache probeCache) {
+        return findBlockingDistance(rootLevel, containingSubLevel, startWorld, directionWorld,
+                maxDistance, includeRootLevel, excludedSubLevelIds, includeTaggedTransparentBlocks,
+                probeCache, null);
+    }
+
+    // Trace only block states that can hide a particle from the camera
+    public static double findVisualBlockingDistance(Level rootLevel, Vec3 startWorld,
+            Vec3 directionWorld, double maxDistance, Predicate<BlockState> blocksView,
+            @Nullable ProbeCache probeCache) {
+        return findBlockingDistance(rootLevel, null, startWorld, directionWorld,
+                maxDistance, true, Set.of(), false, probeCache, blocksView);
+    }
+
+    // Apply an optional visual filter without changing physical collision queries
+    private static double findBlockingDistance(Level rootLevel, @Nullable Object containingSubLevel,
+            Vec3 startWorld, Vec3 directionWorld, double maxDistance, boolean includeRootLevel,
+            Set<UUID> excludedSubLevelIds, boolean includeTaggedTransparentBlocks,
+            @Nullable ProbeCache probeCache, @Nullable Predicate<BlockState> blocksView) {
         if (rootLevel == null || startWorld == null || directionWorld == null
                 || directionWorld.lengthSqr() < EPSILON || maxDistance <= 0.0D) {
             return Math.max(0.0D, maxDistance);
@@ -106,14 +134,15 @@ public final class SubLevelParticleOcclusion {
         Vec3 worldDirection = directionWorld.normalize();
         Vec3 endWorld = startWorld.add(worldDirection.scale(maxDistance));
         AABB worldBounds = new AABB(startWorld, endWorld).inflate(1.0D);
-        List<Object> subLevels = intersectingSubLevels(rootLevel, worldBounds, null);
+        List<Object> subLevels = intersectingSubLevels(rootLevel, worldBounds, probeCache);
         if (containingSubLevel != null && !containsIdentity(subLevels, containingSubLevel)) {
             subLevels.add(0, containingSubLevel);
         }
         return findBlockingDistanceAcrossLevels(
                 rootLevel, startWorld, endWorld, worldDirection, maxDistance,
                 includeRootLevel, excludedSubLevelIds,
-                includeTaggedTransparentBlocks, subLevels, null);
+                includeTaggedTransparentBlocks, subLevels,
+                probeCache == null ? null : probeCache.lookups, blocksView);
     }
 
     // Find the blocking distance across levels
@@ -131,7 +160,20 @@ public final class SubLevelParticleOcclusion {
     ) {
         return findBlockingDistanceAcrossLevels(rootLevel, startWorld, endWorld, worldDirection,
                 maxDistance, includeRootLevel, excludedSubLevelIds, includeTaggedTransparentBlocks,
-                subLevels, sharedLookups, 0.0D);
+                subLevels, sharedLookups, 0.0D, null);
+    }
+
+    // Check view blocking with the caller's block-state filter
+    private static double findBlockingDistanceAcrossLevels(
+            Level rootLevel, Vec3 startWorld, Vec3 endWorld, Vec3 worldDirection,
+            double maxDistance, boolean includeRootLevel, Set<UUID> excludedSubLevelIds,
+            boolean includeTaggedTransparentBlocks, List<Object> subLevels,
+            @Nullable Map<BlockGetter, LoadedBlockLookup> sharedLookups,
+            @Nullable Predicate<BlockState> blocksView
+    ) {
+        return findBlockingDistanceAcrossLevels(rootLevel, startWorld, endWorld, worldDirection,
+                maxDistance, includeRootLevel, excludedSubLevelIds, includeTaggedTransparentBlocks,
+                subLevels, sharedLookups, 0.0D, blocksView);
     }
 
     // Resting contact may be ignored only when the requested movement leaves it
@@ -141,6 +183,19 @@ public final class SubLevelParticleOcclusion {
             boolean includeTaggedTransparentBlocks, List<Object> subLevels,
             @Nullable Map<BlockGetter, LoadedBlockLookup> sharedLookups, double initialContactAllowance
     ){
+        return findBlockingDistanceAcrossLevels(rootLevel, startWorld, endWorld, worldDirection,
+                maxDistance, includeRootLevel, excludedSubLevelIds, includeTaggedTransparentBlocks,
+                subLevels, sharedLookups, initialContactAllowance, null);
+    }
+
+    // Resting contact may be ignored only when the requested movement leaves it
+    private static double findBlockingDistanceAcrossLevels(
+            Level rootLevel, Vec3 startWorld, Vec3 endWorld, Vec3 worldDirection,
+            double maxDistance, boolean includeRootLevel, Set<UUID> excludedSubLevelIds,
+            boolean includeTaggedTransparentBlocks, List<Object> subLevels,
+            @Nullable Map<BlockGetter, LoadedBlockLookup> sharedLookups, double initialContactAllowance,
+            @Nullable Predicate<BlockState> blocksView
+    ){
         if (!includeRootLevel && subLevels.isEmpty()) {
             return maxDistance;
         }
@@ -148,7 +203,7 @@ public final class SubLevelParticleOcclusion {
         Double nearest = includeRootLevel
                 ? findBlockingDistanceInLevel(rootLevel, null, startWorld, endWorld,
                         startWorld, worldDirection, maxDistance, includeTaggedTransparentBlocks,
-                        loadedBlockLookup(rootLevel, sharedLookups), initialContactAllowance)
+                        loadedBlockLookup(rootLevel, sharedLookups), initialContactAllowance, blocksView)
                 : null;
 
         for (Object subLevel : subLevels) {
@@ -170,7 +225,7 @@ public final class SubLevelParticleOcclusion {
 
             Double subLevelDistance = findBlockingDistanceInLevel(subLevelLevel, subLevel, localStart, localEnd,
                     startWorld, worldDirection, maxDistance, includeTaggedTransparentBlocks,
-                    loadedBlockLookup(subLevelLevel, sharedLookups), initialContactAllowance);
+                    loadedBlockLookup(subLevelLevel, sharedLookups), initialContactAllowance, blocksView);
             nearest = nearestDistance(nearest, subLevelDistance);
         }
 
@@ -1214,7 +1269,11 @@ public final class SubLevelParticleOcclusion {
             known = SubLevelBlockEntityCollector.getSubLevels(level);
             if (probeCache != null) {
                 probeCache.subLevelRoot = level;
-                probeCache.subLevels = List.copyOf(known);
+                List<Object> snapshot = new ArrayList<>(known);
+                for (Object candidate : res) {
+                    if (!containsIdentity(snapshot, candidate)) snapshot.add(candidate);
+                }
+                probeCache.subLevels = List.copyOf(snapshot);
             }
         }
         for (Object candidate : known) {
@@ -1341,7 +1400,8 @@ public final class SubLevelParticleOcclusion {
     private static @Nullable Double findBlockingDistanceInLevel(BlockGetter level, @Nullable Object subLevel,
             Vec3 localStart, Vec3 localEnd, Vec3 worldStart, Vec3 worldDirection, double maxDistance,
             boolean includeTaggedTransparentBlocks,
-            LoadedBlockLookup lookup, double initialContactAllowance) {
+            LoadedBlockLookup lookup, double initialContactAllowance,
+            @Nullable Predicate<BlockState> blocksView) {
         Vec3 localDelta = localEnd.subtract(localStart);
         if (localDelta.lengthSqr() < EPSILON) {
             return null;
@@ -1375,7 +1435,7 @@ public final class SubLevelParticleOcclusion {
             }
             Double distance = findBlockShapeDistance(level, lookup, subLevel, current,
                     localStart, localDelta, worldStart, worldDirection,
-                    maxDistance, includeTaggedTransparentBlocks, initialContactAllowance);
+                    maxDistance, includeTaggedTransparentBlocks, initialContactAllowance, blocksView);
             nearest = nearestDistance(nearest, distance);
             if (nearest != null) {
                 return nearest;
@@ -1411,12 +1471,14 @@ public final class SubLevelParticleOcclusion {
             Vec3 worldDirection,
             double maxDistance,
             boolean includeTaggedTransparentBlocks,
-            double initialContactAllowance
+            double initialContactAllowance,
+            @Nullable Predicate<BlockState> blocksView
     ) {
         VoxelShape shape = lookup.collisionShape(pos, includeTaggedTransparentBlocks);
         if (shape.isEmpty()) {
             return null;
         }
+        if (blocksView != null && !blocksView.test(lookup.blockState(pos))) return null;
 
         double[] nearestT = {Double.POSITIVE_INFINITY};
         if (shape == Shapes.block()) {

@@ -18,8 +18,15 @@ public record WorkerEndpointSnapshot(
         String blockId,
         boolean extractionAllowed,
         boolean insertionAllowed,
-        List<ResourceAmount> resources
+        List<ResourceAmount> resources,
+        boolean storageSelectorEligible
 ) {
+    // Preserve callers which only need a resource summary
+    public WorkerEndpointSnapshot(UUID id, @Nullable UUID subLevelId, BlockPos position, String label,
+                                  String blockId, boolean extractionAllowed, boolean insertionAllowed,
+                                  List<ResourceAmount> resources){
+        this(id, subLevelId, position, label, blockId, extractionAllowed, insertionAllowed, resources, false);
+    }
     // Initialize the endpoint snapshot
     public WorkerEndpointSnapshot {
         id = id == null ? UUID.randomUUID() : id;
@@ -39,6 +46,7 @@ public record WorkerEndpointSnapshot(
         tag.putString("BlockId", blockId);
         tag.putBoolean("Extract", extractionAllowed);
         tag.putBoolean("Insert", insertionAllowed);
+        tag.putBoolean("StorageSelectorEligible", storageSelectorEligible);
         ListTag amounts = new ListTag();
         for (ResourceAmount resource : resources) amounts.add(resource.toTag());
         tag.put("Resources", amounts);
@@ -56,7 +64,7 @@ public record WorkerEndpointSnapshot(
                 safe.hasUUID("SubLevel") ? safe.getUUID("SubLevel") : null,
                 BlockPos.of(safe.getLong("Position")), safe.getString("Label"),
                 safe.getString("BlockId"), safe.getBoolean("Extract"),
-                safe.getBoolean("Insert"), resources);
+                safe.getBoolean("Insert"), resources, safe.getBoolean("StorageSelectorEligible"));
     }
 
     // Describe one resource amount and endpoint capacity

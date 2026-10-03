@@ -19,6 +19,11 @@ public interface TabletAppClientRenderer {
     // Draw the tablet app client
     void render(TabletAppClientContext ctx, TabletAppClientState state);
 
+    // Keep app pagination and filters when the host polls its server snapshot
+    default void refresh(TabletAppClientContext ctx, TabletAppClientState state){
+        ctx.actions().send("refresh", "");
+    }
+
     // Handle mouse clicked
     default boolean mouseClicked(TabletAppClientContext ctx, TabletAppClientState state,
                                  double mouseX, double mouseY, int btn) {
@@ -29,6 +34,9 @@ public interface TabletAppClientRenderer {
                                   double mouseX, double mouseY, double scrollX, double scrollY){
         return false;
     }
+
+    default boolean mouseDragged(TabletAppClientContext ctx, TabletAppClientState state, double mouseX, double mouseY, int button, double deltaX, double deltaY){ return false; }
+    default boolean mouseReleased(TabletAppClientContext ctx, TabletAppClientState state, double mouseX, double mouseY, int button){ return false; }
 
     default boolean keyPressed(TabletAppClientContext ctx, TabletAppClientState state,
                                int keyCode, int scanCode, int modifiers){

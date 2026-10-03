@@ -97,6 +97,12 @@ public final class SableLevelApi {
     }
 
     // Get the sublevel ID containing one precise position
+    public static @Nullable UUID containingId(@Nullable Level level, @Nullable BlockPos pos){
+        SubLevel subLevel = containing(level, pos);
+        return subLevel == null ? null : subLevel.getUniqueId();
+    }
+
+    // Get the sublevel ID containing one precise position
     public static @Nullable UUID containingId(@Nullable Level level, @Nullable Position pos) {
         SubLevel subLevel = containing(level, pos);
         return subLevel == null ? null : subLevel.getUniqueId();

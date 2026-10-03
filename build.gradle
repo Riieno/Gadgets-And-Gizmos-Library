@@ -170,6 +170,12 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
     testImplementation 'org.mockito:mockito-core:5.14.2'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly files(localJars.files.findAll { it.name.startsWith('create-') }.collect { jar ->
+        zipTree(jar).matching {
+            include 'META-INF/jarjar/Registrate-*.jar'
+            include 'META-INF/jarjar/ponder-*.jar'
+        }
+    })
     testRuntimeOnly files(zipTree(requiredSableJar).matching {
         include 'META-INF/jarjar/*sable-sable_rapier-*.jar'
     })

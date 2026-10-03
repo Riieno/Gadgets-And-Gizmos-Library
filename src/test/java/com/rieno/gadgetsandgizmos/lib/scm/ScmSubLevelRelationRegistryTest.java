@@ -10,6 +10,22 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ScmSubLevelRelationRegistryTest {
     @Test
+    void ordersShuffledAndReversedLinksFromTheBody(){
+        UUID root = UUID.randomUUID();
+        UUID thigh = UUID.randomUUID();
+        UUID shin = UUID.randomUUID();
+        UUID foot = UUID.randomUUID();
+        var hip = new ScmSubLevelRelationRegistry.Relation(root, thigh, "test:hip");
+        var knee = new ScmSubLevelRelationRegistry.Relation(shin, thigh, "test:knee");
+        var ankle = new ScmSubLevelRelationRegistry.Relation(shin, foot, "test:ankle");
+        assertEquals(List.of(hip, knee, ankle),
+                ScmSubLevelRelationRegistry.orderedChain(root, List.of(ankle, hip, knee)));
+        assertEquals(List.of(), ScmSubLevelRelationRegistry.orderedChain(root, List.of(hip, ankle)));
+        assertEquals(List.of(), ScmSubLevelRelationRegistry.orderedChain(root, List.of(hip,
+                new ScmSubLevelRelationRegistry.Relation(root, foot, "test:other_leg"))));
+    }
+
+    @Test
     void resolvesLinksWhenTheJointReportsTheRootAsItsCompanion() {
         UUID root = UUID.randomUUID();
         UUID upperLeg = UUID.randomUUID();

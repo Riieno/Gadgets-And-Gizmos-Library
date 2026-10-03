@@ -12,8 +12,18 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.*;
 
 class WorkerDispatcherTest {
+    // A full worker must wait instead of extracting an item it cannot carry
+    @Test void doesNotDispatchWithoutCargoSpace(){
+        WorkerTask task = new WorkerTask(UUID.randomUUID(), "Full worker", WorkerResourceKey.energy(), 1024L, 0L, 0, true);
+        var source = new Endpoint(BlockPos.ZERO, 4096L, 0L);
+        var target = new Endpoint(new BlockPos(2, 0, 0), 0L, 4096L);
+        assertFalse(WorkerDispatcher.assign(task, List.of(source, target), Vec3.ZERO, 0L).assigned());
+        assertFalse(WorkerDispatcher.assign(WorkerWorkOrder.automatic(task), List.of(source, target), Vec3.ZERO, 0L).assigned());
+    }
+
     @Test
     void assignsNearestSourceAndReceiverWithinAllLimits() {
         WorkerResourceKey coal = new WorkerResourceKey(WorkerResourceType.ITEM,
@@ -31,6 +41,19 @@ class WorkerDispatcherTest {
         assertSame(nearSource, assignment.source());
         assertSame(target, assignment.target());
         assertEquals(32L, assignment.amount());
+    }
+
+    @Test void routesOnlyToManagedDestinationsAndPrefersMatchingStorage(){
+        WorkerResourceKey copper = new WorkerResourceKey(WorkerResourceType.ITEM,
+                ResourceLocation.withDefaultNamespace("copper_ingot"));
+        WorkerTask task = new WorkerTask(UUID.randomUUID(), "Sort copper", copper, 8L, 0L, 0, true);
+        Endpoint source = new Endpoint(BlockPos.ZERO, 8L, 0L);
+        WorkerEndpoint ordinary = destination(copper, new BlockPos(1, 0, 0), false, 0);
+        WorkerEndpoint open = destination(copper, new BlockPos(2, 0, 0), true, 2);
+        WorkerEndpoint filtered = destination(copper, new BlockPos(8, 0, 0), true, 0);
+        var assignment = WorkerDispatcher.assign(task, List.of(source, ordinary, open, filtered),
+                Vec3.ZERO, 8L);
+        assertSame(filtered, assignment.target());
     }
 
     @Test
@@ -78,6 +101,21 @@ class WorkerDispatcherTest {
         assertSame(requestedSource, assignment.source());
         assertSame(requestedTarget, assignment.target());
         assertEquals(64L, assignment.amount());
+    }
+
+    @Test void permitsExplicitFuelDeliveryOnlyIntoMachineInputs(){
+        WorkerResourceKey coal = new WorkerResourceKey(WorkerResourceType.ITEM,
+                ResourceLocation.withDefaultNamespace("coal"));
+        WorkerTask task = new WorkerTask(UUID.randomUUID(), "Refuel", coal, 4L, 0L, 0, true);
+        Endpoint source = new Endpoint(BlockPos.ZERO, 4L, 0L);
+        WorkerEndpoint machine = destination(coal, new BlockPos(2, 0, 0), false, 0);
+        UUID machineId = UUID.randomUUID();
+        when(machine.id()).thenReturn(machineId);
+        var order = new WorkerWorkOrder(UUID.randomUUID(), task, WorkerWorkOrder.Mode.TRANSFER,
+                source.id(), machineId, null, coal, 4L);
+        assertFalse(WorkerDispatcher.assign(order, List.of(source, machine), Vec3.ZERO, 4L).assigned());
+        when(machine.acceptsProcessingInput()).thenReturn(true);
+        assertSame(machine, WorkerDispatcher.assign(order, List.of(source, machine), Vec3.ZERO, 4L).target());
     }
 
     @Test
@@ -188,5 +226,17 @@ class WorkerDispatcherTest {
         public long insert(WorkerResourcePacket packet, boolean simulate) {
             return Math.min(space, packet.amount());
         }
+    }
+
+    private static WorkerEndpoint destination(WorkerResourceKey resource, BlockPos pos,
+                                              boolean accepts, int priority){
+        WorkerEndpoint endpoint = mock(WorkerEndpoint.class);
+        when(endpoint.position()).thenReturn(pos);
+        when(endpoint.isAvailable()).thenReturn(true);
+        when(endpoint.acceptsDelivery()).thenReturn(accepts);
+        when(endpoint.canInsert(resource)).thenReturn(true);
+        when(endpoint.space(resource)).thenReturn(64L);
+        when(endpoint.insertionPriority(resource)).thenReturn(priority);
+        return endpoint;
     }
 }

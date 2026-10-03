@@ -29,7 +29,8 @@ public record TabletAppClientContext(
         int mouseX,
         int mouseY,
         ActionSender actions,
-        Runnable refresh
+        Runnable refresh,
+        TabletAppClientUi ui
 ) {
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -45,6 +46,15 @@ public record TabletAppClientContext(
         surface = surface == null ? new TabletAppClientSurface(left, top, width, height) : surface;
         actions = actions == null ? (action, val) -> { } : actions;
         refresh = refresh == null ? () -> { } : refresh;
+        ui = ui == null ? TabletAppClientUi.NONE : ui;
+    }
+
+    // Preserve existing hosts which do not provide dialogs
+    public TabletAppClientContext(TabletAppDefinition app, TabletTabDefinition tab, CompoundTag data,
+                                  GuiGraphics graphics, Font font, int left, int top, int width, int height,
+                                  TabletAppClientSurface surface, int mouseX, int mouseY, ActionSender actions, Runnable refresh){
+        this(app, tab, data, graphics, font, left, top, width, height, surface,
+                mouseX, mouseY, actions, refresh, TabletAppClientUi.NONE);
     }
 
     // Preserve the content-only client context API

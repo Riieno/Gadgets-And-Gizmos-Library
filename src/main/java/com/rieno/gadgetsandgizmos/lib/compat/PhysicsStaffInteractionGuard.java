@@ -8,16 +8,18 @@ package com.rieno.gadgetsandgizmos.lib.compat;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
-import com.mapter.aeroclaims.claim.Claim;
-import com.mapter.aeroclaims.claim.ClaimManager;
+import com.rieno.gadgetsandgizmos.lib.access.WorldAccessPolicy;
 import com.rieno.gadgetsandgizmos.lib.physics.SableAssemblyTopologyCache;
+import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
+import com.rieno.gadgetsandgizmos.lib.scm.ShipPermission;
+import com.rieno.gadgetsandgizmos.lib.scm.ShipPermissionManager;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
-import net.neoforged.fml.ModList;
 
 import java.util.Map;
 import java.util.Collection;
@@ -34,7 +36,6 @@ public final class PhysicsStaffInteractionGuard {
 
     ------------------------------------------------------------##-----------------------------------------------------*/
 
-    private static final String AEROCLAIMS_MOD_ID = "aeroclaims";
     private static final long MESSAGE_COOLDOWN_MS = 1000L;
     private static final Map<UUID, Long> LAST_MESSAGE_TIME = new ConcurrentHashMap<>();
     private static final Map<UUID, Integer> INITIALIZING_SUB_LEVELS =
@@ -69,13 +70,21 @@ public final class PhysicsStaffInteractionGuard {
                     Component.literal("Ship control initialization is in progress"));
             return false;
         }
-        if (!PhysicsStaffPowerHooks.isHoldingPoweredPhysicsStaff(player)) {
-            return true;
-        }
-        if (ModList.get().isLoaded(AEROCLAIMS_MOD_ID)
-                && !AeroClaimsAccess.canAccess(player, targetSubLevelId)) {
-            showFailureMessage(player, "item.createthrusters.physics_staff.error.claim_denied");
+        if (player != null && player.server != null && targetSubLevelId != null
+                && !ShipPermissionManager.get(player.server).allows(
+                targetSubLevelId, player.getUUID(), ShipPermission.PHYSICS_STAFF)) {
+            showFailureMessage(player, Component.literal("Ship permission denied"));
             return false;
+        }
+        if(targetSubLevelId != null){
+            SubLevel body = SableLevelApi.subLevel(player.serverLevel(), targetSubLevelId);
+            if(body == null) return false;
+            var point = body.logicalPose().position();
+            if(!WorldAccessPolicy.canAccess(player, player.serverLevel(), targetSubLevelId,
+                    BlockPos.containing(point.x, point.y, point.z))){
+                showFailureMessage(player, "item.createthrusters.physics_staff.error.claim_denied");
+                return false;
+            }
         }
 
         return true;
@@ -176,16 +185,4 @@ public final class PhysicsStaffInteractionGuard {
         player.displayClientMessage(msg, true);
     }
 
-    // Expose aero claims
-    private static final class AeroClaimsAccess {
-        // Initialize the aero claims
-        private AeroClaimsAccess() {
-        }
-
-        // Check if this can access
-        private static boolean canAccess(ServerPlayer player, UUID targetSubLevelId) {
-            Claim claim = ClaimManager.getClaimByShipId(player.serverLevel(), targetSubLevelId.toString());
-            return claim == null || !claim.isActive() || ClaimManager.getPermissionResolver().canAccess(player, claim);
-        }
-    }
 }

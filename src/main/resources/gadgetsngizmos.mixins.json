@@ -6,6 +6,10 @@
   "compatibilityLevel": "JAVA_21",
   "refmap": "gadgetsngizmos.refmap.json",
   "mixins": [
+    "CompoundContainerAccess",
+    "ContainerMenuAccessMixin",
+    "ContainerItemCapabilityMixin",
+    "ContainerHopperAccessMixin",
     "AeroworksServoPreciseAngleOutputMixin",
     "HandCrankPreciseAngleOutputMixin",
     "KineticBlockEntityHeldAngleMixin",
@@ -13,16 +17,22 @@
     "KineticConnectionFilterRotationPropagatorMixin",
     "SequencedGearshiftPreciseAngleOutputMixin",
     "SimAssemblyHelperInvoker",
+    "SubLevelArchiveAllocationMixin",
+    "SubLevelLocatorRemovalMixin",
     "SimulatedPhysicsStaffActionPacketMixin",
     "SimulatedPhysicsStaffDragPacketMixin",
     "SteeringWheelPreciseAngleOutputMixin",
     "ValveHandlePreciseAngleOutputMixin",
     "VirtualKineticBlockEntityMixin",
     "VirtualKineticNetworkMixin",
-    "VirtualKineticRotationPropagatorMixin"
+    "VirtualKineticRotationPropagatorMixin",
+    "WorkerFunnelTransportMixin",
+    "WorkerChuteTransportMixin"
   ],
   "client": [
     "DiagramScreenAccessMixin",
+    "LevelRendererParticleOrderMixin",
+    "ParticleEngineDepthResolveMixin",
     "SimulatedPhysicsStaffClientHandlerMixin"
   ],
   "injectors": {
