@@ -107,10 +107,14 @@ public final class SoftParticleRenderTypes {
             METABALL_BILLBOARD_TEXTURE_ID, false, "GADGETSNGIZMOS_FAST_METABALL_BILLBOARD");
     private static final ParticleRenderType FAST_EMISSIVE_METABALL_BILLBOARD = fastBillboard(
             METABALL_BILLBOARD_TEXTURE_ID, true, "GADGETSNGIZMOS_FAST_EMISSIVE_METABALL_BILLBOARD", true);
+    private static final ParticleRenderType FAST_ALPHA_EMISSIVE_METABALL_BILLBOARD = fastBillboard(
+            METABALL_BILLBOARD_TEXTURE_ID, true, "GADGETSNGIZMOS_FAST_ALPHA_EMISSIVE_METABALL_BILLBOARD", true, true);
     private static final ParticleRenderType FAST_STREAK_BILLBOARD = fastBillboard(
             STREAK_BILLBOARD_TEXTURE_ID, false, "GADGETSNGIZMOS_FAST_STREAK_BILLBOARD");
     private static final ParticleRenderType FAST_EMISSIVE_STREAK_BILLBOARD = fastBillboard(
             STREAK_BILLBOARD_TEXTURE_ID, true, "GADGETSNGIZMOS_FAST_EMISSIVE_STREAK_BILLBOARD", true);
+    private static final ParticleRenderType FAST_ALPHA_EMISSIVE_STREAK_BILLBOARD = fastBillboard(
+            STREAK_BILLBOARD_TEXTURE_ID, true, "GADGETSNGIZMOS_FAST_ALPHA_EMISSIVE_STREAK_BILLBOARD", true, true);
     private static final ParticleRenderType EARLY_TRANSLUCENT_PARTICLE_SHEET = new ParticleRenderType() {
         @Override
         public BufferBuilder begin(Tesselator tesselator, TextureManager textureManager) {
@@ -188,6 +192,11 @@ public final class SoftParticleRenderTypes {
         return FAST_EMISSIVE_METABALL_BILLBOARD;
     }
 
+    // Get the emissive metaball with ordinary alpha blending
+    public static ParticleRenderType fastAlphaEmissiveMetaballBillboard() {
+        return FAST_ALPHA_EMISSIVE_METABALL_BILLBOARD;
+    }
+
     // Get the elongated streak without a scene depth copy
     public static ParticleRenderType fastStreakBillboard() {
         return FAST_STREAK_BILLBOARD;
@@ -198,9 +207,17 @@ public final class SoftParticleRenderTypes {
         return FAST_EMISSIVE_STREAK_BILLBOARD;
     }
 
+    // Get the emissive streak with ordinary alpha blending
+    public static ParticleRenderType fastAlphaEmissiveStreakBillboard() {
+        return FAST_ALPHA_EMISSIVE_STREAK_BILLBOARD;
+    }
+
     // Draw emissive plume color before writing its visible scene depth
     public static void drawEmissiveBatch(ParticleRenderType type, Runnable firstDraw) {
-        if (type != FAST_EMISSIVE_METABALL_BILLBOARD && type != FAST_EMISSIVE_STREAK_BILLBOARD) {
+        boolean alphaEmissive = type == FAST_ALPHA_EMISSIVE_METABALL_BILLBOARD
+                || type == FAST_ALPHA_EMISSIVE_STREAK_BILLBOARD;
+        if (!alphaEmissive && type != FAST_EMISSIVE_METABALL_BILLBOARD
+                && type != FAST_EMISSIVE_STREAK_BILLBOARD) {
             firstDraw.run();
             return;
         }
@@ -212,6 +229,12 @@ public final class SoftParticleRenderTypes {
         float coverageScale = EMISSIVE_COVERAGE_SCALE;
         float coverageAlpha = shaderColor[3] * coverageScale;
         try {
+            if (alphaEmissive) {
+                RenderSystem.defaultBlendFunc();
+                firstDraw.run();
+                drawEmissiveDepth();
+                return;
+            }
             if (shaderPack) {
                 RenderSystem.blendFunc(GlStateManager.SourceFactor.SRC_ALPHA,
                         GlStateManager.DestFactor.ONE);
@@ -288,10 +311,16 @@ public final class SoftParticleRenderTypes {
     // Place selected particles ahead of translucent block rendering
     private static ParticleRenderType fastBillboard(ResourceLocation texture, boolean emissive,
             String name, boolean beforeTranslucent) {
+        return fastBillboard(texture, emissive, name, beforeTranslucent, false);
+    }
+
+    // Place an emissive alpha layer ahead of translucent block rendering
+    private static ParticleRenderType fastBillboard(ResourceLocation texture, boolean emissive,
+            String name, boolean beforeTranslucent, boolean alphaBlend) {
         return new ParticleRenderType() {
             @Override
             public BufferBuilder begin(Tesselator tesselator, TextureManager textureManager) {
-                return beginBillboard(tesselator, emissive, texture, true);
+                return beginBillboard(tesselator, emissive, texture, true, alphaBlend);
             }
 
             @Override
@@ -315,6 +344,12 @@ public final class SoftParticleRenderTypes {
     // Prepare the selected texture and blend mode
     private static BufferBuilder beginBillboard(Tesselator tesselator, boolean emissive,
             ResourceLocation texture, boolean fast) {
+        return beginBillboard(tesselator, emissive, texture, fast, false);
+    }
+
+    // Prepare an emissive particle with the selected blend mode
+    private static BufferBuilder beginBillboard(Tesselator tesselator, boolean emissive,
+            ResourceLocation texture, boolean fast, boolean alphaBlend) {
         RenderTarget main = Minecraft.getInstance().getMainRenderTarget();
         boolean useTexture = fast || shader == null || shaderPackActive.getAsBoolean() || main == null
                 || main.width <= 0 || main.height <= 0 || main.getDepthTextureId() <= 0
@@ -340,7 +375,7 @@ public final class SoftParticleRenderTypes {
         }
         RenderSystem.depthMask(false);
         RenderSystem.enableBlend();
-        if (emissive) {
+        if (emissive && !alphaBlend) {
             RenderSystem.blendFunc(GlStateManager.SourceFactor.SRC_ALPHA,
                     GlStateManager.DestFactor.ONE);
         } else {

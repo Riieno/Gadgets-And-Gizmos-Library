@@ -45,6 +45,7 @@ public final class GraphTargetPortLayout {
                 .toList();
         Map<String, String> ports = new LinkedHashMap<>();
         Map<String, String> labels = new LinkedHashMap<>();
+        Map<String, List<String>> options = new LinkedHashMap<>();
         Map<String, List<Binding>> bindings = new LinkedHashMap<>();
         List<Section> sections = new ArrayList<>();
         Map<String, String> merged = new LinkedHashMap<>();
@@ -68,6 +69,19 @@ public final class GraphTargetPortLayout {
                 }
                 ports.putIfAbsent(portId, port.type());
                 labels.putIfAbsent(portId, label);
+                if (!bindings.containsKey(portId)) {
+                    if (!port.options().isEmpty()) options.put(portId, port.options());
+                } else if (mergeLikePorts) {
+                    List<String> current = options.get(portId);
+                    if (current != null) {
+                        if (port.options().isEmpty()) options.remove(portId);
+                        else {
+                            List<String> shared = current.stream().filter(port.options()::contains).toList();
+                            if (shared.isEmpty()) options.remove(portId);
+                            else options.put(portId, shared);
+                        }
+                    }
+                }
                 bindings.computeIfAbsent(portId, ignored -> new ArrayList<>())
                         .add(new Binding(target.id(), port.id()));
                 entries.add(portId);
@@ -80,7 +94,7 @@ public final class GraphTargetPortLayout {
         if (mergeLikePorts && !ports.isEmpty()) {
             sections.add(new Section("merged", "Merged Ports", new ArrayList<>(ports.keySet())));
         }
-        return new Layout(ports, labels, bindings, sections);
+        return new Layout(ports, labels, options, bindings, sections);
     }
 
     // Store one selectable graph target schema
@@ -94,12 +108,17 @@ public final class GraphTargetPortLayout {
     }
 
     // Store one target data port
-    public record Port(String id, String label, String type) {
+    public record Port(String id, String label, String type, List<String> options) {
+        public Port(String id, String label, String type) {
+            this(id, label, type, List.of());
+        }
+
         // Normalize one target port
         public Port {
             id = id == null ? "" : id.strip();
             label = label == null ? "" : label.strip();
             type = type == null ? "" : type.strip();
+            options = List.copyOf(options == null ? List.of() : options);
         }
     }
 
@@ -124,11 +143,23 @@ public final class GraphTargetPortLayout {
 
     // Expose the composed target ports without implementation-specific state
     public record Layout(Map<String, String> ports, Map<String, String> labels,
+                         Map<String, List<String>> options,
                          Map<String, List<Binding>> bindings, List<Section> sections) {
+        public Layout(Map<String, String> ports, Map<String, String> labels,
+                      Map<String, List<Binding>> bindings, List<Section> sections) {
+            this(ports, labels, Map.of(), bindings, sections);
+        }
+
         // Make every returned collection stable and read-only
         public Layout {
             ports = Collections.unmodifiableMap(new LinkedHashMap<>(ports == null ? Map.of() : ports));
             labels = Collections.unmodifiableMap(new LinkedHashMap<>(labels == null ? Map.of() : labels));
+            Map<String, List<String>> copiedOptions = new LinkedHashMap<>();
+            if (options != null) {
+                options.forEach((port, entries) -> copiedOptions.put(port,
+                        List.copyOf(entries == null ? List.of() : entries)));
+            }
+            options = Collections.unmodifiableMap(copiedOptions);
             Map<String, List<Binding>> copiedBindings = new LinkedHashMap<>();
             if (bindings != null) {
                 bindings.forEach((port, entries) -> copiedBindings.put(port,

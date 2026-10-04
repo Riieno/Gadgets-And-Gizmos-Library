@@ -44,9 +44,9 @@ public final class ParticleRenderOrdering {
         afterClouds = Set.copyOf(updated);
     }
 
-    // Use the late pass only outside shader pipelines
+    // Check whether a layer belongs to the late world pass
     public static boolean rendersAfterClouds(ParticleRenderType type) {
-        return afterClouds.contains(type) && !SoftParticleRenderTypes.isShaderPackActive();
+        return afterClouds.contains(type);
     }
 
     // Check whether the later world pass has any layers

@@ -2,10 +2,12 @@ package com.rieno.gadgetsandgizmos.lib.worker;
 
 import com.simibubi.create.content.processing.recipe.ProcessingRecipe;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.item.crafting.RecipeHolder;
+import net.minecraft.world.item.crafting.RecipeManager;
 import net.minecraft.world.level.Level;
 
 import java.util.ArrayList;
@@ -31,8 +33,15 @@ public final class WorkerProcessingRecipeViews{
     // Read current datapack recipes rather than retaining a stale recipe list
     public static List<View> recipes(Level level, Collection<ResourceLocation> types){
         if(level == null || types == null || types.isEmpty()) return List.of();
+        return recipes(level.getRecipeManager(), level.registryAccess(), types);
+    }
+
+    // Read recipe viewer data from the active reload manager
+    public static List<View> recipes(RecipeManager manager, HolderLookup.Provider registries,
+                                     Collection<ResourceLocation> types){
+        if(manager == null || registries == null || types == null || types.isEmpty()) return List.of();
         List<View> views = new ArrayList<>();
-        for(RecipeHolder<?> holder : level.getRecipeManager().getRecipes()){
+        for(RecipeHolder<?> holder : manager.getRecipes()){
             ResourceLocation type = BuiltInRegistries.RECIPE_TYPE.getKey(holder.value().getType());
             if(!types.contains(type) || holder.id().getPath().endsWith("_manual_only")
                     || holder.value().getIngredients().size() != 1) continue;
@@ -47,7 +56,7 @@ public final class WorkerProcessingRecipeViews{
                     }
                 }
             }else{
-                ItemStack result = holder.value().getResultItem(level.registryAccess());
+                ItemStack result = holder.value().getResultItem(registries);
                 if(!result.isEmpty()) outputs.add(new Output(result, 1.0F));
             }
             if(!outputs.isEmpty()) views.add(new View(holder, input, outputs));

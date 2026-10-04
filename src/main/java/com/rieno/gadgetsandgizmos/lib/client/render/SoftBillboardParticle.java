@@ -34,12 +34,16 @@ public abstract class SoftBillboardParticle extends SingleQuadParticle {
     @Override
     public ParticleRenderType getRenderType() {
         if (usesStreakTexture()) {
-            return isEmissive() ? SoftParticleRenderTypes.fastEmissiveStreakBillboard()
+            return isEmissive() ? (usesAlphaEmissiveBlend()
+                    ? SoftParticleRenderTypes.fastAlphaEmissiveStreakBillboard()
+                    : SoftParticleRenderTypes.fastEmissiveStreakBillboard())
                     : SoftParticleRenderTypes.fastStreakBillboard();
         }
         if (usesMetaballTexture()) {
             if (usesFastRendering()) {
-                return isEmissive() ? SoftParticleRenderTypes.fastEmissiveMetaballBillboard()
+                return isEmissive() ? (usesAlphaEmissiveBlend()
+                        ? SoftParticleRenderTypes.fastAlphaEmissiveMetaballBillboard()
+                        : SoftParticleRenderTypes.fastEmissiveMetaballBillboard())
                         : SoftParticleRenderTypes.fastMetaballBillboard();
             }
             return isEmissive() ? SoftParticleRenderTypes.emissiveMetaballBillboard()
@@ -60,6 +64,11 @@ public abstract class SoftBillboardParticle extends SingleQuadParticle {
 
     // Render without copying the scene depth buffer
     protected boolean usesFastRendering() {
+        return false;
+    }
+
+    // Keep emissive light while blending particle colors normally
+    protected boolean usesAlphaEmissiveBlend() {
         return false;
     }
 
@@ -93,6 +102,31 @@ public abstract class SoftBillboardParticle extends SingleQuadParticle {
         return 0.0F;
     }
 
+    // Tint the optional outer layer independently of the particle center
+    protected int getOuterLayerColor() {
+        return particleColor();
+    }
+
+    // Return the width of an optional bright center layer
+    protected float getHotspotWidthScale() {
+        return 0.0F;
+    }
+
+    // Return the length of an optional bright center layer
+    protected float getHotspotLengthScale() {
+        return 0.5F;
+    }
+
+    // Return the opacity of an optional bright center layer
+    protected float getHotspotOpacity() {
+        return 0.0F;
+    }
+
+    // Tint the optional bright center layer
+    protected int getHotspotColor() {
+        return 0xFFFFFF;
+    }
+
     // Align elongated particles with their direction of travel
     @Override
     public void render(VertexConsumer vertices, Camera camera, float partialTick) {
@@ -123,19 +157,26 @@ public abstract class SoftBillboardParticle extends SingleQuadParticle {
         float outerOpacity = getOuterLayerOpacity();
         if (outerOpacity > 0.0F && getOuterLayerWidthScale() > 1.0F) {
             renderStretchedQuad(vertices, relative, trailing, leading,
-                    unitSide.scale(width * getOuterLayerWidthScale()), light, this.alpha * outerOpacity);
+                    unitSide.scale(width * getOuterLayerWidthScale()), light,
+                    this.alpha * outerOpacity, getOuterLayerColor());
         }
         renderStretchedQuad(vertices, relative, trailing, leading,
-                unitSide.scale(width), light, this.alpha);
+                unitSide.scale(width), light, this.alpha, particleColor());
+        if (getHotspotOpacity() > 0.0F && getHotspotWidthScale() > 0.0F) {
+            float lengthScale = getHotspotLengthScale();
+            renderStretchedQuad(vertices, relative, trailing.scale(lengthScale), leading.scale(lengthScale),
+                    unitSide.scale(width * getHotspotWidthScale()), light,
+                    this.alpha * getHotspotOpacity(), getHotspotColor());
+        }
     }
 
     // Write the four corners of a stretched plume layer
     private void renderStretchedQuad(VertexConsumer vertices, Vec3 center, Vec3 trailing, Vec3 leading,
-            Vec3 width, int light, float opacity) {
-        vertex(vertices, center.subtract(trailing).add(width), getU1(), getV1(), light, opacity);
-        vertex(vertices, center.add(leading).add(width), getU1(), getV0(), light, opacity);
-        vertex(vertices, center.add(leading).subtract(width), getU0(), getV0(), light, opacity);
-        vertex(vertices, center.subtract(trailing).subtract(width), getU0(), getV1(), light, opacity);
+            Vec3 width, int light, float opacity, int color) {
+        vertex(vertices, center.subtract(trailing).add(width), getU1(), getV1(), light, opacity, color);
+        vertex(vertices, center.add(leading).add(width), getU1(), getV0(), light, opacity, color);
+        vertex(vertices, center.add(leading).subtract(width), getU0(), getV0(), light, opacity, color);
+        vertex(vertices, center.subtract(trailing).subtract(width), getU0(), getV1(), light, opacity, color);
     }
 
     // Include the full elongated quad in frustum checks
@@ -149,9 +190,17 @@ public abstract class SoftBillboardParticle extends SingleQuadParticle {
     }
 
     // Write one colored particle vertex
-    private void vertex(VertexConsumer vertices, Vec3 pos, float u, float v, int light, float opacity) {
+    private void vertex(VertexConsumer vertices, Vec3 pos, float u, float v, int light, float opacity, int color) {
         vertices.addVertex((float) pos.x, (float) pos.y, (float) pos.z)
-                .setUv(u, v).setColor(this.rCol, this.gCol, this.bCol, opacity).setLight(light);
+                .setUv(u, v).setColor((color >> 16 & 0xFF) / 255.0F,
+                        (color >> 8 & 0xFF) / 255.0F, (color & 0xFF) / 255.0F, opacity).setLight(light);
+    }
+
+    // Pack the current particle tint for optional layers
+    private int particleColor() {
+        return Mth.clamp((int) (this.rCol * 255.0F), 0, 255) << 16
+                | Mth.clamp((int) (this.gCol * 255.0F), 0, 255) << 8
+                | Mth.clamp((int) (this.bCol * 255.0F), 0, 255);
     }
 
     // Select the animated metaball texture for this billboard
