@@ -42,4 +42,9 @@ public record GraphViewport(double originX, double originY, double panX, double 
     public double graphY(double screenY) {
         return (screenY - originY - panY) / zoom;
     }
+
+    // Convert a visible screen distance to graph coordinates
+    public double graphDistance(double screenPixels) {
+        return screenPixels / zoom;
+    }
 }

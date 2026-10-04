@@ -81,7 +81,7 @@ public final class BlockEntityDataPortGroups {
                 "energy", "energy_capacity", "energy_fill"));
         addGroup(groups, claimed, available, "movement", MOVEMENT_PORTS);
         addGroup(groups, claimed, available, "rotation", matchingPorts(
-                available, claimed, BlockEntityDataPortGroups::isRotationPort));
+                available, claimed, id -> "number".equals(available.get(id)) && isRotationPort(id)));
 
         Map<String, List<String>> prefixed = new LinkedHashMap<>();
         for (String id : available.keySet()) {

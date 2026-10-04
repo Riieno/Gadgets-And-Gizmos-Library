@@ -17,7 +17,11 @@ import net.minecraft.core.Position;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
@@ -78,6 +82,20 @@ public final class SableLevelApi {
     // Get the SubLevel tracking or carrying one entity
     public static @Nullable SubLevel tracking(@Nullable Entity entity) {
         return entity == null ? null : Sable.HELPER.getTrackingOrVehicleSubLevel(entity);
+    }
+
+    // Trace an entity's view through the SubLevel it is riding or tracking
+    public static @Nullable Vec3 traceTrackedBlock(@Nullable Entity entity, double range) {
+        SubLevel subLevel = tracking(entity);
+        if (entity == null || subLevel == null || subLevel.getLevel() == null) return null;
+        Vec3 start = SableTransformApi.toLocalPosition(subLevel, entity.getEyePosition());
+        Vec3 direction = SableTransformApi.toLocalDirection(subLevel, entity.getLookAngle());
+        if (start == null || direction.lengthSqr() < 1.0E-9D) return null;
+        BlockHitResult hit = subLevel.getLevel().clip(new ClipContext(start,
+                start.add(direction.normalize().scale(range)), ClipContext.Block.COLLIDER,
+                ClipContext.Fluid.NONE, entity));
+        return hit.getType() == HitResult.Type.BLOCK
+                ? SableTransformApi.toWorldPosition(subLevel, hit.getBlockPos().getCenter()) : null;
     }
 
     // Get the sublevel containing one position
