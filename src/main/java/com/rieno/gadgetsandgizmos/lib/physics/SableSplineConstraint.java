@@ -366,13 +366,13 @@ public final class SableSplineConstraint implements AutoCloseable{
             projection = next;
             Vec3 worldForward = transform(pose, nextRequest.localForward());
             Vec3 worldUp = transform(pose, nextRequest.localUp());
+            boolean overlapCapture = nextRequest.overlapCertified()
+                    && SplineConstraintFrame.canAttachOnOverlap(
+                    position, worldForward, next, axes,
+                    nextRequest.capture().rigidRadius(),
+                    nextRequest.capture().maximumRigidHeadingAngle());
             if(handle == null){
-                boolean rigidCapture = nextRequest.overlapCertified()
-                        && SplineConstraintFrame.canAttach(
-                        position, worldForward, worldUp, next, axes,
-                        nextRequest.capture().rigidRadius(),
-                        nextRequest.capture().maximumRigidHeadingAngle());
-                if(!rigidCapture && !SplineConstraintFrame.canCapture(
+                if(!overlapCapture && !SplineConstraintFrame.canCapture(
                         position, prev, worldForward, worldUp,
                         next, axes, nextRequest.capture().rigidRadius(),
                         nextRequest.capture().maximumRigidHeadingAngle(),
@@ -406,11 +406,11 @@ public final class SableSplineConstraint implements AutoCloseable{
                 detachHandle();
                 return;
             }
-            if(stage == Stage.GUIDING && SplineConstraintFrame.canCapture(
+            if(stage == Stage.GUIDING && (overlapCapture || SplineConstraintFrame.canCapture(
                     position, prev, worldForward, worldUp, next, axes,
                     nextRequest.capture().rigidRadius(),
                     nextRequest.capture().maximumRigidHeadingAngle(),
-                    nextRequest.capture().maximumRigidLateralSpeed())){
+                    nextRequest.capture().maximumRigidLateralSpeed()))){
                 if(!installFrame(next.position(), dir, Stage.RIGID,
                         nextRequest.capture())){
                     diagnostic = "solver rejected rigid joint";

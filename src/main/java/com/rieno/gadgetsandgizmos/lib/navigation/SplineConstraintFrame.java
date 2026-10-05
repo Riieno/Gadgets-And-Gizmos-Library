@@ -17,6 +17,12 @@ public final class SplineConstraintFrame{
     // Initialize the spline frame helper
     private SplineConstraintFrame(){}
 
+    // Release a constrained route when its stopping corridor is obstructed
+    public static boolean collisionHandoff(double clearance, double requiredClearance){
+        return Double.isFinite(clearance) && Double.isFinite(requiredClearance)
+                && clearance < Math.max(0.0D, requiredClearance) - 1.0E-4D;
+    }
+
     // Get the route tangent on the constrained axes
     public static Vec3 tangent(WaypointSpline.Projection projection, AxisPolicy axes){
         if(projection == null || !projection.found()) return Vec3.ZERO;
@@ -62,23 +68,39 @@ public final class SplineConstraintFrame{
     public static boolean canAttach(Vec3 position, Vec3 forward, Vec3 up,
                                     WaypointSpline.Projection projection, AxisPolicy axes,
                                     double captureRadius, double maximumHeadingAngle){
-        if(!finite(position) || !finite(forward) || !finite(up)
-                || projection == null || !projection.found()) return false;
+        if(!finite(up) || !canAttachOnOverlap(position, forward, projection,
+                axes, captureRadius, maximumHeadingAngle)) return false;
         AxisPolicy policy = policy(axes);
         Vec3 dir = tangent(projection, policy);
-        Vec3 facing = policy.filter(forward);
-        if(dir.lengthSqr() <= 1.0E-12D || facing.lengthSqr() <= 1.0E-12D) return false;
-        double radius = Math.max(0.0D, finite(captureRadius));
-        if(policy.filter(position.subtract(projection.position())).lengthSqr()
-                > radius * radius) return false;
         double angle = Math.max(0.0D, Math.min(Math.PI, finite(maximumHeadingAngle)));
-        if(facing.normalize().dot(dir) < Math.cos(angle)) return false;
         if(policy == AxisPolicy.ALL){
             Vec3 routeUp = dir.cross(new Vec3(0.0D, 1.0D, 0.0D).cross(dir)).normalize();
             if(routeUp.lengthSqr() <= 1.0E-12D) return false;
             if(up.normalize().dot(routeUp) < Math.cos(angle)) return false;
         }
         return true;
+    }
+
+    // Latch an overlapping hull by facing while leaving bank and sideways momentum free
+    public static boolean canAttachOnOverlap(Vec3 position, Vec3 forward,
+                                             WaypointSpline.Projection projection, AxisPolicy axes,
+                                             double captureRadius, double maximumHeadingAngle){
+        if(!finite(position) || projection == null || !projection.found()) return false;
+        AxisPolicy policy = policy(axes);
+        double radius = Math.max(0.0D, finite(captureRadius));
+        return policy.filter(position.subtract(projection.position())).lengthSqr() <= radius * radius
+                && headingAligned(forward, projection.tangent(), policy, maximumHeadingAngle);
+    }
+
+    // Compare facing with the route direction on the constrained axes
+    private static boolean headingAligned(Vec3 forward, Vec3 tangent,
+                                          AxisPolicy axes, double maximumHeadingAngle){
+        if(!finite(forward) || !finite(tangent)) return false;
+        Vec3 facing = axes.filter(forward);
+        Vec3 direction = axes.filter(tangent);
+        if(facing.lengthSqr() <= 1.0E-12D || direction.lengthSqr() <= 1.0E-12D) return false;
+        double angle = Math.max(0.0D, Math.min(Math.PI, finite(maximumHeadingAngle)));
+        return facing.normalize().dot(direction.normalize()) + 1.0E-10D >= Math.cos(angle);
     }
 
     // Check centreline overlap for a compliant capture
@@ -110,7 +132,19 @@ public final class SplineConstraintFrame{
                 spline.segments().size() - 1));
         double minimum = clamp(minimumFraction, 0.0D, 1.0D);
         int last = Math.min(first + 1, spline.segments().size() - 1);
-        return captureHull(spline, first, minimum, last, worldBounds, axes, padding);
+        return captureHull(spline, first, minimum, last, worldBounds, axes, padding, null, 0.0D);
+    }
+
+    // Find an ordered overlap whose route direction matches the vehicle facing
+    public static HullCapture captureHull(WaypointSpline spline, int segmentIndex,
+            double minimumFraction, List<AABB> worldBounds, AxisPolicy axes,
+            double padding, Vec3 forward, double maximumHeadingAngle){
+        if(spline == null || spline.isEmpty() || worldBounds == null
+                || worldBounds.isEmpty() || !finite(forward)) return HullCapture.none();
+        int first = Math.max(0, Math.min(segmentIndex, spline.segments().size() - 1));
+        return captureHull(spline, first, clamp(minimumFraction, 0.0D, 1.0D),
+                Math.min(first + 1, spline.segments().size() - 1), worldBounds, axes,
+                padding, forward, maximumHeadingAngle);
     }
 
     // Find a physical hull overlap anywhere on a route when its ordered cursor was lost
@@ -123,7 +157,17 @@ public final class SplineConstraintFrame{
         if(spline == null || spline.isEmpty() || worldBounds == null
                 || worldBounds.isEmpty()) return HullCapture.none();
         return captureHull(spline, 0, 0.0D, spline.segments().size() - 1,
-                worldBounds, axes, padding);
+                worldBounds, axes, padding, null, 0.0D);
+    }
+
+    // Recover a lost route cursor using only overlaps aligned with the vehicle facing
+    public static HullCapture captureHullAnywhere(WaypointSpline spline,
+            List<AABB> worldBounds, AxisPolicy axes, double padding,
+            Vec3 forward, double maximumHeadingAngle){
+        if(spline == null || spline.isEmpty() || worldBounds == null
+                || worldBounds.isEmpty() || !finite(forward)) return HullCapture.none();
+        return captureHull(spline, 0, 0.0D, spline.segments().size() - 1,
+                worldBounds, axes, padding, forward, maximumHeadingAngle);
     }
 
     // Find the nearest overlapping route point within one inclusive segment range
@@ -134,7 +178,9 @@ public final class SplineConstraintFrame{
             int last,
             List<AABB> worldBounds,
             AxisPolicy axes,
-            double padding
+            double padding,
+            Vec3 forward,
+            double maximumHeadingAngle
     ){
         double maximumSeparation = Math.max(0.0D, finite(padding));
         HullCapture best = HullCapture.none();
@@ -144,7 +190,7 @@ public final class SplineConstraintFrame{
                     maximumSeparation)) continue;
             double segmentMinimum = idx == first ? minimumFraction : 0.0D;
             HullPoint closest = closestHullPoint(
-                    segment, segmentMinimum, worldBounds, policy(axes));
+                    segment, segmentMinimum, worldBounds, policy(axes), forward, maximumHeadingAngle);
             if(closest == null || closest.separation() > maximumSeparation + 1.0E-8D){
                 continue;
             }
@@ -198,16 +244,18 @@ public final class SplineConstraintFrame{
             WaypointSpline.Segment segment,
             double minimumFraction,
             List<AABB> worldBounds,
-            AxisPolicy axes
+            AxisPolicy axes,
+            Vec3 forward,
+            double maximumHeadingAngle
     ){
         double minimum = clamp(minimumFraction, 0.0D, 1.0D);
         int samples = Math.max(HULL_CAPTURE_MIN_SAMPLES, Math.min(
                 HULL_CAPTURE_MAX_SAMPLES,
                 (int)Math.ceil(segment.length() / HULL_CAPTURE_SAMPLE_SPACING)));
-        HullPoint best = hullPoint(segment, minimum, worldBounds, axes);
+        HullPoint best = alignedHullPoint(segment, minimum, worldBounds, axes, forward, maximumHeadingAngle);
         for(int idx = 1; idx <= samples; idx++){
             double fraction = minimum + (1.0D - minimum) * idx / samples;
-            HullPoint candidate = hullPoint(segment, fraction, worldBounds, axes);
+            HullPoint candidate = alignedHullPoint(segment, fraction, worldBounds, axes, forward, maximumHeadingAngle);
             if(candidate != null && (best == null
                     || candidate.separation() + 1.0E-8D < best.separation()
                     || Math.abs(candidate.separation() - best.separation()) <= 1.0E-8D
@@ -220,8 +268,8 @@ public final class SplineConstraintFrame{
         for(int idx = 0; idx < HULL_CAPTURE_REFINEMENT_STEPS; idx++){
             double left = low + (high - low) / 3.0D;
             double right = high - (high - low) / 3.0D;
-            HullPoint leftPoint = hullPoint(segment, left, worldBounds, axes);
-            HullPoint rightPoint = hullPoint(segment, right, worldBounds, axes);
+            HullPoint leftPoint = alignedHullPoint(segment, left, worldBounds, axes, forward, maximumHeadingAngle);
+            HullPoint rightPoint = alignedHullPoint(segment, right, worldBounds, axes, forward, maximumHeadingAngle);
             if(leftPoint != null && (rightPoint == null
                     || leftPoint.separation() <= rightPoint.separation())){
                 high = right;
@@ -234,6 +282,14 @@ public final class SplineConstraintFrame{
             }
         }
         return best;
+    }
+
+    // Keep incompatible crossing directions out of hull capture
+    private static HullPoint alignedHullPoint(WaypointSpline.Segment segment, double fraction,
+            List<AABB> worldBounds, AxisPolicy axes, Vec3 forward, double maximumHeadingAngle){
+        if(forward != null && !headingAligned(forward,
+                segment.tangentAtFraction(fraction), axes, maximumHeadingAngle)) return null;
+        return hullPoint(segment, fraction, worldBounds, axes);
     }
 
     // Resolve the nearest material anchor for one curve sample

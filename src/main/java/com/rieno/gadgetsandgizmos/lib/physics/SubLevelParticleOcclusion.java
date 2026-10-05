@@ -461,6 +461,21 @@ public final class SubLevelParticleOcclusion {
         return List.copyOf(clipped.isEmpty() ? validBounds : clipped);
     }
 
+    // Expand horizontal clearance without probing support or overhead contact for each body
+    public static List<AABB> sideClearanceBounds(List<AABB> bounds, double margin, double contactClearance){
+        if(bounds == null || bounds.isEmpty()) return List.of();
+        double padding = Math.max(0.0D, margin);
+        double contact = Math.max(EPSILON * 2.0D, contactClearance);
+        List<AABB> res = new ArrayList<>();
+        for(AABB box : bounds){
+            if(box == null) continue;
+            double inset = Math.min(contact, Math.max(0.0D, box.getYsize()) * 0.25D);
+            res.add(new AABB(box.minX - padding, box.minY + inset, box.minZ - padding,
+                    box.maxX + padding, box.maxY - inset, box.maxZ + padding));
+        }
+        return List.copyOf(res);
+    }
+
     // Get the leading face probe points
     static List<Vec3> leadingFaceProbePoints(
             AABB bounds,
@@ -900,6 +915,18 @@ public final class SubLevelParticleOcclusion {
         // Get the result
         public double result() {
             return result;
+        }
+
+        // Report measured obstruction without treating an unfinished scan as a collision
+        public double confirmedBlockingDistance(double fallback){
+            if(complete) return result;
+            Double nearest = nearestFraction;
+            if(levelScanIndex < levelScans.size()){
+                nearest = nearestDistance(nearest, levelScans.get(levelScanIndex).nearestFraction());
+            }
+            return nearest == null ? Math.max(0.0D, fallback)
+                    : Math.min(Math.max(0.0D, fallback),
+                    Mth.clamp(nearest * maxDistance - 0.0625D, 0.0D, maxDistance));
         }
     }
 

@@ -19,6 +19,13 @@ class SplineConstraintFrameTest{
             Vec3.ZERO, new Vec3(20.0D, 0.0D, 0.0D)));
 
     @Test
+    void obstructionHandsControlToLiveNavigationAtTheRequiredClearance(){
+        assertFalse(SplineConstraintFrame.collisionHandoff(8.0D, 8.0D));
+        assertTrue(SplineConstraintFrame.collisionHandoff(7.0D, 8.0D));
+        assertFalse(SplineConstraintFrame.collisionHandoff(Double.NaN, 8.0D));
+    }
+
+    @Test
     void railDriveAcceleratesFromRestAndRetainsCruiseSpeed(){
         Vec3 velocity = Vec3.ZERO;
         for(int idx = 0; idx < 100; idx++){
@@ -79,6 +86,42 @@ class SplineConstraintFrameTest{
         assertTrue(capture(pos, new Vec3(5.0D, 3.0D, 0.1D), facing,
                 SplineConstraintFrame.AxisPolicy.HORIZONTAL));
         assertFalse(capture(pos, Vec3.ZERO, FORWARD, SplineConstraintFrame.AxisPolicy.ALL));
+    }
+
+    @Test
+    void overlapLatchUsesTheInclusiveTwentyTwoPointFiveDegreeFacingLimit(){
+        Vec3 pos = new Vec3(5.0D, 0.0D, 0.0D);
+        var projection = SPLINE.project(pos);
+        double limit = Math.toRadians(22.5D);
+        Vec3 boundary = new Vec3(Math.cos(limit), 0.0D, Math.sin(limit));
+        double outside = Math.toRadians(22.6D);
+        for(var axes : SplineConstraintFrame.AxisPolicy.values()){
+            assertTrue(SplineConstraintFrame.canAttachOnOverlap(
+                    pos, boundary, projection, axes, 0.125D, limit));
+            assertFalse(SplineConstraintFrame.canAttachOnOverlap(
+                    pos, new Vec3(Math.cos(outside), 0.0D, Math.sin(outside)),
+                    projection, axes, 0.125D, limit));
+            assertFalse(SplineConstraintFrame.canAttachOnOverlap(
+                    pos, FORWARD.scale(-1.0D), projection, axes, 0.125D, limit));
+        }
+        assertTrue(SplineConstraintFrame.canAttachOnOverlap(
+                pos.add(0.0D, 8.0D, 0.0D), new Vec3(1.0D, 0.8D, 0.0D),
+                projection, SplineConstraintFrame.AxisPolicy.HORIZONTAL, 0.125D, limit));
+        assertFalse(SplineConstraintFrame.canAttachOnOverlap(
+                pos.add(0.0D, 8.0D, 0.0D), FORWARD,
+                projection, SplineConstraintFrame.AxisPolicy.ALL, 0.125D, limit));
+    }
+
+    @Test
+    void aCrossingCanCaptureOnlyTheLegFacingTheVehicle(){
+        WaypointSpline crossing = WaypointSpline.of(List.of(Vec3.ZERO,
+                new Vec3(20.0D, 0.0D, 0.0D), new Vec3(20.0D, 0.0D, 20.0D),
+                new Vec3(5.0D, 0.0D, 20.0D), new Vec3(5.0D, 0.0D, -20.0D)));
+        List<AABB> hull = List.of(new AABB(4.0D, -1.0D, -2.0D, 6.0D, 1.0D, 2.0D));
+        var capture = SplineConstraintFrame.captureHullAnywhere(crossing, hull,
+                SplineConstraintFrame.AxisPolicy.ALL, 0.125D, FORWARD, Math.toRadians(22.5D));
+        assertTrue(capture.found());
+        assertEquals(0, capture.projection().segmentIndex());
     }
 
     @Test

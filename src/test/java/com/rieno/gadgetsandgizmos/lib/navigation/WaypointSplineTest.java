@@ -13,6 +13,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WaypointSplineTest {
     @Test
+    void sampledSuffixStartsAtTheSelectedLegAndKeepsFutureAuthoredPoints(){
+        WaypointSpline spline = WaypointSpline.of(List.of(Vec3.ZERO,
+                new Vec3(10.0D, 0.0D, 0.0D), new Vec3(10.0D, 0.0D, 10.0D),
+                new Vec3(20.0D, 0.0D, 10.0D)));
+        Vec3 start = spline.segments().get(1).pointAtFraction(0.4D);
+        var projection = spline.projectSegment(start, 1, 0.4D);
+        List<Vec3> suffix = spline.sampleFrom(projection, 0.75D, 64);
+        assertEquals(start.x, suffix.getFirst().x, 1.0E-6D);
+        assertEquals(start.z, suffix.getFirst().z, 1.0E-6D);
+        assertTrue(suffix.contains(spline.waypoints().get(2)));
+        assertEquals(spline.waypoints().getLast(), suffix.getLast());
+        assertFalse(suffix.contains(Vec3.ZERO));
+        assertFalse(suffix.contains(spline.waypoints().get(1)));
+        assertTrue(suffix.size() <= 64);
+    }
+
+    @Test
     void twoPointSplineRemainsStraight() {
         WaypointSpline spline = WaypointSpline.of(List.of(
                 new Vec3(0.0D, 0.0D, 0.0D),
@@ -148,6 +165,21 @@ class WaypointSplineTest {
 
         assertTrue(control.steeringDirection().x > 0.8D);
         assertTrue(control.steeringDirection().z < 0.0D);
+    }
+
+    @Test
+    void lookaheadSteeringMakesSmallCorrectionsOnAStraightSpline(){
+        WaypointSpline spline = WaypointSpline.of(List.of(
+                Vec3.ZERO, new Vec3(100.0D, 0.0D, 0.0D)));
+        Vec3 position = new Vec3(10.0D, 0.0D, 0.2D);
+        GroundPathPlanner.ForwardRouteControl control = GroundPathPlanner.forwardSplineControl(
+                spline, spline.project(position), position, new Vec3(1.0D, 0.0D, 0.0D),
+                new GroundPathPlanner.VehicleCapabilities(
+                        2.0D, Math.toRadians(30.0D), 0.0D, 0.0D, 0.0D, true),
+                6.0D, 8.0D, 1.0D, 2.5D, 0.35D, 0.35D);
+        assertTrue(control.signedCurvature() > 0.0D);
+        assertTrue(control.steeringFeedForward() > 0.0D);
+        assertTrue(control.steeringFeedForward() < 0.2D);
     }
 
     @Test

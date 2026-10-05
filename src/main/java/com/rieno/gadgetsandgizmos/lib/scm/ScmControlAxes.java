@@ -51,6 +51,26 @@ public final class ScmControlAxes {
                 -1.0D, 1.0D);
     }
 
+    // Track lookahead curvature while damping the difference from its expected turn rate
+    public static double curvatureSteeringDemand(double curvature, double forwardSpeed,
+                                                  double yawRate, double steeringFeedForward){
+        double curve = Double.isFinite(curvature) ? curvature : 0.0D;
+        double speed = Double.isFinite(forwardSpeed) ? forwardSpeed : 0.0D;
+        double rate = Double.isFinite(yawRate) ? yawRate : 0.0D;
+        double steering = Double.isFinite(steeringFeedForward) ? steeringFeedForward : 0.0D;
+        return Mth.clamp(steering - (rate - speed * curve)
+                        * GROUND_STEERING_YAW_RATE_SECONDS,
+                -1.0D, 1.0D);
+    }
+
+    // Bound one steering update so a route target cannot swing wheels across full lock in one tick
+    public static double slewSteering(double previous, double requested, double maximumChange){
+        double prev = Double.isFinite(previous) ? Mth.clamp(previous, -1.0D, 1.0D) : 0.0D;
+        double next = Double.isFinite(requested) ? Mth.clamp(requested, -1.0D, 1.0D) : 0.0D;
+        double step = Double.isFinite(maximumChange) ? Math.max(0.0D, maximumChange) : 0.0D;
+        return Mth.clamp(next, prev - step, prev + step);
+    }
+
     /** Construct physical torque for a signed right-turn request (negative means left). */
     public static Vec3 yawTorque(Vec3 up, double rightDemand){
         if(!finite(up) || !Double.isFinite(rightDemand)) return Vec3.ZERO;

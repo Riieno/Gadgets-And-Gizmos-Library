@@ -172,6 +172,27 @@ public final class WaypointSpline {
         return result;
     }
 
+    // Sample the remaining authored curve from an already selected route point
+    public List<Vec3> sampleFrom(Projection start, double maximumSpacing, int maximumSamples){
+        if(start == null || !start.found() || segments.isEmpty()
+                || start.segmentIndex() < 0 || start.segmentIndex() >= segments.size()) return List.of();
+        int sampleLimit = Math.max(segments.size() + 1, Math.max(2, maximumSamples));
+        double spacing = boundedSamplingSpacing(positive(maximumSpacing, 1.0D), sampleLimit);
+        List<Vec3> samples = new ArrayList<>();
+        double minimum = clamp(start.fraction(), 0.0D, 1.0D);
+        samples.add(segments.get(start.segmentIndex()).pointAtFraction(minimum));
+        for(int idx = start.segmentIndex(); idx < segments.size(); idx++){
+            Segment segment = segments.get(idx);
+            double first = idx == start.segmentIndex() ? minimum : 0.0D;
+            if(first >= 1.0D) continue;
+            int count = Math.max(1, (int)Math.ceil(segment.length() * (1.0D - first) / spacing));
+            for(int sampleIdx = 1; sampleIdx <= count; sampleIdx++){
+                samples.add(segment.pointAtFraction(first + (1.0D - first) * sampleIdx / count));
+            }
+        }
+        return List.copyOf(samples);
+    }
+
     // Project one position onto the complete curve
     public Projection project(Vec3 position) {
         return project(position, 0, 0.0D);

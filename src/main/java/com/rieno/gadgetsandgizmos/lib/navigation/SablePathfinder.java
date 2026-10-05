@@ -887,6 +887,37 @@ public final class SablePathfinder {
         };
     }
 
+    // Validate a complete compound hull supplied in world coordinates for each segment start
+    public static Validator compoundCollisionValidator(CollisionOptions options,
+            java.util.function.Function<Query, List<AABB>> boundsAtStart){
+        CollisionOptions resolved = options == null ? CollisionOptions.DEFAULT : options;
+        return query -> {
+            if(query == null || query.rootLevel() == null || boundsAtStart == null
+                    || !finite(query.start()) || !finite(query.end())) return Traversal.unavailable();
+            try{
+                List<AABB> bounds = boundsAtStart.apply(query);
+                if(bounds == null || bounds.isEmpty()) return Traversal.unavailable();
+                Vec3 delta = query.end().subtract(query.start());
+                double distance = delta.length();
+                if(distance <= EPSILON) return Traversal.clear(query.mode());
+                AABB swept = null;
+                for(AABB box : bounds){
+                    AABB part = box.minmax(box.move(delta));
+                    swept = swept == null ? part : swept.minmax(part);
+                }
+                if(resolved.includeRootLevel() && !rootLoaded(query.rootLevel(), swept)) return Traversal.unavailable();
+                if(!loaded(query.rootLevel(), query.start(), query.end(), query.safety(),
+                        swept, resolved.excludedSubLevelIds())) return Traversal.unavailable();
+                double clearance = SubLevelParticleOcclusion.findSweptBoundsBlockingDistance(
+                        query.rootLevel(), null, query.start(), delta, distance, bounds,
+                        resolved.includeRootLevel(), resolved.excludedSubLevelIds(), resolved.includeTaggedTransparentBlocks());
+                return clearance + EPSILON >= distance ? Traversal.clear(query.mode()) : Traversal.blocked();
+            }catch(RuntimeException | LinkageError err){
+                return Traversal.unavailable();
+            }
+        };
+    }
+
     // Validate a segment through live Sable geometry and loaded chunks only
     private static Traversal validateSableCollision(
             Query query,

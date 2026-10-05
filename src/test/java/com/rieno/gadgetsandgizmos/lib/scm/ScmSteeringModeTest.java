@@ -47,4 +47,16 @@ class ScmSteeringModeTest {
         assertEquals(physical,
                 ScmSteeringMode.FRONT_WHEEL.planningSteeringRadians(physical), 1.0E-8D);
     }
+
+    @Test
+    void lookaheadDemandDampsYawAndBoundsWheelChanges(){
+        assertEquals(0.2D, ScmControlAxes.curvatureSteeringDemand(
+                0.05D, 4.0D, 0.2D, 0.2D), 1.0E-8D);
+        assertTrue(ScmControlAxes.curvatureSteeringDemand(
+                0.05D, 4.0D, 0.4D, 0.2D) < 0.2D);
+        assertEquals(0.08D, ScmControlAxes.slewSteering(
+                0.0D, 1.0D, 0.08D), 1.0E-8D);
+        assertEquals(0.0D, ScmControlAxes.slewSteering(
+                0.08D, -1.0D, 0.08D), 1.0E-8D);
+    }
 }

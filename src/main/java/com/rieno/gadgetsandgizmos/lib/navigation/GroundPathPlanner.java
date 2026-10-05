@@ -558,6 +558,25 @@ public final class GroundPathPlanner {
             double responseSeconds,
             double minimumCornerSpeed
     ) {
+        return forwardSplineControl(spline, projection, position, Vec3.ZERO,
+                capabilities, lookahead, requestedSpeed, maximumLateralAcceleration,
+                brakingAcceleration, responseSeconds, minimumCornerSpeed);
+    }
+
+    // Steer toward a point ahead of the vehicle with a radius its wheelbase can follow
+    public static ForwardRouteControl forwardSplineControl(
+            WaypointSpline spline,
+            WaypointSpline.Projection projection,
+            Vec3 position,
+            Vec3 forward,
+            VehicleCapabilities capabilities,
+            double lookahead,
+            double requestedSpeed,
+            double maximumLateralAcceleration,
+            double brakingAcceleration,
+            double responseSeconds,
+            double minimumCornerSpeed
+    ) {
         Vec3 current = finite(position);
         double maximumSpeed = Math.max(0.0D, finite(requestedSpeed));
         if (spline == null || projection == null || !projection.found()) {
@@ -595,6 +614,20 @@ public final class GroundPathPlanner {
         double steeringFeedForward = clamp(Math.atan(
                 vehicle.wheelbase() * signedCurvature)
                 / vehicle.maximumSteeringRadians(), -1.0D, 1.0D);
+        Vec3 heading = horizontal(forward);
+        if (heading.lengthSqr() > 1.0E-8D) {
+            Vec3 toTarget = horizontal(target.position().subtract(current));
+            double distanceSquared = toTarget.lengthSqr();
+            if (distanceSquared > 1.0E-8D) {
+                signedCurvature = clamp(2.0D * heading.normalize().cross(toTarget).y
+                                / distanceSquared,
+                        -1.0D / vehicle.minimumTurningRadius(),
+                        1.0D / vehicle.minimumTurningRadius());
+                steeringFeedForward = clamp(Math.atan(vehicle.wheelbase() * signedCurvature)
+                        / vehicle.maximumSteeringRadians(), -1.0D, 1.0D);
+                steering = toTarget.normalize();
+            }
+        }
 
         double horizon = Math.min(spline.length() - projection.distanceAlongRoute(),
                 Math.max(joinLookahead * 2.0D, vehicle.minimumTurningRadius() * 4.0D));
@@ -621,7 +654,10 @@ public final class GroundPathPlanner {
             if (sampledDistance >= horizon) break;
         }
         if (strongestCurvature <= 1.0E-6D) {
-            return ForwardRouteControl.clear(steering, maximumSpeed);
+            return new ForwardRouteControl(steering, -1, Vec3.ZERO,
+                    Double.POSITIVE_INFINITY, 0.0D, 0.0D,
+                    maximumSpeed, maximumSpeed, signedCurvature,
+                    steeringFeedForward, false);
         }
         double radius = Math.max(vehicle.minimumTurningRadius(),
                 1.0D / strongestCurvature);

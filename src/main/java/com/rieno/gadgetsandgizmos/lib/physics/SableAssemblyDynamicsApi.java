@@ -539,7 +539,7 @@ public final class SableAssemblyDynamicsApi {
         }
 
         // Get the inverse
-        private Tensor inverse() {
+        public Tensor inverse(){
             double c00 = m11 * m22 - m12 * m21;
             double c01 = m02 * m21 - m01 * m22;
             double c02 = m01 * m12 - m02 * m11;

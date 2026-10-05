@@ -225,6 +225,48 @@ class SableSplineConstraintTest{
     }
 
     @Test
+    void aBankedPlaneLatchesByFacingWithoutAnUprightGate() throws Exception{
+        try(Fixture ctx = new Fixture(); SableSplineConstraint constraint = new SableSplineConstraint()){
+            double halfBank = Math.toRadians(60.0D) * 0.5D;
+            ctx.pose.orientation().set(Math.sin(halfBank), 0.0D, 0.0D, Math.cos(halfBank));
+            Vec3 pos = new Vec3(5.0D, 0.0D, 0.0D);
+            var capture = new SableSplineConstraint.CaptureSettings(
+                    8.0D, 1.5D, Math.toRadians(22.5D), 4.0D,
+                    12.0D, 8.0D, 4.0D, 10.0D);
+            assertTrue(constraint.updateCapturedWorldAnchor(ctx.body, SPLINE, SPLINE.project(pos), pos,
+                    FORWARD, UP, SplineConstraintFrame.AxisPolicy.ALL, capture, 2.0D,
+                    (position, direction, step) -> true));
+            constraint.step(0.01D);
+            assertTrue(constraint.rigid(), constraint.diagnostic());
+        }
+    }
+
+    @Test
+    void certifiedOverlapPromotesAnExistingGuideDespiteLateralMomentum() throws Exception{
+        try(Fixture ctx = new Fixture(); SableSplineConstraint constraint = new SableSplineConstraint()){
+            ctx.pose.position().set(5.0D, 0.0D, 0.5D);
+            when(ctx.rigidBody.getLinearVelocity(any(org.joml.Vector3d.class)))
+                    .thenAnswer(call -> ((org.joml.Vector3d)call.getArgument(0)).set(0.0D, 0.0D, 20.0D));
+            var capture = new SableSplineConstraint.CaptureSettings(
+                    0.75D, 0.05D, Math.toRadians(22.5D), 0.75D,
+                    18.0D, 8.0D, 8.0D, 1.25D);
+            Vec3 pos = new Vec3(5.0D, 0.0D, 0.5D);
+            assertTrue(constraint.update(ctx.body, SPLINE, SPLINE.project(pos), Vec3.ZERO,
+                    FORWARD, UP, SplineConstraintFrame.AxisPolicy.HORIZONTAL, capture, 2.0D,
+                    (position, direction, step) -> true));
+            constraint.step(0.01D);
+            assertEquals(SableSplineConstraint.Stage.GUIDING, constraint.stage());
+            ctx.pose.position().set(5.0D, 0.0D, 0.02D);
+            pos = new Vec3(5.0D, 0.0D, 0.02D);
+            assertTrue(constraint.updateCaptured(ctx.body, SPLINE, SPLINE.project(pos), Vec3.ZERO,
+                    FORWARD, UP, SplineConstraintFrame.AxisPolicy.HORIZONTAL, capture, 2.0D,
+                    (position, direction, step) -> true));
+            constraint.step(0.01D);
+            assertTrue(constraint.rigid(), constraint.diagnostic());
+        }
+    }
+
+    @Test
     void missingRouteCannotCreateAnAttachment() throws Exception{
         try(Fixture ctx = new Fixture(); SableSplineConstraint constraint = new SableSplineConstraint()){
             assertFalse(constraint.update(ctx.body, null, WaypointSpline.Projection.notFound(),

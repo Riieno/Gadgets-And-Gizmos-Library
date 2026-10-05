@@ -54,7 +54,8 @@ public interface ScmControlMode {
             boolean preferForward,
             boolean reverseRecovery,
             double pathCurvature,
-            double steeringFeedForward
+            double steeringFeedForward,
+            ScmAdaptiveStateModel stateModel
     ) {
         // Initialize the control input
         public ControlInput {
@@ -77,6 +78,27 @@ public interface ScmControlMode {
             pathCurvature = finite(pathCurvature);
             steeringFeedForward = Mth.clamp(
                     finite(steeringFeedForward), -1.0D, 1.0D);
+        }
+
+        // Preserve the previous host contract without a live ship model.
+        public ControlInput(
+                Vec3 position, Vec3 velocity, Vec3 angularVelocity,
+                Vec3 forward, Vec3 up, Vec3 right,
+                Vec3 target, Vec3 pathDirection, Vec3 accumulatedError,
+                double targetSpeed, double tolerance, double distanceResponse,
+                boolean transitWaypoint,
+                double forwardClearance, double reverseClearance,
+                double travelSpeedLimit, double propulsion,
+                boolean avoidCollisions, boolean preferForward,
+                boolean reverseRecovery, double pathCurvature,
+                double steeringFeedForward
+        ) {
+            this(position, velocity, angularVelocity, forward, up, right,
+                    target, pathDirection, accumulatedError,
+                    targetSpeed, tolerance, distanceResponse, transitWaypoint,
+                    forwardClearance, reverseClearance, travelSpeedLimit, propulsion,
+                    avoidCollisions, preferForward, reverseRecovery,
+                    pathCurvature, steeringFeedForward, null);
         }
 
         // Preserve the previous complete host contract without curvature feed-forward.

@@ -87,4 +87,17 @@ class ScmFlightPowerTest{
                     ScmCommandRouting.sustainingAccelerationPower("ship_navigate", -1.0D, 1.0D)));
         }
     }
+
+    @Test
+    void airshipCountersASidewaysCollisionWithoutWaitingForPositionDrift(){
+        Vec3 forward = new Vec3(0.0D, 0.0D, 1.0D);
+        var input = new ScmControlMode.ControlInput(
+                Vec3.ZERO, new Vec3(2.0D, 0.0D, 0.0D), Vec3.ZERO,
+                forward, UP, forward.cross(UP), forward, forward, Vec3.ZERO,
+                0.35D, 0.18D, 0.25D, false, 10.0D, 10.0D, 0.35D,
+                1.0D, true, false, false);
+        var output = ScmControlModeRegistry.resolve("airship").navigate(input);
+        assertTrue(output.force().x < -4.0D);
+        assertTrue(output.force().z > 0.0D);
+    }
 }

@@ -108,21 +108,46 @@ public final class ScmBuiltinControlModes {
                     && targetDistance <= Math.max(2.0D, input.tolerance() * 2.0D);
             double desiredSpeed = input.transitWaypoint()
                     ? Math.min(input.targetSpeed(), input.travelSpeedLimit())
-                    : safeTargetSpeed(input, targetDistance);
+                    : Math.min(input.travelSpeedLimit(), Math.min(input.targetSpeed(),
+                    targetDistance * Math.max(0.75D, input.distanceResponse())));
             Vec3 desiredVelocity = input.pathDirection().scale(desiredSpeed);
-            Vec3 force = desiredVelocity.subtract(input.velocity()).scale(0.6D)
-                    .add(input.accumulatedError().scale(0.04D));
+            ScmAdaptiveStateModel model = input.stateModel();
+            boolean liveModel = model != null && model.available();
+            boolean liveLinear = liveModel && (model.authority(
+                    input.pathDirection(), false, true) > 0.0D
+                    || model.authority(input.pathDirection(), false, false) > 0.0D);
+            Vec3 force = (liveLinear
+                    ? model.linearVelocityFeedback(desiredVelocity, input.velocity(),
+                    input.tolerance()) : new Vec3(
+                    ScmStateFeedback.velocityAcceleration(
+                            desiredVelocity.x, input.velocity().x, 0.45D),
+                    ScmStateFeedback.velocityAcceleration(
+                            desiredVelocity.y, input.velocity().y, 0.45D),
+                    ScmStateFeedback.velocityAcceleration(
+                            desiredVelocity.z, input.velocity().z, 0.45D)))
+                    .add(input.accumulatedError().scale(0.08D));
             double driveStrength = input.hasPropulsionRequest()
                     ? speedControlLevel(input, desiredSpeed)
                     : Mth.clamp(force.length(), 0.0D, 1.0D);
             if (input.hasPropulsionRequest() && !terminalCapture) {
                 double pathSpeed = input.velocity().dot(input.pathDirection());
-                double propulsion = propulsionDemand(input, pathSpeed, desiredSpeed);
+                double propulsion = liveLinear
+                        ? model.velocityFeedback(input.pathDirection(), false,
+                        desiredSpeed, pathSpeed, input.tolerance())
+                        : Mth.clamp(ScmStateFeedback.velocityAcceleration(
+                        desiredSpeed, pathSpeed, 0.45D), -3.5D, 3.5D);
+                if(propulsion > 0.0D) propulsion *= input.propulsion();
                 Vec3 lateralVelocity = input.velocity().subtract(
                         input.pathDirection().scale(pathSpeed));
+                Vec3 lateralCorrection = liveLinear
+                        ? model.linearVelocityFeedback(Vec3.ZERO, lateralVelocity,
+                        input.tolerance()) : lateralVelocity.scale(-2.2D);
+                if(liveLinear) lateralCorrection = lateralCorrection.subtract(
+                        input.pathDirection().scale(
+                                lateralCorrection.dot(input.pathDirection())));
                 force = input.pathDirection().scale(propulsion)
-                        .subtract(lateralVelocity.scale(0.25D))
-                        .add(input.accumulatedError().scale(0.04D));
+                        .add(lateralCorrection)
+                        .add(input.accumulatedError().scale(0.08D));
             }
             boolean faceTravel = input.preferForward() && (input.transitWaypoint()
                     || error.length() > Math.max(2, input.tolerance() * 2));
@@ -139,14 +164,21 @@ public final class ScmBuiltinControlModes {
                     forwardDemand *= engagement;
                 }
                 force = new Vec3(0.0D, force.y, 0.0D).add(forward.scale(
-                        Mth.clamp(forwardDemand, -1.0D, 1.0D)));
+                        liveLinear ? forwardDemand
+                                : Mth.clamp(forwardDemand, -3.5D, 3.5D)));
             }
             Vec3 worldUp = new Vec3(0.0D, 1.0D, 0.0D);
             double yawError = signedAngle(
                     horizontal(input.forward()), horizontal(input.pathDirection()), worldUp);
-            Vec3 torque = worldUp.scale(Mth.clamp(
-                    yawError * 0.5D - input.angularVelocity().dot(worldUp) * 0.25D,
-                    -1.0D, 1.0D));
+            boolean liveYaw = liveModel && (model.authority(worldUp, true, true) > 0.0D
+                    || model.authority(worldUp, true, false) > 0.0D);
+            Vec3 torque = worldUp.scale(Mth.clamp(liveYaw
+                    ? model.feedback(worldUp, true, yawError,
+                    input.angularVelocity().dot(worldUp)).acceleration() :
+                    ScmStateFeedback.acceleration(yawError,
+                            input.angularVelocity().dot(worldUp),
+                            ScmStateFeedback.lqrForResponse(0.9D)),
+                    -3.5D, 3.5D));
             return new ControlOutput(
                     force, torque, true, 0.75D, 0.0D, driveStrength);
         }
