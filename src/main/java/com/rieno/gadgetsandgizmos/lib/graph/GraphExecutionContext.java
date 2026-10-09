@@ -24,6 +24,11 @@ public interface GraphExecutionContext {
     // Update the graph execution context
     long tick();
 
+    // Distinguish an execution pulse from a passive output read or preview
+    default boolean executionTriggered(){
+        return false;
+    }
+
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================
