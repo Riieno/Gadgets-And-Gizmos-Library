@@ -10,11 +10,15 @@ package com.rieno.gadgetsandgizmos.lib.physics;
 
 import dev.ryanhcode.sable.api.physics.constraint.PhysicsConstraintHandle;
 import dev.ryanhcode.sable.api.physics.constraint.GenericConstraintHandle;
+import dev.ryanhcode.sable.sublevel.ServerSubLevel;
+import net.minecraft.server.level.ServerLevel;
+import org.jetbrains.annotations.Nullable;
 import org.joml.Quaterniond;
 import org.joml.Quaterniondc;
 import org.joml.Vector3dc;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Field;
 import java.util.Set;
 
 // Bridge current and legacy Sable constraint packages in one library surface
@@ -28,6 +32,34 @@ public final class SableConstraintApi {
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     private static final String CONSTRAINT_PACKAGE = "dev.ryanhcode.sable.api.physics.constraint.";
+    private static final String RAPIER_PACKAGE = "dev.ryanhcode.sable.physics.impl.rapier.";
+    private static final ClassValue<FrameAccess> FIXED_FRAMES = new ClassValue<>(){
+        @Override
+        protected FrameAccess computeValue(Class<?> type){
+            try{
+                Class<?> base = type;
+                while(base != null && !base.getName().equals(RAPIER_PACKAGE + "constraint.RapierConstraintHandle")){
+                    base = base.getSuperclass();
+                }
+                if(base == null) throw new NoSuchMethodException("Unsupported constraint frame API: " + type.getName());
+                Field scene;
+                try{
+                    scene = base.getDeclaredField("sceneHandle");
+                }catch(NoSuchFieldException legacy){
+                    scene = base.getDeclaredField("sceneID");
+                }
+                Field joint = base.getDeclaredField("handle");
+                scene.setAccessible(true);
+                joint.setAccessible(true);
+                Class<?> rapier = Class.forName(RAPIER_PACKAGE + "Rapier3D", false, type.getClassLoader());
+                Method setter = rapier.getMethod("setConstraintFrame", scene.getType(), long.class, int.class,
+                        double.class, double.class, double.class, double.class, double.class, double.class, double.class);
+                return new FrameAccess(scene, joint, setter, null);
+            }catch(ReflectiveOperationException error){
+                return new FrameAccess(null, null, null, error);
+            }
+        }
+    };
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -63,6 +95,19 @@ public final class SableConstraintApi {
     public static Object fixedConfiguration(Vector3dc posA, Vector3dc posB, Quaterniondc orientation)
             throws ReflectiveOperationException {
         return anchoredConfiguration("FixedConstraintConfiguration", "fixed", posA, posB, orientation);
+    }
+
+    // Create a native fixed attachment with exact locked frames after every physics substep
+    public static @Nullable SableRigidConstraint rigidFixedConstraint(ServerLevel level,
+            @Nullable ServerSubLevel bodyA, @Nullable ServerSubLevel bodyB,
+            Vector3dc posA, Vector3dc posB, Quaterniondc orientation) throws ReflectiveOperationException{
+        return SableRigidConstraint.attach(level, bodyA, bodyB, posA, posB, orientation);
+    }
+
+    // Rotate a mounted frame around the base frame's local Y axis
+    public static Quaterniond rotaryOrientation(Quaterniondc baseFrame, Quaterniondc mountedFrame, double angleRadians){
+        return new Quaterniond(baseFrame).rotateY(angleRadians)
+                .mul(new Quaterniond(mountedFrame).conjugate()).normalize();
     }
 
     // Create one compatible free constraint configuration
@@ -140,13 +185,25 @@ public final class SableConstraintApi {
         if (handle == null || frame < 1 || frame > 2) {
             throw new IllegalArgumentException("A valid constraint handle and frame are required");
         }
+        if(handle instanceof SableRigidConstraint rigid){
+            rigid.setFrame(frame, pos, orientation);
+            return;
+        }
         if(handle instanceof GenericConstraintHandle generic){
             if(frame == 1) generic.setFrame1(pos, orientation);
             else generic.setFrame2(pos, orientation);
             return;
         }
-        handle.getClass().getMethod("setFrame" + frame, Vector3dc.class, Quaterniondc.class)
-                .invoke(handle, pos, orientation);
+        try{
+            handle.getClass().getMethod("setFrame" + frame, Vector3dc.class, Quaterniondc.class)
+                    .invoke(handle, pos, orientation);
+        }catch(NoSuchMethodException missing){
+            if(!handle.isValid()) throw new IllegalStateException("Constraint is unavailable");
+            FrameAccess access = FIXED_FRAMES.get(handle.getClass());
+            if(access.error != null) throw access.error;
+            access.setter.invoke(null, access.scene.get(handle), access.joint.getLong(handle), frame - 1,
+                    pos.x(), pos.y(), pos.z(), orientation.x(), orientation.y(), orientation.z(), orientation.w());
+        }
     }
 
     // Remove one compatible constraint handle
@@ -178,4 +235,7 @@ public final class SableConstraintApi {
     private static boolean acceptsBody(Class<?> parameterType, Object body) {
         return body == null || parameterType.isInstance(body);
     }
+
+    // Cache the native frame setter used by Rapier fixed constraints
+    private record FrameAccess(Field scene, Field joint, Method setter, ReflectiveOperationException error){}
 }

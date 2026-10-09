@@ -8,6 +8,8 @@ package com.rieno.gadgetsandgizmos.lib.worker;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.util.DeferredWorkScheduler;
+
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
@@ -47,7 +49,12 @@ public final class WorkerRecipePlanner{
     private final Predicate<WorkerRecipePlan> rootExecutable;
     private final ToIntFunction<WorkerRecipePlan> routingPenalty;
     private final IngredientStock machineStock;
-    private int branches;
+    private boolean stockFirst;
+    private boolean directOnly;
+    private boolean ranked;
+    private long branches;
+    private long branchLimit = MAX_BRANCHES;
+    private long graphLimit = MAX_GRAPH_CHECKS;
     private int demandChecks;
     private int supplyChecks;
     private WorkerFailureReason failure = new WorkerFailureReason("recipe_unavailable", "No complete recipe schedule is available");
@@ -66,6 +73,7 @@ public final class WorkerRecipePlanner{
     }
 
     private boolean supported(WorkerRecipeDefinition def){
+        DeferredWorkScheduler.checkpoint();
         return supportedCache.computeIfAbsent(def, supported::test);
     }
 
@@ -74,6 +82,7 @@ public final class WorkerRecipePlanner{
     }
 
     private long machineCredit(WorkerRecipeDefinition def, int idx, long crafts){
+        DeferredWorkScheduler.checkpoint();
         long amount = def.ingredients().get(idx).amount();
         long required = crafts > Long.MAX_VALUE / amount ? Long.MAX_VALUE : crafts * amount;
         return Math.min(required, Math.max(0L, machineStock.available(def, idx)));
@@ -158,14 +167,49 @@ public final class WorkerRecipePlanner{
                                       Predicate<WorkerRecipePlan> rootExecutable,
                                       ToIntFunction<WorkerRecipePlan> routingPenalty,
                                       IngredientStock machineStock){
+        return planDetailed(result, amount, available, recipes, operation, supported, executable,
+                rootExecutable, routingPenalty, machineStock, false);
+    }
+
+    // Resolve a viable stocked schedule before reading other recipe branches
+    public static Result planFromStock(WorkerResourceKey result, long amount,
+                                        Map<WorkerResourceKey, Long> available, WorkerRecipeSource source,
+                                        WorkerRecipePlan.Operation operation,
+                                        Predicate<WorkerRecipeDefinition> supported,
+                                        Predicate<WorkerRecipePlan> executable,
+                                        Predicate<WorkerRecipePlan> rootExecutable,
+                                        ToIntFunction<WorkerRecipePlan> routingPenalty,
+                                        IngredientStock machineStock){
+        return WorkerRecipeSearch.plan(result, amount, available, source, operation,
+                supported, executable, rootExecutable, routingPenalty, machineStock);
+    }
+
+    private static Result planDetailed(WorkerResourceKey result, long amount,
+                                        Map<WorkerResourceKey, Long> available, WorkerRecipeIndex recipes,
+                                        WorkerRecipePlan.Operation operation,
+                                        Predicate<WorkerRecipeDefinition> supported,
+                                        Predicate<WorkerRecipePlan> executable,
+                                        Predicate<WorkerRecipePlan> rootExecutable,
+                                        ToIntFunction<WorkerRecipePlan> routingPenalty,
+                                        IngredientStock machineStock, boolean stockFirst){
         if(result == null || amount <= 0L) return new Result(new WorkerRecipeChain(List.of()),
                 new WorkerFailureReason("invalid_request", "A recipe request needs a resource and positive amount"));
         WorkerRecipePlanner planner = new WorkerRecipePlanner(recipes, supported, executable, rootExecutable,
                 routingPenalty == null ? plan -> 0 : routingPenalty,
                 machineStock == null ? (recipe, idx) -> 0L : machineStock);
+        planner.stockFirst = stockFirst;
+        planner.directOnly = stockFirst;
+        if(stockFirst) planner.branchLimit = Long.MAX_VALUE;
         State state = new State(new LinkedHashMap<>(available), new ArrayList<>());
-        planner.rankStockRoutes(state.available, List.of(result));
+        if(!stockFirst) planner.rankStockRoutes(state.available, List.of(result));
         State planned = planner.produce(result, amount, state, new HashSet<>(), operation, 0, Function.identity());
+        if(planned == null && stockFirst && recipes.producing(result).stream().anyMatch(planner::supported)){
+            planner.directOnly = false;
+            planner.rankRelationships(state.available, List.of(result));
+            planner.branches = 0;
+            planner.failureDetails.clear();
+            planned = planner.produce(result, amount, state, new HashSet<>(), operation, 0, Function.identity());
+        }
         if(planned == null || planned.steps.isEmpty()){
             if(planner.failureDetails.isEmpty()) planner.explainUnavailable(result, amount, state, new HashSet<>(), 0);
             return new Result(new WorkerRecipeChain(List.of()),
@@ -199,6 +243,22 @@ public final class WorkerRecipePlanner{
                                                   WorkerRecipeIndex recipes,
                                                   Predicate<WorkerRecipeDefinition> supported,
                                                   Predicate<WorkerRecipePlan> executable){
+        return prerequisites(plan, inputIdx, delivered, batches, available, recipes, supported, executable, false);
+    }
+
+    // Repair the saved recipe by resolving only ingredients that current stock cannot supply
+    public static WorkerRecipeChain prerequisitesFromStock(WorkerRecipePlan plan, int inputIdx, long delivered,
+                                                            long batches, Map<WorkerResourceKey, Long> available,
+                                                            WorkerRecipeSource source,
+                                                            Predicate<WorkerRecipeDefinition> supported,
+                                                            Predicate<WorkerRecipePlan> executable){
+        return WorkerRecipeSearch.prerequisites(plan, inputIdx, delivered, batches, available, source, supported, executable);
+    }
+
+    private static WorkerRecipeChain prerequisites(WorkerRecipePlan plan, int inputIdx, long delivered, long batches,
+                                                    Map<WorkerResourceKey, Long> available, WorkerRecipeIndex recipes,
+                                                    Predicate<WorkerRecipeDefinition> supported,
+                                                    Predicate<WorkerRecipePlan> executable, boolean stockFirst){
         if(plan == null || inputIdx < 0 || inputIdx >= plan.inputs().size()) return new WorkerRecipeChain(List.of());
         List<WorkerRecipeDefinition.Ingredient> ingredients = new ArrayList<>();
         for(int idx = inputIdx; idx < plan.inputs().size(); idx++){
@@ -216,11 +276,22 @@ public final class WorkerRecipePlanner{
                 candidate.recipeId().equals(plan.recipeId()) && candidate.processorType().equals(plan.processorType())
                         || executable == null || executable.test(candidate), null, candidate -> 0,
                 (recipe, idx) -> 0L);
+        planner.stockFirst = stockFirst;
+        planner.directOnly = stockFirst;
+        if(stockFirst) planner.branchLimit = Long.MAX_VALUE;
         State state = new State(new LinkedHashMap<>(available), new ArrayList<>());
-        planner.rankStockRoutes(state.available, ingredients.stream()
+        if(!stockFirst) planner.rankStockRoutes(state.available, ingredients.stream()
                 .flatMap(ingredient -> ingredient.alternatives().stream()).toList());
         State planned = planner.inputs(def, 0, 1L, state, new HashSet<>(Set.of(plan.result())),
                 new ArrayList<>(), 0, Function.identity());
+        if(planned == null && stockFirst){
+            planner.directOnly = false;
+            planner.rankRelationships(state.available, ingredients.stream()
+                    .flatMap(ingredient -> ingredient.alternatives().stream()).distinct().toList());
+            planner.branches = 0;
+            planned = planner.inputs(def, 0, 1L, state, new HashSet<>(Set.of(plan.result())),
+                    new ArrayList<>(), 0, Function.identity());
+        }
         if(planned == null) return new WorkerRecipeChain(List.of());
         WorkerRecipeChain grouped = new WorkerRecipeChain(planned.steps).grouped();
         return new WorkerRecipeChain(grouped.steps().subList(0, grouped.steps().size() - 1));
@@ -243,7 +314,9 @@ public final class WorkerRecipePlanner{
     // Compare complete schedules before committing inventory reservations
     private State produce(WorkerResourceKey result, long missing, State state, Set<WorkerResourceKey> visiting,
                           WorkerRecipePlan.Operation operation, int depth, Function<State, State> complete){
-        if(depth >= MAX_DEPTH || ++branches > MAX_BRANCHES){
+        DeferredWorkScheduler.checkpoint();
+        if(directOnly && depth > 0) return null;
+        if(depth >= MAX_DEPTH || ++branches > branchLimit){
             failure = new WorkerFailureReason("recipe_search_limit", "Recipe search limit reached while resolving " + result.id());
             return null;
         }
@@ -255,14 +328,14 @@ public final class WorkerRecipePlanner{
                 failureDetails.add("Ingredient: " + result.id() + " (no stock or producing recipe)");
             }
             State best = null;
-            List<WorkerRecipeDefinition> choices = recipes.producing(result).stream().filter(this::supported)
-                    .filter(def -> recipeCost(def, missing, state) < UNREACHABLE)
-                    .sorted(Comparator.comparingInt((WorkerRecipeDefinition def) -> recipeCost(def, missing, state))
-                            .thenComparingLong(def -> stockedDeficit(def, missing, state))
+            List<WorkerRecipeDefinition> choices = recipes.producing(result).stream()
+                    .filter(def -> stockFirst || supported(def) && recipeCost(def, missing, state) < UNREACHABLE)
+                    .sorted(Comparator.comparingInt((WorkerRecipeDefinition def) -> recipeCost(def, missing, state, !stockFirst))
+                            .thenComparingLong(def -> stockedDeficit(def, missing, state, !stockFirst))
                             .thenComparingInt(def -> def.operation() == WorkerRecipePlan.Operation.WORKER_CRAFTING
-                                    ? 0 : 1)
+                                    ? 0 : def.operation() == WorkerRecipePlan.Operation.CRAFTING ? 1 : 2)
                             .thenComparingInt(def -> def.ingredients().size())
-                            .thenComparing(def -> def.recipeId().toString())).toList();
+                            .thenComparing(WorkerRecipeDefinition::recipeId)).toList();
             if(choices.isEmpty() && !recipes.producing(result).isEmpty()){
                 for(WorkerRecipeDefinition def : recipes.producing(result)){
                     if(!supported(def)){
@@ -282,9 +355,14 @@ public final class WorkerRecipePlanner{
             Map<DemandKey, TerminalDemand> terminalDemand = new HashMap<>();
             for(WorkerRecipeDefinition def : choices){
                 if(!matches(def.operation(), operation) || def.ingredients().isEmpty()) continue;
+                if(stockFirst && !supported(def)){
+                    recordFailureDetail("Machine route: " + def.processorType() + " for " + def.recipeId());
+                    continue;
+                }
+                if(stockFirst && recipeCost(def, missing, state) >= UNREACHABLE) continue;
                 long crafts = (missing - 1L) / def.resultAmount() + 1L;
                 if(crafts > Long.MAX_VALUE / def.resultAmount()) continue;
-                if(exceedsTerminalStock(def, crafts, state, terminalDemand)) continue;
+                if((!stockFirst || ranked) && exceedsTerminalStock(def, crafts, state, terminalDemand)) continue;
                 State candidate = inputs(def, 0, crafts, state.copy(), visiting, new ArrayList<>(), depth, resolved -> {
                     resolved.available.merge(result, crafts * def.resultAmount(), WorkerRecipePlanner::add);
                     visiting.remove(result);
@@ -294,6 +372,7 @@ public final class WorkerRecipePlanner{
                         visiting.add(result);
                     }
                 });
+                if(stockFirst && candidate != null) return candidate;
                 best = better(best, candidate);
                 if(best != null && best.steps.size() == state.steps.size() + 1
                         && routePenalty(best) == 0L && processingPenalty(best) == 0L) break;
@@ -308,9 +387,15 @@ public final class WorkerRecipePlanner{
     private State inputs(WorkerRecipeDefinition def, int idx, long crafts, State state,
                          Set<WorkerResourceKey> visiting, List<WorkerRecipePlan.Input> selected, int depth,
                          Function<State, State> complete){
-        if(++branches > MAX_BRANCHES){
+        DeferredWorkScheduler.checkpoint();
+        if(++branches > branchLimit){
             failure = new WorkerFailureReason("recipe_search_limit", "Recipe search limit reached while resolving " + def.result().id());
             return null;
+        }
+        if(stockFirst && idx == 0){
+            State stocked = stockedInputs(def, crafts, state, depth, complete);
+            if(stocked != null) return stocked;
+            if(directOnly) return null;
         }
         if(idx >= def.ingredients().size()){
             WorkerRecipePlan plan = new WorkerRecipePlan(def.recipeId(), def.processorType(), def.operation(),
@@ -359,27 +444,29 @@ public final class WorkerRecipePlanner{
             next.add(new WorkerRecipePlan.Input(representative, ingredient.amount(), ingredient.alternatives()));
             State shared = reserveAlternatives(stocked, 0, needed, state.copy(), reserved ->
                     inputs(def, idx + 1, crafts, reserved, visiting, next, depth, complete));
+            if(stockFirst && shared != null) return shared;
             best = better(best, shared);
         }
         Map<SupplyKey, Boolean> possible = new HashMap<>();
         if(alternatives.size() > 1 && combined < needed){
             long shortage = needed - combined;
             for(WorkerResourceKey resource : alternatives){
-                if(!productionCosts.containsKey(resource)) continue;
+                if((!stockFirst || ranked) && !productionCosts.containsKey(resource)) continue;
                 long target = add(Math.max(0L, state.available.getOrDefault(resource, 0L)), shortage);
-                if(!canSupply(resource, target, state, new HashSet<>(visiting), 0, possible)) continue;
+                if((!stockFirst || ranked) && !canSupply(resource, target, state, new HashSet<>(visiting), 0, possible)) continue;
                 List<WorkerRecipePlan.Input> next = new ArrayList<>(selected);
                 next.add(new WorkerRecipePlan.Input(resource, ingredient.amount(), ingredient.alternatives()));
                 State supplied = produce(resource, shortage, state.copy(), visiting, null, depth + 1,
                         produced -> reserveAlternatives(alternatives, 0, needed, produced,
                                 reserved -> inputs(def, idx + 1, crafts, reserved, visiting, next, depth, complete)));
+                if(stockFirst && supplied != null) return supplied;
                 best = better(best, supplied);
             }
         }
         for(WorkerResourceKey resource : alternatives){
             long stored = Math.max(0L, state.available.getOrDefault(resource, 0L));
-            if(stored < needed && !productionCosts.containsKey(resource)) continue;
-            if(stored < needed && !canSupply(resource, needed, state, new HashSet<>(visiting), 0, possible)) continue;
+            if((!stockFirst || ranked) && stored < needed && !productionCosts.containsKey(resource)) continue;
+            if((!stockFirst || ranked) && stored < needed && !canSupply(resource, needed, state, new HashSet<>(visiting), 0, possible)) continue;
             State candidate = state.copy();
             List<WorkerRecipePlan.Input> next = new ArrayList<>(selected);
             next.add(new WorkerRecipePlan.Input(resource, ingredient.amount(), ingredient.alternatives()));
@@ -392,16 +479,43 @@ public final class WorkerRecipePlanner{
             State resolved = stored < needed
                     ? produce(resource, needed - stored, candidate, visiting, null, depth + 1, reserve)
                     : reserve.apply(candidate);
+            if(stockFirst && resolved != null) return resolved;
             best = better(best, resolved);
         }
         return best;
     }
 
+    // Resolve all stocked slots together so tag inputs cannot consume an exact sibling's material
+    private State stockedInputs(WorkerRecipeDefinition def, long crafts, State state, int depth,
+                                  Function<State, State> complete){
+        List<Long> amounts = new ArrayList<>();
+        for(int idx = 0; idx < def.ingredients().size(); idx++){
+            long amount = def.ingredients().get(idx).amount();
+            if(crafts > Long.MAX_VALUE / amount) return null;
+            amounts.add(crafts * amount - machineCredit(def, idx, crafts));
+        }
+        var allocated = WorkerIngredientAllocation.allocate(def.ingredients(), amounts, state.available);
+        if(allocated == null) return null;
+        State reserved = state.copy();
+        List<WorkerRecipePlan.Input> selected = new ArrayList<>();
+        for(int idx = 0; idx < allocated.size(); idx++){
+            var ingredient = def.ingredients().get(idx);
+            var slot = allocated.get(idx);
+            WorkerResourceKey representative = slot.entrySet().stream()
+                    .max(Map.Entry.comparingByValue()).map(Map.Entry::getKey)
+                    .orElseGet(() -> ingredient.alternatives().getFirst());
+            selected.add(new WorkerRecipePlan.Input(representative, ingredient.amount(), ingredient.alternatives()));
+            slot.forEach((resource, amount) -> reserved.available.compute(resource, (key, count) -> count - amount));
+        }
+        return inputs(def, def.ingredients().size(), crafts, reserved, Set.of(), selected, depth, complete);
+    }
+
     // Reject an input only when no supported route can cover its missing amount
     private boolean canSupply(WorkerResourceKey resource, long needed, State state,
                                Set<WorkerResourceKey> visiting, int depth, Map<SupplyKey, Boolean> known){
+        DeferredWorkScheduler.checkpoint();
         if(state.available.getOrDefault(resource, 0L) >= needed) return true;
-        if(++supplyChecks > MAX_GRAPH_CHECKS) return true;
+        if(++supplyChecks > graphLimit) return true;
         if(depth >= MAX_DEPTH || !visiting.add(resource)) return false;
         SupplyKey key = new SupplyKey(resource, needed, Set.copyOf(visiting));
         try{
@@ -538,7 +652,7 @@ public final class WorkerRecipePlanner{
     private TerminalDemand terminalDemand(WorkerResourceKey resource, long needed, State state,
                                            Set<WorkerResourceKey> visiting, Map<DemandKey, TerminalDemand> known){
         if(needed <= 0L) return TerminalDemand.EMPTY;
-        if(++demandChecks > MAX_GRAPH_CHECKS) return TerminalDemand.UNCERTAIN;
+        if(++demandChecks > graphLimit) return TerminalDemand.UNCERTAIN;
         List<WorkerRecipeDefinition> choices = recipes.producing(resource).stream()
                 .filter(this::supported).toList();
         if(choices.isEmpty()){
@@ -670,8 +784,9 @@ public final class WorkerRecipePlanner{
     // Reserve a tag ingredient across its stocked variants while backtracking later exact needs
     private State reserveAlternatives(List<WorkerResourceKey> alternatives, int idx, long needed,
                                       State state, Function<State, State> complete){
+        DeferredWorkScheduler.checkpoint();
         if(needed <= 0L) return complete.apply(state);
-        if(idx >= alternatives.size() || ++branches > MAX_BRANCHES) return null;
+        if(idx >= alternatives.size() || ++branches > branchLimit) return null;
         WorkerResourceKey resource = alternatives.get(idx);
         long stored = Math.max(0L, state.available.getOrDefault(resource, 0L));
         long later = 0L;
@@ -685,8 +800,9 @@ public final class WorkerRecipePlanner{
             State branch = state.copy();
             branch.available.put(resource, stored - take);
             State resolved = reserveAlternatives(alternatives, idx + 1, needed - take, branch, complete);
+            if(stockFirst && resolved != null) return resolved;
             best = better(best, resolved);
-            if(branches > MAX_BRANCHES || take == 0L) break;
+            if(branches > branchLimit || take == 0L) break;
         }
         return best;
     }
@@ -772,26 +888,42 @@ public final class WorkerRecipePlanner{
 
     private record Route(WorkerResourceKey resource, int cost){}
 
+    // Rank shared relationships before considering any unstocked ingredient alternatives
+    private void rankRelationships(Map<WorkerResourceKey, Long> stocked, Collection<WorkerResourceKey> outputs){
+        WorkerRecipeRelationships.Ranks ranks = recipes.relationships(outputs).rank(outputs, stocked,
+                this::supported, (def, idx) -> machineCredit(def, idx, 1L));
+        productionCosts.clear();
+        productionCosts.putAll(ranks.productionCosts());
+        branchLimit = Math.max(MAX_BRANCHES, ranks.recipeCount() * 32L);
+        graphLimit = Math.max(MAX_GRAPH_CHECKS, ranks.recipeCount() * 8L);
+        ranked = true;
+    }
+
     // Prefer stock that can satisfy the full amount, then the shortest stocked production route
     private int inputCost(WorkerResourceKey resource, long needed, State state){
         return state.available.getOrDefault(resource, 0L) >= needed ? 0
-                : productionCosts.getOrDefault(resource, UNREACHABLE);
+                : productionCosts.getOrDefault(resource, stockFirst && !ranked ? 1 : UNREACHABLE);
     }
 
     private int recipeCost(WorkerRecipeDefinition def, long missing, State state){
+        return recipeCost(def, missing, state, true);
+    }
+
+    // Order detached candidates without querying every candidate's live machine inputs
+    private int recipeCost(WorkerRecipeDefinition def, long missing, State state, boolean credit){
         long crafts = (missing - 1L) / def.resultAmount() + 1L;
         int cost = 1;
         for(int idx = 0; idx < def.ingredients().size(); idx++){
             WorkerRecipeDefinition.Ingredient ingredient = def.ingredients().get(idx);
             long needed = crafts > Long.MAX_VALUE / ingredient.amount()
                     ? Long.MAX_VALUE : crafts * ingredient.amount();
-            needed = Math.max(0L, needed - machineCredit(def, idx, crafts));
+            if(credit) needed = Math.max(0L, needed - machineCredit(def, idx, crafts));
             if(needed == 0L) continue;
             long stocked = 0L;
             for(WorkerResourceKey resource : ingredient.alternatives())
                 stocked = add(stocked, Math.max(0L, state.available.getOrDefault(resource, 0L)));
             int input = stocked >= needed ? 0 : ingredient.alternatives().stream()
-                    .mapToInt(resource -> productionCosts.getOrDefault(resource, UNREACHABLE))
+                    .mapToInt(resource -> productionCosts.getOrDefault(resource, stockFirst && !ranked ? 1 : UNREACHABLE))
                     .min().orElse(UNREACHABLE);
             cost = Math.min(UNREACHABLE, cost + input);
         }
@@ -799,7 +931,7 @@ public final class WorkerRecipePlanner{
     }
 
     // Search recipes whose required ingredients are already stocked before expanding missing branches
-    private long stockedDeficit(WorkerRecipeDefinition def, long missing, State state){
+    private long stockedDeficit(WorkerRecipeDefinition def, long missing, State state, boolean credit){
         long crafts = (missing - 1L) / def.resultAmount() + 1L;
         long deficit = 0L;
         for(int idx = 0; idx < def.ingredients().size(); idx++){
@@ -809,7 +941,7 @@ public final class WorkerRecipePlanner{
                 stocked = add(stocked, Math.max(0L, state.available.getOrDefault(resource, 0L)));
             long needed = crafts > Long.MAX_VALUE / ingredient.amount()
                     ? Long.MAX_VALUE : crafts * ingredient.amount();
-            needed = Math.max(0L, needed - machineCredit(def, idx, crafts));
+            if(credit) needed = Math.max(0L, needed - machineCredit(def, idx, crafts));
             deficit = add(deficit, Math.max(0L, needed - stocked));
         }
         return deficit;

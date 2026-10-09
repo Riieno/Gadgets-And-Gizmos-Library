@@ -29,7 +29,14 @@ public final class GadgetsNGizmosLibraryClientBootstrap {
 
     // Register the Gadgets & Gizmos client bootstrap
     public static void register(IEventBus modEventBus) {
+        com.rieno.gadgetsandgizmos.lib.client.view.RemoteViewClient.bootstrap();
         modEventBus.addListener((RegisterShadersEvent evt) -> {
+            com.rieno.gadgetsandgizmos.lib.client.view.ViewSceneRenderer.clear();
+            try{
+                SurfaceFloodlightRenderer.registerShader(evt);
+            }catch(java.io.IOException err){
+                throw new RuntimeException("Failed to register surface floodlight shader", err);
+            }
             try {
                 AreaHighlightRenderTypes.onRegisterShaders(evt);
             } catch (java.io.IOException err) {

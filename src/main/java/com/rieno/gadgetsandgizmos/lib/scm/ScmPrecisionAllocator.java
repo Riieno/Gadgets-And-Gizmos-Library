@@ -3,20 +3,31 @@ package com.rieno.gadgetsandgizmos.lib.scm;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.List;
+import java.util.Map;
+import java.util.LinkedHashMap;
 
 // Allocate physical force and torque while retaining small precision actuators
 public final class ScmPrecisionAllocator{
     private static final int AXES = 6;
     private static final int ITERATIONS = 320;
+    private static final int MAX_CACHED_ALLOCATIONS = 8;
+    private static final int MAX_CACHED_UNITS = 16_384;
+    private static final ThreadLocal<Map<AllocationKey, Allocation>> ALLOCATIONS =
+            ThreadLocal.withInitial(() -> new LinkedHashMap<>(MAX_CACHED_ALLOCATIONS, 0.75F, true));
 
     private ScmPrecisionAllocator(){}
 
     // Store the full-output force and torque of one independently controlled provider
-    public record Unit(Vec3 force, Vec3 torque, boolean precision){
+    public record Unit(Vec3 force, Vec3 torque, boolean precision, Vec3 momentArm, double coneDegrees){
         public Unit{
             force = finite(force);
             torque = finite(torque);
+            momentArm = finite(momentArm);
+            coneDegrees = ScmThrustGeometry.coneDegrees(coneDegrees);
         }
+
+        // Preserve fixed-direction provider construction
+        public Unit(Vec3 force, Vec3 torque, boolean precision){ this(force, torque, precision, Vec3.ZERO, 0.0D); }
     }
 
     // Store the bounded control levels in the same order as the input units
@@ -36,6 +47,15 @@ public final class ScmPrecisionAllocator{
         return physicalDemand(units, demand, false);
     }
 
+    // Convert a correction while allowing lift-only providers to reduce existing support
+    public static Vec3 physicalForce(List<Unit> units, Vec3 demand, Vec3 holdingForce){
+        Vec3 target = finite(demand);
+        Vec3 hold = finite(holdingForce);
+        return new Vec3(component(target.x) * correctionCapacity(units, 0, target.x, hold.x),
+                component(target.y) * correctionCapacity(units, 1, target.y, hold.y),
+                component(target.z) * correctionCapacity(units, 2, target.z, hold.z));
+    }
+
     // Convert a normalized six-axis request into physical force and torque
     public static Vec3 physicalTorque(List<Unit> units, Vec3 demand){
         return physicalDemand(units, demand, true);
@@ -43,18 +63,60 @@ public final class ScmPrecisionAllocator{
 
     // Normalize an acceleration request against current physical force capacity
     public static Vec3 normalizedAcceleration(List<Unit> units, Vec3 acceleration, double mass){
+        return normalizedAcceleration(units, acceleration, mass, Vec3.ZERO);
+    }
+
+    // Preserve descent feedback when gravity is supported by upward thrust
+    public static Vec3 normalizedAcceleration(List<Unit> units, Vec3 acceleration, double mass, Vec3 holdingForce){
         if(!Double.isFinite(mass) || mass <= 0.0D) return Vec3.ZERO;
         Vec3 force = finite(acceleration).scale(mass);
-        return new Vec3(normalized(force.x, capacity(units, 0, force.x)),
-                normalized(force.y, capacity(units, 1, force.y)),
-                normalized(force.z, capacity(units, 2, force.z)));
+        Vec3 hold = finite(holdingForce);
+        return new Vec3(normalized(force.x, correctionCapacity(units, 0, force.x, hold.x)),
+                normalized(force.y, correctionCapacity(units, 1, force.y, hold.y)),
+                normalized(force.z, correctionCapacity(units, 2, force.z, hold.z)));
+    }
+
+    // Express physical requests in the allocator's signed capacity units
+    public static Vec3 normalizedForce(List<Unit> units, Vec3 force){
+        return normalizedDemand(units, finite(force), 0);
+    }
+
+    public static Vec3 normalizedTorque(List<Unit> units, Vec3 torque){
+        return normalizedDemand(units, finite(torque), 3);
+    }
+
+    private static Vec3 normalizedDemand(List<Unit> units, Vec3 val, int offset){
+        return new Vec3(normalized(val.x, capacity(units, offset, val.x)),
+                normalized(val.y, capacity(units, offset + 1, val.y)),
+                normalized(val.z, capacity(units, offset + 2, val.z)));
     }
 
     // Use precision providers alone when they can produce the requested wrench
     public static Allocation allocate(List<Unit> units, Vec3 force, Vec3 torque,
                                       double[] previous){
-        return allocate(units, force, torque, previous, true);
+        if(previous != null) return allocate(units, force, torque, previous, true);
+        List<Unit> inputs = units == null ? List.of() : List.copyOf(units);
+        AllocationKey key = new AllocationKey(inputs, finite(force), finite(torque));
+        Map<AllocationKey, Allocation> allocations = ALLOCATIONS.get();
+        Allocation res = allocations.get(key);
+        if(res != null) return res;
+        res = allocate(inputs, key.force(), key.torque(), null, true);
+        if(inputs.size() <= MAX_CACHED_UNITS){
+            int count = inputs.size();
+            for(AllocationKey cached : allocations.keySet()) count += cached.units().size();
+            while(!allocations.isEmpty()
+                    && (allocations.size() >= MAX_CACHED_ALLOCATIONS || count > MAX_CACHED_UNITS)){
+                AllocationKey oldest = allocations.keySet().iterator().next();
+                count -= oldest.units().size();
+                allocations.remove(oldest);
+            }
+            allocations.put(key, res);
+        }
+        return res;
     }
+
+    // Cache holding allocations without retaining mutable throttle arrays or world state
+    private record AllocationKey(List<Unit> units, Vec3 force, Vec3 torque){}
 
     // Favor main propulsion during sustained travel while retaining precision control
     public static Allocation allocateCruise(List<Unit> units, Vec3 force, Vec3 torque,
@@ -119,11 +181,24 @@ public final class ScmPrecisionAllocator{
         double result = 0.0D;
         for(Unit unit : units){
             if(unit == null) continue;
+            if(unit.coneDegrees() > 0.0D && unit.force().lengthSqr() > 1.0E-12D){
+                Vec3 direction = axis % 3 == 0 ? new Vec3(1, 0, 0)
+                        : axis % 3 == 1 ? new Vec3(0, 1, 0) : new Vec3(0, 0, 1);
+                if(request < 0.0D) direction = direction.scale(-1.0D);
+                if(axis >= 3) direction = direction.cross(unit.momentArm());
+                result += ScmThrustGeometry.maximumProjection(unit.force(), unit.coneDegrees(), direction);
+                continue;
+            }
             double value = axis < 3 ? component(unit.force(), axis)
                     : component(unit.torque(), axis - 3);
             result += request < 0.0D ? Math.max(0.0D, -value) : Math.max(0.0D, value);
         }
         return result;
+    }
+
+    // Reducing an opposing holding force is available even without reverse-facing propulsion
+    private static double correctionCapacity(List<Unit> units, int axis, double request, double hold){
+        return Math.max(capacity(units, axis, request), request * hold < 0.0D ? Math.abs(hold) : 0.0D);
     }
 
     // Refine bounded throttle levels without slowing every axis to the longest lever
@@ -133,13 +208,16 @@ public final class ScmPrecisionAllocator{
         int count = units.size();
         boolean hasPrecision = units.stream().anyMatch(unit ->
                 unit.precision() && powered(unit));
+        double regularization = 1.0D / Math.max(1, units.stream().filter(ScmPrecisionAllocator::powered).count());
         double[][] columns = new double[count][AXES];
         double[] scale = new double[AXES];
         double[] control = new double[count];
+        boolean[] active = new boolean[count];
         for(int idx = 0; idx < count; idx++){
             Unit unit = units.get(idx);
             if(!powered(unit) || precisionOnly && !unit.precision()
                     || allowed != null && !allowed[idx]) continue;
+            active[idx] = true;
             columns[idx] = components(unit.force(), unit.torque());
             control[idx] = previous != null && idx < previous.length
                     && (preferPrecision || !unit.precision())
@@ -161,27 +239,37 @@ public final class ScmPrecisionAllocator{
                 achieved[axis] += columns[idx][axis] * control[idx];
             }
         }
+        // Reuse the fixed penalties and column magnitudes throughout the solve
+        double[] penalties = new double[count];
+        double[] magnitudes = new double[count];
+        double[] prevControls = new double[count];
+        for(int idx = 0; idx < count; idx++){
+            if(!active[idx]) continue;
+            Unit unit = units.get(idx);
+            prevControls[idx] = previous != null && idx < previous.length
+                    && (preferPrecision || !unit.precision())
+                    ? component(previous[idx]) : 0.0D;
+            double penalty = !hasPrecision || unit.precision() == preferPrecision
+                    ? 0.0002D : 0.015D;
+            penalties[idx] = penalty * regularization;
+            magnitudes[idx] = penalties[idx] + 0.004D * regularization;
+            for(int axis = 0; axis < AXES; axis++){
+                magnitudes[idx] += columns[idx][axis] * columns[idx][axis];
+            }
+        }
         for(int iteration = 0; iteration < ITERATIONS; iteration++){
             double largestChange = 0.0D;
             for(int idx = 0; idx < count; idx++){
-                Unit unit = units.get(idx);
-                if(!powered(unit) || precisionOnly && !unit.precision()
-                        || allowed != null && !allowed[idx]) continue;
-                double prev = previous != null && idx < previous.length
-                        && (preferPrecision || !unit.precision())
-                        ? component(previous[idx]) : 0.0D;
-                double penalty = !hasPrecision || unit.precision() == preferPrecision
-                        ? 0.0002D : 0.015D;
-                double gradient = penalty
+                if(!active[idx]) continue;
+                double gradient = penalties[idx]
                         * control[idx]
-                        + 0.004D * (control[idx] - prev);
-                double magnitude = penalty + 0.004D;
+                        + 0.004D * regularization * (control[idx] - prevControls[idx]);
                 for(int axis = 0; axis < AXES; axis++){
                     gradient += columns[idx][axis] * (achieved[axis] - desired[axis]);
-                    magnitude += columns[idx][axis] * columns[idx][axis];
                 }
-                double next = Math.max(0.0D, Math.min(1.0D, control[idx] - gradient / magnitude));
+                double next = Math.max(0.0D, Math.min(1.0D, control[idx] - gradient / magnitudes[idx]));
                 double change = next - control[idx];
+                if(change == 0.0D) continue;
                 control[idx] = next;
                 largestChange = Math.max(largestChange, Math.abs(change));
                 for(int axis = 0; axis < AXES; axis++) achieved[axis] += columns[idx][axis] * change;

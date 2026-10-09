@@ -18,6 +18,20 @@ public final class LayeredItemRenderer{
         render(graphics, stack, x, y, 0.01F);
     }
 
+    // Fit an item icon into a square without changing its GUI depth
+    public static void renderVisible(GuiGraphics graphics, ItemStack stack, int x, int y, int size){
+        if(stack == null || stack.isEmpty() || size <= 0) return;
+        graphics.pose().pushPose();
+        try{
+            graphics.pose().translate(x, y, 0.0F);
+            float scale = size / 16.0F;
+            graphics.pose().scale(scale, scale, 1.0F);
+            renderVisible(graphics, stack, 0, 0);
+        }finally{
+            graphics.pose().popPose();
+        }
+    }
+
     private static void render(GuiGraphics graphics, ItemStack stack, int x, int y, float depth){
         if(stack == null || stack.isEmpty()) return;
         graphics.flush();

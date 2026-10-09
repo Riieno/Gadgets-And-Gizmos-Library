@@ -12,6 +12,20 @@ class ScmAdaptiveStateModelTest{
     private static final Vec3 UP = new Vec3(0.0D, 1.0D, 0.0D);
 
     @Test
+    void repeatedSamplesStillReactToChangedThrustTrimAndGeometricScale(){
+        var balanced = List.of(new ScmAdaptiveStateModel.Actuator(UP.scale(2), Vec3.ZERO, 0.5));
+        ScmAdaptiveStateModel first = model(balanced);
+        double capacity = first.authority(UP, false, true);
+        assertEquals(capacity, model(balanced).authority(UP, false, true));
+        var changed = List.of(new ScmAdaptiveStateModel.Actuator(UP.scale(4), Vec3.ZERO, 0.75));
+        ScmAdaptiveStateModel next = model(changed);
+        assertEquals(capacity, next.authority(UP, false, true), 1.0E-10D);
+        assertTrue(next.authority(UP, false, false) > first.authority(UP, false, false));
+        assertEquals(2.0D, first.inputMatrix()[7][0]);
+        assertEquals(4.0D, next.inputMatrix()[7][0]);
+    }
+
+    @Test
     void stateAndInputMatricesFollowTheLiveActuators(){
         ScmAdaptiveStateModel model = model(List.of(
                 new ScmAdaptiveStateModel.Actuator(

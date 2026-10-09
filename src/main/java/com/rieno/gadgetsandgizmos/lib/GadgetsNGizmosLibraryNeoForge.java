@@ -45,9 +45,9 @@ public final class GadgetsNGizmosLibraryNeoForge {
         WorkerRecipeCatalog.invalidate();
     }
 
-    // Build the worker recipe graph after recipes and tags finish loading
+    // Warm the worker recipe graph across ticks after recipes and tags finish loading
     private static void onServerStarted(ServerStartedEvent evt){
-        WorkerRecipeCatalog.index(evt.getServer().overworld());
+        WorkerRecipeCatalog.prepareLookup(evt.getServer().overworld());
     }
 
     // Do not retain recipe managers from stopped worlds

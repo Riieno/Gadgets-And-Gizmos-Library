@@ -16,6 +16,7 @@ public final class WorkerMachineRegistry{
     private static final Map<ResourceLocation, Adapter> ADAPTERS = new LinkedHashMap<>();
     private static final Adapter VANILLA = new VanillaWorkerMachines();
     private static final Adapter CREATE = new com.rieno.gadgetsandgizmos.lib.create.worker.CreateWorkerMachines();
+    private static final Adapter MODDED = new WorkerModdedMachines();
 
     private WorkerMachineRegistry(){}
 
@@ -34,7 +35,9 @@ public final class WorkerMachineRegistry{
             if(machine != null) return machine;
         }
         WorkerMachine machine = VANILLA.resolve(ctx);
-        return machine == null ? CREATE.resolve(ctx) : machine;
+        if(machine != null) return machine;
+        machine = CREATE.resolve(ctx);
+        return machine == null ? MODDED.resolve(ctx) : machine;
     }
 
     // Resolve linked drivers to their actual receiving blocks without scanning unrelated nearby machines

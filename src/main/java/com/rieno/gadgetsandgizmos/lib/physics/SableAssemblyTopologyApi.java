@@ -10,6 +10,7 @@ package com.rieno.gadgetsandgizmos.lib.physics;
 
 import dev.ryanhcode.sable.api.block.BlockEntitySubLevelActor;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
+import com.rieno.gadgetsandgizmos.lib.physics.archive.SubLevelSchematicJoints;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.server.level.ServerLevel;
@@ -142,6 +143,9 @@ public final class SableAssemblyTopologyApi {
                 }
             }
             for (ServerSubLevel owner : loaded.values()) {
+                for(var joint : SubLevelSchematicJoints.retained(owner)){
+                    if(loaded.containsKey(joint.second())) merge(edgeKinds, joint.first(), joint.second(), SableAssemblyConnection.Kind.STRUCTURAL);
+                }
                 for (BlockEntitySubLevelActor actor : actors(owner)) {
                     if (!include(effectiveFilter, owner, actor)) {
                         continue;

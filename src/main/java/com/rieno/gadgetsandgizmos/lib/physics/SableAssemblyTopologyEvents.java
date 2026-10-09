@@ -9,6 +9,7 @@ package com.rieno.gadgetsandgizmos.lib.physics;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.rieno.gadgetsandgizmos.lib.GadgetsNGizmosLibrary;
+import com.rieno.gadgetsandgizmos.lib.scm.ScmSubLevelRelationRegistry;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -70,6 +71,7 @@ final class SableAssemblyTopologyEvents {
     public static void levelUnloaded(LevelEvent.Unload event) {
         if (event.getLevel() instanceof ServerLevel level) {
             SableAssemblyTopologyInvalidation.forget(level);
+            ScmSubLevelRelationRegistry.forgetLoadedRelations(level);
         }
     }
 

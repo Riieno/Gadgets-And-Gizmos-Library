@@ -22,6 +22,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.Shapes;
@@ -327,6 +328,46 @@ public final class SubLevelParticleOcclusion {
             }
         }
         return Mth.clamp(nearest, 0.0D, maxDistance);
+    }
+
+    // Find compound-hull clearance where only loaded root-level air is traversable
+    public static double findAirOnlyBoundsBlockingDistance(
+            Level rootLevel,
+            Vec3 directionWorld,
+            double maxDistance,
+            List<AABB> movingBoundsWorld,
+            boolean includeRootLevel,
+            Set<UUID> excludedSubLevelIds,
+            int maximumProbesPerBounds,
+            @Nullable ProbeCache probeCache
+    ) {
+        if (rootLevel == null || directionWorld == null
+                || directionWorld.lengthSqr() < EPSILON || maxDistance <= 0.0D
+                || movingBoundsWorld == null || movingBoundsWorld.isEmpty()) {
+            return Math.max(0.0D, maxDistance);
+        }
+        Vec3 direction = directionWorld.normalize();
+        double nearest = maxDistance;
+        Vec3 probeOffset = direction.scale(COLLISION_MARGIN * 2.0D);
+        Map<BlockGetter, LoadedBlockLookup> sharedLookups = probeCache == null
+                ? new IdentityHashMap<>() : probeCache.lookups;
+        if (includeRootLevel) {
+            LoadedBlockLookup lookup = loadedBlockLookup(rootLevel, sharedLookups);
+            for (AABB bounds : movingBoundsWorld) {
+                if (bounds == null) continue;
+                for (Vec3 start : leadingFaceProbePoints(
+                        bounds, direction, maximumProbesPerBounds)) {
+                    Vec3 probeStart = start.add(probeOffset);
+                    double distance = findAirOnlyBlockingDistanceInLevel(
+                            lookup, probeStart, direction, nearest);
+                    nearest = Math.min(nearest, distance);
+                    if (nearest <= EPSILON) return 0.0D;
+                }
+            }
+        }
+        return Math.min(nearest, findSubLevelEnvelopeBlockingDistance(
+                rootLevel, direction, nearest, movingBoundsWorld,
+                excludedSubLevelIds, probeCache));
     }
 
     /**
@@ -747,6 +788,7 @@ public final class SubLevelParticleOcclusion {
         int maxZ = Mth.floor(swept.maxZ + EPSILON) + 1;
 
         Double nearest = null;
+        LoadedBlockLookup lookup = new LoadedBlockLookup(level, false);
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int minChunkX = minX >> 4;
         int minChunkZ = minZ >> 4;
@@ -761,16 +803,20 @@ public final class SubLevelParticleOcclusion {
                 int fromZ = Math.max(minZ, chunkMinZ);
                 int toZ = Math.min(maxZ, chunkMinZ + 15);
                 pos.set(chunkMinX, minY, chunkMinZ);
-                if (!isLoaded(level, pos)) {
+                if (!lookup.moveTo(pos)) {
                     continue;
                 }
                 for (int x = fromX; x <= toX; x++) {
                     for (int z = fromZ; z <= toZ; z++) {
                         for (int y = minY; y <= maxY; y++) {
+                            if(lookup.emptySection(y)){
+                                y = Math.min(maxY, (y | 15));
+                                continue;
+                            }
                             pos.set(x, y, z);
                             nearest = nearestDistance(nearest,
                                     sweptBoundsBlockIntersectionFraction(
-                                            level, pos, localStart, localEnd,
+                                            level, pos, lookup.blockState(pos), localStart, localEnd,
                                             localBoundsAtStart,
                                             includeTaggedTransparentBlocks));
                             if (nearest != null && nearest <= EPSILON) {
@@ -1071,6 +1117,12 @@ public final class SubLevelParticleOcclusion {
                 }
 
                 pos.set(x, y, z);
+                if(lookup.emptySection(y)){
+                    y = Math.min(maxY, y | 15);
+                    processed++;
+                    advanceBlock();
+                    continue;
+                }
                 nearestFraction = nearestDistance(
                         nearestFraction,
                         sweptBoundsBlockIntersectionFraction(
@@ -1486,6 +1538,59 @@ public final class SubLevelParticleOcclusion {
         return nearest;
     }
 
+    // Find the first non-air root-level block without resolving collision shapes
+    private static double findAirOnlyBlockingDistanceInLevel(
+            LoadedBlockLookup lookup,
+            Vec3 start,
+            Vec3 direction,
+            double maxDistance
+    ) {
+        Vec3 end = start.add(direction.scale(maxDistance));
+        int currentX = Mth.floor(start.x);
+        int currentY = Mth.floor(start.y);
+        int currentZ = Mth.floor(start.z);
+        int endX = Mth.floor(end.x);
+        int endY = Mth.floor(end.y);
+        int endZ = Mth.floor(end.z);
+        int stepX = Integer.compare(endX, currentX);
+        int stepY = Integer.compare(endY, currentY);
+        int stepZ = Integer.compare(endZ, currentZ);
+        double tMaxX = firstBoundaryT(start.x, direction.x, currentX, stepX);
+        double tMaxY = firstBoundaryT(start.y, direction.y, currentY, stepY);
+        double tMaxZ = firstBoundaryT(start.z, direction.z, currentZ, stepZ);
+        double tDeltaX = stepX == 0 ? Double.POSITIVE_INFINITY : 1.0D / Math.abs(direction.x);
+        double tDeltaY = stepY == 0 ? Double.POSITIVE_INFINITY : 1.0D / Math.abs(direction.y);
+        double tDeltaZ = stepZ == 0 ? Double.POSITIVE_INFINITY : 1.0D / Math.abs(direction.z);
+        long maximumSteps = Math.abs((long) endX - currentX)
+                + Math.abs((long) endY - currentY)
+                + Math.abs((long) endZ - currentZ) + 4L;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        double travelled = 0.0D;
+        for (long step = 0L; step < maximumSteps; step++) {
+            pos.set(currentX, currentY, currentZ);
+            if (!lookup.moveTo(pos)) return maxDistance;
+            if (!lookup.emptySection(currentY) && !lookup.blockState(pos).isAir()) {
+                return Mth.clamp(travelled - COLLISION_MARGIN, 0.0D, maxDistance);
+            }
+            if (currentX == endX && currentY == endY && currentZ == endZ) break;
+            if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
+                travelled = tMaxX;
+                currentX += stepX;
+                tMaxX += tDeltaX;
+            } else if (tMaxY <= tMaxZ) {
+                travelled = tMaxY;
+                currentY += stepY;
+                tMaxY += tDeltaY;
+            } else {
+                travelled = tMaxZ;
+                currentZ += stepZ;
+                tMaxZ += tDeltaZ;
+            }
+            if (travelled > maxDistance + EPSILON) break;
+        }
+        return maxDistance;
+    }
+
     // Find the block shape distance
     private static @Nullable Double findBlockShapeDistance(
             BlockGetter level,
@@ -1621,6 +1726,10 @@ public final class SubLevelParticleOcclusion {
         private boolean loaded;
         // Current chunk
         private @Nullable LevelChunk chunk;
+        // Live section metadata for the current loaded chunk
+        private @Nullable LevelChunkSection[] sections;
+        private int minSection;
+        private boolean sectionMetadataLoaded;
         // Current chunk keys
         private long[] chunkKeys = new long[8];
         // Current chunk states
@@ -1655,6 +1764,8 @@ public final class SubLevelParticleOcclusion {
             chunkX = nextChunkX;
             chunkZ = nextChunkZ;
             chunk = null;
+            sections = null;
+            sectionMetadataLoaded = false;
             long chunkKey = (long) chunkX & 0xffffffffL
                     | ((long) chunkZ & 0xffffffffL) << 32;
             if (cacheQueries) {
@@ -1667,8 +1778,9 @@ public final class SubLevelParticleOcclusion {
                 }
             }
             if (level instanceof Level world) {
-                chunk = world.getChunkSource().getChunkNow(chunkX, chunkZ);
-                loaded = chunk != null;
+                var source = world.getChunkSource();
+                chunk = source == null ? null : source.getChunkNow(chunkX, chunkZ);
+                loaded = source == null ? world.isLoaded(pos) : chunk != null;
             } else if (level instanceof LevelReader reader) {
                 loaded = reader.hasChunkAt(pos);
             } else {
@@ -1697,6 +1809,21 @@ public final class SubLevelParticleOcclusion {
         // Get the block state
         private BlockState blockState(BlockPos pos) {
             return chunk == null ? level.getBlockState(pos) : chunk.getBlockState(pos);
+        }
+
+        // Skip air sections and out-of-height positions without reading their palettes
+        private boolean emptySection(int y){
+            if(chunk == null) return false;
+            if(!sectionMetadataLoaded){
+                sections = chunk.getSections();
+                minSection = chunk.getMinSection();
+                sectionMetadataLoaded = true;
+            }
+            if(sections == null || sections.length == 0) return false;
+            int idx = (y >> 4) - minSection;
+            if(idx < 0 || idx >= sections.length) return true;
+            var section = sections[idx];
+            return section != null && section.hasOnlyAir();
         }
 
         // Get the collision shape

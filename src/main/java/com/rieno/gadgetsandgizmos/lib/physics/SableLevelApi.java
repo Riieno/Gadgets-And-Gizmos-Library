@@ -71,7 +71,9 @@ public final class SableLevelApi {
 
     // Get the sublevel containing one block entity
     public static @Nullable SubLevel containing(@Nullable BlockEntity blockEntity) {
-        return blockEntity == null ? null : Sable.HELPER.getContaining(blockEntity);
+        if(blockEntity == null) return null;
+        BlockEntity host = HostedBlockEntities.host(blockEntity);
+        return Sable.HELPER.getContaining(host == null ? blockEntity : host);
     }
 
     // Get the sublevel containing one entity

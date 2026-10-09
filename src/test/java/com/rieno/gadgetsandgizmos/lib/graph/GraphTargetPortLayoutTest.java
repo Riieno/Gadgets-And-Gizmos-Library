@@ -3,11 +3,23 @@ package com.rieno.gadgetsandgizmos.lib.graph;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class GraphTargetPortLayoutTest {
+    // A renamed target reference must retain wired port names while bindings follow its current id
+    @Test
+    void changedTargetIdentityKeepsExistingPorts(){
+        var ports = List.of(new GraphTargetPortLayout.Port("speed", "Speed", "number"));
+        var prev = GraphTargetPortLayout.compose(List.of(new GraphTargetPortLayout.Target("output", "Motor", ports)), false);
+        var next = GraphTargetPortLayout.compose(List.of(new GraphTargetPortLayout.Target("input", "Motor", ports)),
+                false, Map.of("input", "output"));
+        assertEquals(prev.ports(), next.ports());
+        assertEquals(prev.sections(), next.sections());
+        assertEquals("input", next.bindings().values().iterator().next().getFirst().targetId());
+    }
     @Test
     void composedPortsRetainTargetOptions() {
         GraphTargetPortLayout.Layout layout = GraphTargetPortLayout.compose(List.of(

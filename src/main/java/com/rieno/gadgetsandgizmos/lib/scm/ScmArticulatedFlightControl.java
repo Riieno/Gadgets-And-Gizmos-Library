@@ -149,10 +149,8 @@ public final class ScmArticulatedFlightControl{
             double[] trim = holding.get(carriageIdx).controls();
             for(int idx = 0; idx < carriage.units().size(); idx++){
                 ScmPrecisionAllocator.Unit unit = carriage.units().get(idx);
-                Vec3 angular = carriage.primary()
-                        ? carriage.inertia().inverse().transform(unit.torque()) : Vec3.ZERO;
-                res.add(new ScmAdaptiveStateModel.Actuator(
-                        unit.force().scale(1.0D / mass), angular, trim[idx]));
+                res.addAll(ScmAdaptiveStateModel.forceActuators(unit, mass,
+                        carriage.primary() ? carriage.inertia().inverse() : Tensor.ZERO, trim[idx]));
             }
         }
         return List.copyOf(res);
@@ -289,9 +287,7 @@ public final class ScmArticulatedFlightControl{
         Tensor inverse = carriage.inertia().inverse();
         for(int idx = 0; idx < carriage.units().size(); idx++){
             ScmPrecisionAllocator.Unit unit = carriage.units().get(idx);
-            actuators.add(new ScmAdaptiveStateModel.Actuator(
-                    unit.force().scale(1.0D / carriage.mass()),
-                    inverse.transform(unit.torque()), trim[idx]));
+            actuators.addAll(ScmAdaptiveStateModel.forceActuators(unit, carriage.mass(), inverse, trim[idx]));
         }
         return ScmAdaptiveStateModel.sample(actuators, tickSeconds,
                 linearTolerance, angularTolerance, characteristicLength(carriage));

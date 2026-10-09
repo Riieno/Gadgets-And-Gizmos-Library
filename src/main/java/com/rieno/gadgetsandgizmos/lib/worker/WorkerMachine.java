@@ -18,6 +18,12 @@ public interface WorkerMachine{
         return maySupportProcessor(processorType);
     }
 
+    // Snapshot the registered processor types on the owning thread before detached planning
+    default java.util.Set<ResourceLocation> supportedProcessorTypes(){
+        return net.minecraft.core.registries.BuiltInRegistries.RECIPE_TYPE.keySet().stream()
+                .filter(this::maySupportProcessor).collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
     // Validate a recipe against the same area that will bound its runtime ports
     default boolean supports(WorkerRecipePlan plan, WorkerArea area){ return supports(plan); }
     default boolean supportsAt(WorkerRecipePlan plan, WorkerMachineSite site){

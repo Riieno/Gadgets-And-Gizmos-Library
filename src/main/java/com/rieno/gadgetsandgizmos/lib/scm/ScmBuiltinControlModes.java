@@ -110,7 +110,8 @@ public final class ScmBuiltinControlModes {
                     ? Math.min(input.targetSpeed(), input.travelSpeedLimit())
                     : Math.min(input.travelSpeedLimit(), Math.min(input.targetSpeed(),
                     targetDistance * Math.max(0.75D, input.distanceResponse())));
-            Vec3 desiredVelocity = input.pathDirection().scale(desiredSpeed);
+            Vec3 captureDirection = terminalCapture ? error.normalize() : input.pathDirection();
+            Vec3 desiredVelocity = captureDirection.scale(desiredSpeed);
             ScmAdaptiveStateModel model = input.stateModel();
             boolean liveModel = model != null && model.available();
             boolean liveLinear = liveModel && (model.authority(
@@ -168,8 +169,9 @@ public final class ScmBuiltinControlModes {
                                 : Mth.clamp(forwardDemand, -3.5D, 3.5D)));
             }
             Vec3 worldUp = new Vec3(0.0D, 1.0D, 0.0D);
-            double yawError = signedAngle(
-                    horizontal(input.forward()), horizontal(input.pathDirection()), worldUp);
+            Vec3 horizontalPath = new Vec3(input.pathDirection().x, 0.0D, input.pathDirection().z);
+            double yawError = horizontalPath.lengthSqr() <= 1.0E-12D ? 0.0D : signedAngle(
+                    horizontal(input.forward()), horizontalPath.normalize(), worldUp);
             boolean liveYaw = liveModel && (model.authority(worldUp, true, true) > 0.0D
                     || model.authority(worldUp, true, false) > 0.0D);
             Vec3 torque = worldUp.scale(Mth.clamp(liveYaw

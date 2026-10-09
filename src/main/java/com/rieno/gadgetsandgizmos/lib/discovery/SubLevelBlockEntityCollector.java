@@ -389,6 +389,10 @@ public final class SubLevelBlockEntityCollector {
 
     // Find the actor block entity
     private static @Nullable BlockEntity findActorBlockEntity(LevelPlot plot, BlockPos pos) {
+        if(plot instanceof SubLevelActorLookup lookup){
+            BlockEntity blockEntity = lookup.gadgetsngizmos$actorBlockEntity(pos);
+            if(blockEntity == null || isMatchingBlockEntity(blockEntity, pos)) return blockEntity;
+        }
         for (Object actor : plot.getBlockEntityActors()) {
             if (actor instanceof BlockEntity blockEntity && isMatchingBlockEntity(blockEntity, pos)) {
                 return blockEntity;

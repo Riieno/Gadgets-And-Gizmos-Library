@@ -698,6 +698,9 @@ class WorkerRecipePlannerTest{
                 WorkerRecipePlan.Operation.CRAFTING, candidate -> true);
         assertFalse(planned.chain().executable());
         assertNotEquals("recipe_search_limit", planned.failure().code(), planned.failure().message());
+        var fast = stockPlan(result, Map.of(raw, 1L), definitions);
+        assertFalse(fast.chain().executable());
+        assertNotEquals("recipe_search_limit", fast.failure().code(), fast.failure().message());
     }
 
     // Reach a stocked route after rejecting the same large set of cyclic alternatives
@@ -719,6 +722,7 @@ class WorkerRecipePlannerTest{
                 WorkerRecipePlan.Operation.CRAFTING, candidate -> true);
         assertTrue(planned.chain().executable(), planned.failure().message());
         assertEquals("viable_material", planned.chain().steps().get(4).plan().recipeId().getPath());
+        assertTrue(stockPlan(result, Map.of(raw, 1L, sufficient, 2L), definitions).chain().executable());
     }
 
     // Try an independent stocked route after many recipes compete for the same insufficient input
@@ -748,6 +752,7 @@ class WorkerRecipePlannerTest{
                 definitions, WorkerRecipePlan.Operation.CRAFTING, candidate -> true);
         assertTrue(planned.chain().executable(), planned.failure().message());
         assertEquals("stocked_result", planned.chain().steps().getLast().plan().recipeId().getPath());
+        assertTrue(stockPlan(result, Map.of(raw, 1L, reserved, 1L), definitions).chain().executable());
     }
 
     // Ignore unavailable tag members when counting stock shared by many candidate recipes
@@ -783,6 +788,14 @@ class WorkerRecipePlannerTest{
                 definitions, WorkerRecipePlan.Operation.CRAFTING, candidate -> true);
         assertTrue(planned.chain().executable(), planned.failure().message());
         assertEquals("tagged_stocked_result", planned.chain().steps().getLast().plan().recipeId().getPath());
+        assertTrue(stockPlan(result, Map.of(raw, 1L, reserved, 1L), definitions).chain().executable());
+    }
+
+    private static WorkerRecipePlanner.Result stockPlan(WorkerResourceKey output,
+                                                          Map<WorkerResourceKey, Long> available,
+                                                          List<WorkerRecipeDefinition> definitions){
+        return WorkerRecipePlanner.planFromStock(output, 1L, available, new WorkerRecipeIndex(definitions), null,
+                def -> true, candidate -> true, null, candidate -> 0, (def, idx) -> 0L);
     }
 
     // Resolve a dense acyclic recipe graph without visiting every equivalent path

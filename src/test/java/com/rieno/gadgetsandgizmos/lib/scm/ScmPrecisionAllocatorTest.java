@@ -144,4 +144,17 @@ class ScmPrecisionAllocatorTest{
         assertEquals(0.0D, height, 0.08D);
         assertEquals(0.0D, velocity, 0.08D);
     }
+    @Test
+    void largeFleetRetainsItsAvailableThrust(){
+        java.util.List<ScmPrecisionAllocator.Unit> fleet = new java.util.ArrayList<>();
+        for(int idx = 0; idx < 4096; idx++){
+            fleet.add(new ScmPrecisionAllocator.Unit(new Vec3(0.0D, 100.0D, 0.0D), Vec3.ZERO, false));
+        }
+        ScmPrecisionAllocator.Allocation res = ScmPrecisionAllocator.allocate(
+                fleet, new Vec3(0.0D, 409600.0D, 0.0D), Vec3.ZERO, null);
+        double[] controls = res.controls();
+        double lift = java.util.Arrays.stream(controls).sum() * 100.0D;
+        assertTrue(lift > 409600.0D * 0.97D);
+        assertTrue(java.util.Arrays.stream(controls).filter(val -> val > 0.01D).count() > 2048);
+    }
 }

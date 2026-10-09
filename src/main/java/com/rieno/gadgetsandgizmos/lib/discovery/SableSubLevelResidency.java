@@ -15,6 +15,8 @@ import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.ticket.SubLevelLoadingTicketType;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
+import dev.ryanhcode.sable.sublevel.plot.LevelPlot;
+import dev.ryanhcode.sable.sublevel.plot.PlotChunkHolder;
 import net.minecraft.resources.ResourceLocation;
 
 import java.util.Collection;
@@ -92,6 +94,40 @@ public final class SableSubLevelResidency {
             throw new IllegalArgumentException("A Sable residency lease requires an owner");
         }
         return new Lease(owner);
+    }
+
+    // Check restored plot chunks without waiting for unused reserved chunk slots
+    public static boolean isFullyLoaded(SubLevel subLevel) {
+        if (!(subLevel instanceof ServerSubLevel serverSubLevel) || serverSubLevel.isRemoved()) {
+            return false;
+        }
+        try {
+            LevelPlot plot = serverSubLevel.getPlot();
+            if (plot == null) {
+                return false;
+            }
+            var chunks = plot.getLoadedChunks();
+            if(chunks == null || chunks.isEmpty()) return false;
+            for(PlotChunkHolder holder : chunks){
+                if(holder == null || holder.getChunk() == null) return false;
+            }
+            return true;
+        } catch (RuntimeException | LinkageError ignored) {
+            return false;
+        }
+    }
+
+    // Check whether every retained sublevel is fully available.
+    public static boolean areFullyLoaded(Collection<? extends SubLevel> subLevels) {
+        if (subLevels == null || subLevels.isEmpty()) {
+            return false;
+        }
+        for (SubLevel subLevel : subLevels) {
+            if (!isFullyLoaded(subLevel)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Manage a Sable sublevel residency lease

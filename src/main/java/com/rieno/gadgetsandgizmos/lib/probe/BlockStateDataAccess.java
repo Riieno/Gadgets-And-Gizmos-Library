@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.probe;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.discovery.SubLevelBlockEntityCollector;
 import com.rieno.gadgetsandgizmos.lib.graph.GraphValue;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -98,7 +99,7 @@ public final class BlockStateDataAccess {
     // Write a complete state data update
     public static boolean write(Level level, BlockPos pos, Map<String, GraphValue> values) {
         if (level == null || pos == null || values == null || values.isEmpty()
-                || !level.isLoaded(pos)) {
+                || !SubLevelBlockEntityCollector.isTargetLoaded(level, null, pos)) {
             return false;
         }
         BlockState current = level.getBlockState(pos);

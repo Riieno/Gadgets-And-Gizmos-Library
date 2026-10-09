@@ -10,6 +10,24 @@ public final class ScmControlAxes {
 
     private ScmControlAxes(){}
 
+    // Find the shortest leveling rotation, including a fully inverted craft
+    public static Vec3 uprightError(Vec3 up, Vec3 desiredUp, Vec3 forward){
+        if(!finite(up) || !finite(desiredUp) || up.lengthSqr() <= 1.0E-12D || desiredUp.lengthSqr() <= 1.0E-12D) return Vec3.ZERO;
+        Vec3 current = up.normalize();
+        Vec3 target = desiredUp.normalize();
+        Vec3 axis = current.cross(target);
+        double angle = Math.acos(Mth.clamp(current.dot(target), -1.0D, 1.0D));
+        if(angle <= 1.0E-12D) return Vec3.ZERO;
+        if(axis.lengthSqr() <= 1.0E-12D){
+            axis = finite(forward) ? forward.subtract(current.scale(forward.dot(current))) : Vec3.ZERO;
+            if(axis.lengthSqr() <= 1.0E-12D){
+                Vec3 ref = Math.abs(current.y) < 0.9D ? new Vec3(0, 1, 0) : new Vec3(1, 0, 0);
+                axis = current.cross(ref);
+            }
+        }
+        return axis.normalize().scale(angle);
+    }
+
     /** Positive rotation about up turns forward towards left, not right. */
     public static double yawRightDemand(Vec3 torque, Vec3 up, boolean reverseSteering){
         double right = -projection(torque, up);
@@ -105,6 +123,15 @@ public final class ScmControlAxes {
         if(lift < -1.0E-5D) return force;
         double support = Math.max(0.0D, projection(gravityHold, axis));
         return force.add(axis.scale(Math.max(lift, support) - lift));
+    }
+
+    // Keep holding propulsion reachable while a descent reduces its thrust
+    public static java.util.Set<String> withSupportActions(java.util.Set<String> actions, Vec3 support, Vec3 up){
+        var res = new java.util.LinkedHashSet<>(actions);
+        double lift = projection(support, up);
+        if(lift > 1.0E-5D) res.add("ship_ascend");
+        else if(lift < -1.0E-5D) res.add("ship_descend");
+        return java.util.Set.copyOf(res);
     }
 
     private static double projection(Vec3 vector, Vec3 axis){

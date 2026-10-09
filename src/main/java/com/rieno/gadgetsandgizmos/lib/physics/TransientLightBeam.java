@@ -12,10 +12,15 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.event.level.LevelEvent;
 
 // Track temporary light blocks shared by moving beam emitters
+@EventBusSubscriber(modid = "gadgetsngizmos")
 public final class TransientLightBeam {
-    private static final Map<Level, Map<BlockPos, Set<TransientLightBeam>>> OWNERS = new IdentityHashMap<>();
+    private static final Map<Level, Map<BlockPos, Set<TransientLightBeam>>> OWNERS =
+            Collections.synchronizedMap(new IdentityHashMap<>());
 
     private final BlockState lightState;
     private final Set<BlockPos> positions = new LinkedHashSet<>();
@@ -42,6 +47,20 @@ public final class TransientLightBeam {
             return;
         }
         updateBeam(level, start, direction, length, spacing);
+    }
+
+    // Maintain one server light at a projected hit without replacing terrain or fluids
+    public void updatePoint(Level level, Vec3 point){
+        if(level == null || level.isClientSide || point == null){ clear(); return; }
+        if(this.level != null && this.level != level) clear();
+        this.level = level;
+        Set<BlockPos> wanted = new LinkedHashSet<>();
+        collect(level, point, wanted);
+        for(BlockPos pos : new ArrayList<>(positions)) if(!wanted.contains(pos)) release(pos);
+        for(BlockPos pos : wanted){
+            if(!positions.contains(pos)) claim(pos);
+            else if(level.getBlockState(pos).isAir()) level.setBlock(pos, lightState, 2);
+        }
     }
 
     // Update the positions shared by beam emitters
@@ -88,6 +107,18 @@ public final class TransientLightBeam {
     public static boolean isOwned(Level level, BlockPos pos) {
         Map<BlockPos, Set<TransientLightBeam>> atLevel = OWNERS.get(level);
         return atLevel != null && atLevel.containsKey(pos);
+    }
+
+    // Release emitters when a client or server leaves its level
+    @SubscribeEvent
+    public static void unloaded(LevelEvent.Unload evt){
+        if(!(evt.getLevel() instanceof Level level)) return;
+        Map<BlockPos, Set<TransientLightBeam>> atLevel = OWNERS.get(level);
+        if(atLevel == null) return;
+        Set<TransientLightBeam> beams = Collections.newSetFromMap(new IdentityHashMap<>());
+        atLevel.values().forEach(beams::addAll);
+        beams.forEach(TransientLightBeam::clear);
+        OWNERS.remove(level);
     }
 
     // Add an unobstructed block position to the beam

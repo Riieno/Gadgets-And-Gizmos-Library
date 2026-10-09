@@ -40,6 +40,11 @@ public final class GraphTargetPortLayout {
 
     // Build a stable port layout for the supplied targets
     public static Layout compose(Collection<Target> targets, boolean mergeLikePorts) {
+        return compose(targets, mergeLikePorts, Map.of());
+    }
+
+    // Preserve generated port names while target reference ids change
+    public static Layout compose(Collection<Target> targets, boolean mergeLikePorts, Map<String, String> stableTargetIds){
         List<Target> values = targets == null ? List.of() : targets.stream()
                 .filter(target -> target != null && !target.id().isBlank())
                 .toList();
@@ -52,7 +57,7 @@ public final class GraphTargetPortLayout {
         Map<String, List<String>> sectionPorts = new LinkedHashMap<>();
 
         for (Target target : values) {
-            String targetKey = key(target.id());
+            String targetKey = key(stableTargetIds == null ? target.id() : stableTargetIds.getOrDefault(target.id(), target.id()));
             String sectionId = "target_" + targetKey;
             List<String> entries = new ArrayList<>();
             for (Port port : target.ports()) {

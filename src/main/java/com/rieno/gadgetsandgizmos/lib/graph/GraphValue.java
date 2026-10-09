@@ -84,6 +84,27 @@ public record GraphValue(String type, Object value) {
         return value == null ? "" : String.valueOf(value);
     }
 
+    // Read a typed entry without exposing mutable collections to consumers
+    public GraphValue member(String key){
+        Object val = value instanceof Map<?, ?> map ? map.get(key) : null;
+        return of(val);
+    }
+
+    // Wrap primitives and nested collections in the common graph value contract
+    public static GraphValue of(Object val){
+        if(val instanceof GraphValue graphVal) return graphVal;
+        if(val instanceof Boolean bool) return bool(bool);
+        if(val instanceof Number number) return number(number.doubleValue());
+        if(val instanceof Map<?, ?> map) return map(map);
+        if(val instanceof List<?> list) return list(list);
+        return string(val == null ? "" : val.toString());
+    }
+
+    // Read list entries as immutable typed values
+    public List<GraphValue> entries(){
+        return value instanceof List<?> list ? list.stream().map(GraphValue::of).toList() : List.of();
+    }
+
     // Get the immutable value
     private static Object immutableValue(Object val, IdentityHashMap<Object, Boolean> active) {
         if (val instanceof List<?> list) {

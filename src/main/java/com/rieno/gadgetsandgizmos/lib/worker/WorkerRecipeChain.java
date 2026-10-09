@@ -91,6 +91,21 @@ public record WorkerRecipeChain(List<Step> steps) {
         return List.copyOf(orders);
     }
 
+    // Bind the final recipe visit while leaving its later delivery order unchanged
+    public List<WorkerWorkOrder> orders(UUID requestId, String name, int priority, UUID destinationId,
+                                        UUID returnStationId, UUID sourceId, UUID processorId){
+        List<WorkerWorkOrder> orders = new ArrayList<>(orders(requestId, name, priority,
+                destinationId, returnStationId, sourceId));
+        if(processorId != null){
+            for(int idx = orders.size() - 1; idx >= 0; idx--){
+                if(orders.get(idx).recipePlan() == null) continue;
+                orders.set(idx, orders.get(idx).withProcessor(processorId));
+                break;
+            }
+        }
+        return List.copyOf(orders);
+    }
+
     // Describe one recipe operation and the requested amount of its result
     public record Step(WorkerRecipePlan plan, long requestedAmount) {
         // Initialize one positive recipe operation request

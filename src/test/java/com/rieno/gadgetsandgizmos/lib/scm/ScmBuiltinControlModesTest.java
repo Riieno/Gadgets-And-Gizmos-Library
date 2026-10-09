@@ -11,6 +11,40 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScmBuiltinControlModesTest {
     @Test
+    void verticalNavigationDoesNotChooseAWorldHeading(){
+        ScmControlMode mode = ScmControlModeRegistry.resolve("airship");
+        for(double sign : new double[]{1, -1}){
+            ScmControlMode.ControlInput input = new ScmControlMode.ControlInput(
+                    Vec3.ZERO, Vec3.ZERO, Vec3.ZERO,
+                    new Vec3(1, 0, 0), new Vec3(0, 1, 0), new Vec3(0, 0, 1),
+                    new Vec3(0, sign * 10, 0), new Vec3(0, sign, 0), Vec3.ZERO,
+                    2, .3, 1, false, 100, 100, 2, -1,
+                    false, false, false, 0, 0);
+            var output = mode.navigate(input);
+            assertEquals(0, output.torque().lengthSqr(), 1.0E-10);
+            assertTrue(output.force().y * sign > 0);
+            assertTrue(output.uprightStabilization() > 0);
+        }
+    }
+
+    @Test
+    void terminalCaptureCorrectsLateralPositionWithoutChangingTheTransitAxis(){
+        ScmControlMode mode = ScmControlModeRegistry.resolve("airship");
+        for(double distance : new double[]{.5D, 10D}){
+            var input = new ScmControlMode.ControlInput(
+                    Vec3.ZERO, Vec3.ZERO, Vec3.ZERO,
+                    new Vec3(1, 0, 0), new Vec3(0, 1, 0), new Vec3(0, 0, 1),
+                    new Vec3(distance, .2, .1), new Vec3(1, 0, 0), Vec3.ZERO,
+                    2, .3, 1, false, 100, 100, 2, -1,
+                    false, false, false, 0, 0);
+            var force = mode.navigate(input).force();
+            assertTrue(force.x > 0);
+            if(distance < 2){ assertTrue(force.y > 0); assertTrue(force.z > 0); }
+            else{ assertEquals(0D, force.y); assertEquals(0D, force.z); }
+        }
+    }
+
+    @Test
     void liveAirshipUsesItsAvailableCruiseAcceleration(){
         ScmAdaptiveStateModel model = ScmAdaptiveStateModel.sample(List.of(
                 new ScmAdaptiveStateModel.Actuator(

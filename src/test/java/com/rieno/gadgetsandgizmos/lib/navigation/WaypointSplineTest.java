@@ -13,6 +13,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WaypointSplineTest {
     @Test
+    void distanceQueriesKeepTheirResultsAfterOtherRoutesEvictTheCache(){
+        WaypointSpline spline = WaypointSpline.of(List.of(Vec3.ZERO,
+                new Vec3(10, 4, 3), new Vec3(-5, 20, 10)));
+        var segment = spline.segments().getFirst();
+        double[] fractions = new double[41];
+        for(int idx = 0; idx < fractions.length; idx++){
+            fractions[idx] = segment.fractionAtDistance(segment.length() * idx / 40.0D);
+        }
+        for(int idx = 0; idx < 12; idx++){
+            var other = WaypointSpline.of(List.of(Vec3.ZERO, new Vec3(30 + idx, idx, 0)));
+            other.segments().getFirst().fractionAtDistance(10.0D);
+        }
+        for(int idx = 0; idx < fractions.length; idx++){
+            assertEquals(fractions[idx], segment.fractionAtDistance(segment.length() * idx / 40.0D), 0.0D);
+        }
+        assertEquals(fractions[0], segment.fractionAtDistance(-1.0D), 0.0D);
+        assertEquals(fractions[40], segment.fractionAtDistance(segment.length() * 2.0D), 0.0D);
+    }
+
+    @Test
     void sampledSuffixStartsAtTheSelectedLegAndKeepsFutureAuthoredPoints(){
         WaypointSpline spline = WaypointSpline.of(List.of(Vec3.ZERO,
                 new Vec3(10.0D, 0.0D, 0.0D), new Vec3(10.0D, 0.0D, 10.0D),

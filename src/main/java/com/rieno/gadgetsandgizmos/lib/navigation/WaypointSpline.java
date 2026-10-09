@@ -11,6 +11,8 @@ package com.rieno.gadgetsandgizmos.lib.navigation;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 // Build and query a smooth cubic route which retains each authored waypoint as a segment boundary
@@ -27,6 +29,10 @@ public final class WaypointSpline {
     private static final int LENGTH_SAMPLES = 16;
     private static final int PROJECTION_REFINEMENT_STEPS = 10;
     private static final int DEFAULT_MAX_RAYCAST_SAMPLES = 16_384;
+    private static final int ARC_DISTANCE_STEPS = PROJECTION_REFINEMENT_STEPS + 2;
+    private static final int ARC_DISTANCE_SAMPLES = 1 << ARC_DISTANCE_STEPS;
+    private static final ThreadLocal<LinkedHashMap<Segment, double[]>> ARC_DISTANCES =
+            ThreadLocal.withInitial(() -> new LinkedHashMap<>(8, 0.75F, true));
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -579,15 +585,34 @@ public final class WaypointSpline {
         public double fractionAtDistance(double distance) {
             if (length <= EPSILON) return 1.0D;
             double target = clamp(distance, 0.0D, length);
+            double[] distances = sampledArcDistances(this);
             double low = 0.0D;
             double high = 1.0D;
-            for (int idx = 0; idx < PROJECTION_REFINEMENT_STEPS + 2; idx++) {
+            for (int idx = 0; idx < ARC_DISTANCE_STEPS; idx++) {
                 double middle = (low + high) * 0.5D;
-                if (lengthToFraction(middle) < target) low = middle;
+                int sampleIdx = (int) (middle * ARC_DISTANCE_SAMPLES);
+                double measured = distances[sampleIdx];
+                if(Double.isNaN(measured)){
+                    measured = lengthToFraction(middle);
+                    distances[sampleIdx] = measured;
+                }
+                if (measured < target) low = middle;
                 else high = middle;
             }
             return (low + high) * 0.5D;
         }
+    }
+
+    // Reuse exact sampled distances at the binary search's fixed fractions
+    private static double[] sampledArcDistances(Segment segment){
+        LinkedHashMap<Segment, double[]> cached = ARC_DISTANCES.get();
+        double[] distances = cached.get(segment);
+        if(distances != null) return distances;
+        distances = new double[ARC_DISTANCE_SAMPLES];
+        Arrays.fill(distances, Double.NaN);
+        if(cached.size() >= 8) cached.remove(cached.keySet().iterator().next());
+        cached.put(segment, distances);
+        return distances;
     }
 
     // Store one closest curve projection

@@ -53,6 +53,20 @@ public record WorkerWorkOrder(
                 null, null, null, task == null ? null : task.resource(), 0L);
     }
 
+    // Retain a recipe request in the normal saved queue until its complete schedule is ready
+    public static WorkerWorkOrder recipeLookup(WorkerTask task, @Nullable WorkerRecipePlan.Operation operation,
+                                               @Nullable UUID sourceId, @Nullable UUID destinationId,
+                                               @Nullable UUID processorId, @Nullable UUID returnStationId){
+        if(task == null) throw new IllegalArgumentException("Recipe lookup needs a task");
+        return new WorkerWorkOrder(task.id(), task, operation == WorkerRecipePlan.Operation.PROCESSING
+                ? Mode.LOOKUP_PROCESSING_RECIPE : Mode.LOOKUP_RECIPE, sourceId, destinationId, processorId,
+                task.resource(), task.requestedAmount(), returnStationId, null);
+    }
+
+    public boolean lookingUpRecipe(){
+        return mode == Mode.LOOKUP_RECIPE || mode == Mode.LOOKUP_PROCESSING_RECIPE;
+    }
+
     // Create an order which returns a worker to a named station
     public static WorkerWorkOrder returnToStation(UUID id, WorkerTask task, UUID stationId) {
         return new WorkerWorkOrder(id, task, Mode.RETURN_TO_STATION,
@@ -140,7 +154,9 @@ public record WorkerWorkOrder(
         FILL_CONTAINER("fill_container"),
         RECLAIM_INPUT("reclaim_input"),
         FROG_PORT("frog_port"),
-        RETURN_TO_STATION("return_to_station");
+        RETURN_TO_STATION("return_to_station"),
+        LOOKUP_RECIPE("lookup_recipe"),
+        LOOKUP_PROCESSING_RECIPE("lookup_processing_recipe");
 
         private final String id;
 

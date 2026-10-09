@@ -3,6 +3,9 @@ package com.rieno.gadgetsandgizmos.lib.scm;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix3d;
+import org.joml.Matrix3dc;
+import org.joml.Quaterniond;
 
 import java.util.Optional;
 
@@ -38,6 +41,32 @@ public record ScmOrientation(Direction forward, Direction up) {
 
     public Vec3 rightVector(){
         return forwardVector().cross(upVector());
+    }
+
+    // Convert canonical north/up coordinates into the craft's body coordinates
+    public Vec3 toBody(Vec3 val){
+        return rightVector().scale(val.x).add(upVector().scale(val.y))
+                .subtract(forwardVector().scale(val.z));
+    }
+
+    // Convert physical body coordinates into canonical north/up coordinates
+    public Vec3 fromBody(Vec3 val){
+        return new Vec3(val.dot(rightVector()), val.dot(upVector()), -val.dot(forwardVector()));
+    }
+
+    // Rotate canonical north/up axes into this signed craft frame
+    public Quaterniond rotation(){
+        Vec3 right = rightVector();
+        Vec3 vertical = upVector();
+        Vec3 back = forwardVector().scale(-1);
+        return new Matrix3d(right.x, right.y, right.z, vertical.x, vertical.y, vertical.z,
+                back.x, back.y, back.z).getNormalizedRotation(new Quaterniond());
+    }
+
+    // Express a physical body tensor in the canonical control axes
+    public Matrix3d fromBodyTensor(Matrix3dc val){
+        Matrix3d rotation = new Matrix3d().rotation(rotation());
+        return new Matrix3d(rotation).transpose().mul(val).mul(rotation);
     }
 
     public CompoundTag toTag(){

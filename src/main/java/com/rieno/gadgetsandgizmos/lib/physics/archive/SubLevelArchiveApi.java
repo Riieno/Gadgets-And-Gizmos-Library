@@ -10,11 +10,11 @@ package com.rieno.gadgetsandgizmos.lib.physics.archive;
 
 import com.rieno.gadgetsandgizmos.lib.access.WorldAccessPolicy;
 import com.rieno.gadgetsandgizmos.lib.physics.SableAssemblyTopologyApi;
+import com.rieno.gadgetsandgizmos.lib.physics.SableSubLevelLifecycleApi;
 import com.rieno.gadgetsandgizmos.lib.scm.ShipPermission;
 import com.rieno.gadgetsandgizmos.lib.scm.ShipPermissionManager;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
-import dev.ryanhcode.sable.sublevel.storage.SubLevelRemovalReason;
 import dev.ryanhcode.sable.sublevel.storage.serialization.SubLevelSerializer;
 import dev.ryanhcode.sable.companion.math.BoundingBox3d;
 import dev.ryanhcode.sable.util.SableNBTUtils;
@@ -58,6 +58,7 @@ public final class SubLevelArchiveApi{
         if(stored >= limits.maximumArchives()) throw new IllegalArgumentException("Your sublevel storage limit is reached");
         for(ServerSubLevel body : bodies){
             Vec3 point = position(body);
+            if(SubLevelConstructionState.isBuilding(body)) throw new IllegalArgumentException("Wait for schematic construction to finish before storing this assembly");
             if(point.distanceToSqr(player.position()) > limits.storeRange() * limits.storeRange()) throw new IllegalArgumentException("Assembly is outside storage range");
             if(!ShipPermissionManager.get(player.server).allows(body.getUniqueId(), player.getUUID(), ShipPermission.STORE)) throw new IllegalArgumentException("Ship storage permission denied");
             if(!WorldAccessPolicy.canAccess(player, level, body.getUniqueId(), BlockPos.containing(point))) throw new IllegalArgumentException("Assembly contains protected sublevels");
@@ -87,10 +88,7 @@ public final class SubLevelArchiveApi{
         tag.put("Preview", SubLevelSnapshots.preview(bodies, 2048));
         store.write(tag);
         var container = SubLevelContainer.getContainer(level);
-        for(ServerSubLevel body : bodies){
-            body.getPlot().kickAllEntities();
-            container.removeSubLevel(body, SubLevelRemovalReason.REMOVED);
-        }
+        SableSubLevelLifecycleApi.remove(level, bodies);
         container.getHoldingChunkMap().saveAll();
         player.server.saveEverything(false, true, true);
         tag.putString("State", "stored");
@@ -172,10 +170,12 @@ public final class SubLevelArchiveApi{
             return tag.getUUID("Root");
         }catch(IOException | RuntimeException err){
             if(committed) throw err;
+            List<ServerSubLevel> rollback = new ArrayList<>();
             for(int idx = 0; idx < bodies.size(); idx++){
                 var body = container.getSubLevel(bodies.getCompound(idx).getUUID("uuid"));
-                if(body != null) container.removeSubLevel(body, SubLevelRemovalReason.REMOVED);
+                if(body instanceof ServerSubLevel serverBody) rollback.add(serverBody);
             }
+            SableSubLevelLifecycleApi.remove(level, rollback);
             container.getHoldingChunkMap().saveAll();
             player.server.saveEverything(false, true, true);
             tag.putString("State", "stored");
@@ -211,14 +211,11 @@ public final class SubLevelArchiveApi{
         if(!topology.available() || bodies.isEmpty() || bodies.size() > limits.maximumBodies()) throw new IllegalArgumentException("Assembly is unavailable or exceeds the body limit");
         for(ServerSubLevel body : bodies){
             if(ShipPermissionManager.get(player.server).owner(body.getUniqueId()) != null) throw new IllegalArgumentException("Claimed ships cannot be deleted");
+            if(SubLevelConstructionState.isBuilding(body)) throw new IllegalArgumentException("Wait for schematic construction to finish before deleting this assembly");
             if(!WorldAccessPolicy.unclaimed(level, body.getUniqueId(), BlockPos.containing(position(body)))) throw new IllegalArgumentException("Claimed sublevels cannot be deleted");
             if(position(body).distanceToSqr(player.position()) > limits.locateRange() * limits.locateRange()) throw new IllegalArgumentException("Assembly is outside deletion range");
         }
-        var container = SubLevelContainer.getContainer(level);
-        for(ServerSubLevel body : bodies){
-            body.getPlot().kickAllEntities();
-            container.removeSubLevel(body, SubLevelRemovalReason.REMOVED);
-        }
+        SableSubLevelLifecycleApi.remove(level, bodies);
     }
 
     public static Vec3 position(ServerSubLevel body){ return position(body.logicalPose()); }

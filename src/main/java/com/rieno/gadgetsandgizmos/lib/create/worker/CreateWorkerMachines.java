@@ -60,6 +60,11 @@ import java.util.WeakHashMap;
 // Resolve Create processing surfaces through their actual drivers and connected inventories
 public final class CreateWorkerMachines implements WorkerMachineRegistry.Adapter{
     private static final Map<net.minecraft.world.level.Level, Map<BlockPos, AirSources>> AIR_SOURCES = new WeakHashMap<>();
+    private static final List<net.minecraft.resources.ResourceLocation> PROCESSOR_TYPES = java.util.stream.Stream.of(
+            "create:mixing", "create:compacting", "create:milling", "create:emptying", "create:crushing", "create:cutting",
+            "create:pressing", "create:deploying", "create:filling", "create:sequenced_assembly", "create:splashing",
+            "create:haunting", "minecraft:smoking", "minecraft:smelting", "minecraft:blasting")
+            .map(net.minecraft.resources.ResourceLocation::parse).toList();
 
     private record AirSources(long tick, List<BlockPos> positions){}
 
@@ -187,21 +192,34 @@ public final class CreateWorkerMachines implements WorkerMachineRegistry.Adapter
     }
 
     private record Processor(WorkerMachineRegistry.Context ctx, BlockEntity be) implements WorkerMachine{
+        @Override public java.util.Set<net.minecraft.resources.ResourceLocation> supportedProcessorTypes(){
+            return PROCESSOR_TYPES.stream().filter(this::maySupportProcessor).collect(java.util.stream.Collectors.toUnmodifiableSet());
+        }
         @Override public boolean mayProbePreloadedInputsBeforeSupport(){ return true; }
+        @Override public boolean maySupportProcessor(net.minecraft.resources.ResourceLocation processorType){
+            if(processorType == null) return false;
+            String type = processorType.toString();
+            BlockEntity driver = ctx.level().getBlockEntity(ctx.pos().above(2));
+            if(be instanceof BasinBlockEntity) return type.equals("create:mixing") && driver instanceof MechanicalMixerBlockEntity
+                    || type.equals("create:compacting") && driver instanceof MechanicalPressBlockEntity;
+            if(be instanceof MillstoneBlockEntity) return type.equals("create:milling");
+            if(be instanceof ItemDrainBlockEntity) return type.equals("create:emptying");
+            if(be instanceof CrushingWheelControllerBlockEntity) return type.equals("create:crushing");
+            if(type.equals("create:sequenced_assembly")) return be instanceof BeltBlockEntity || be instanceof SawBlockEntity;
+            if(type.equals("create:cutting")) return be instanceof SawBlockEntity;
+            if(type.equals("create:pressing")) return driver instanceof MechanicalPressBlockEntity;
+            if(type.equals("create:deploying")) return driver instanceof DeployerBlockEntity;
+            if(type.equals("create:filling")) return driver instanceof SpoutBlockEntity;
+            return (type.equals("create:splashing") || type.equals("create:haunting")
+                    || type.equals("minecraft:smoking") || type.equals("minecraft:smelting")
+                    || type.equals("minecraft:blasting")) && !airSources(ctx).isEmpty();
+        }
         @Override public boolean maySupportRecipe(net.minecraft.resources.ResourceLocation recipeId,
                                                   net.minecraft.resources.ResourceLocation processorType){
             if(processorType == null) return false;
             if(recipeId != null && ctx.level().getRecipeManager().byKey(recipeId)
                     .map(holder -> holder.value() instanceof SequencedAssemblyRecipe).orElse(false)) return true;
-            String type = processorType.toString();
-            return type.equals("create:sequenced_assembly") || type.equals("create:mixing")
-                    || type.equals("create:compacting") || type.equals("create:milling")
-                    || type.equals("create:emptying") || type.equals("create:crushing")
-                    || type.equals("create:cutting") || type.equals("create:pressing")
-                    || type.equals("create:deploying") || type.equals("create:filling")
-                    || type.equals("create:splashing") || type.equals("create:haunting")
-                    || type.equals("minecraft:smoking") || type.equals("minecraft:smelting")
-                    || type.equals("minecraft:blasting");
+            return maySupportProcessor(processorType);
         }
         @Override public boolean mayHavePreloadedInputs(WorkerRecipeDefinition recipe){
             return recipe != null && ctx.level().getRecipeManager().byKey(recipe.recipeId())
@@ -299,8 +317,9 @@ public final class CreateWorkerMachines implements WorkerMachineRegistry.Adapter
         @Override public boolean supportsAt(WorkerRecipePlan plan, WorkerMachineSite site){
             WorkerArea area = site == null ? null : site.area();
             if(!supports(plan)) return false;
-            if(area == null || !(WorkerRecipeCatalog.recipe(ctx.level(), plan) instanceof SequencedAssemblyRecipe assembly))
-                return true;
+            if(!(WorkerRecipeCatalog.recipe(ctx.level(), plan) instanceof SequencedAssemblyRecipe assembly))
+                return site == null || site.inputs().isEmpty() || !itemInputsAt(plan, site).isEmpty();
+            if(area == null) return true;
             List<AssemblyPort> route = assemblyRoute(plan, assembly);
             if(route.isEmpty() || route.stream().anyMatch(port -> !area.contains(port.pos())
                     || !(ctx.level().getBlockEntity(port.pos()) instanceof SawBlockEntity)
@@ -335,6 +354,14 @@ public final class CreateWorkerMachines implements WorkerMachineRegistry.Adapter
         }
 
         @Override public List<String> routeDiagnostics(WorkerRecipePlan plan, WorkerMachineSite site){
+            if(plan != null && be instanceof BasinBlockEntity
+                    && WorkerRecipeCatalog.recipe(ctx.level(), plan) instanceof ProcessingRecipe<?, ?> recipe){
+                HeatCondition heat = recipe.getRequiredHeat();
+                if(heat != HeatCondition.NONE && !heat.testBlazeBurner(BasinBlockEntity.getHeatLevelOf(
+                        ctx.level().getBlockState(ctx.pos().below())))
+                        && !(ctx.level().getBlockEntity(ctx.pos().below()) instanceof BlazeBurnerBlockEntity))
+                    return List.of("Recipe needs a captured blaze burner below the basin at " + ctx.pos().toShortString());
+            }
             if(plan == null || !(be instanceof BeltBlockEntity || be instanceof SawBlockEntity)
                     || !(WorkerRecipeCatalog.recipe(ctx.level(), plan) instanceof SequencedAssemblyRecipe assembly))
                 return List.of();
@@ -745,6 +772,16 @@ public final class CreateWorkerMachines implements WorkerMachineRegistry.Adapter
             List<IItemHandler> inputs = be == null && ctx.level().getBlockState(ctx.pos()).isAir()
                     ? List.of(new GroundWorkpieceHandler(ctx.level(), ctx.pos()))
                     : WorkerContainerAccess.itemHandlers(ctx.level(), ctx.pos(), ctx.side());
+            if(be instanceof BeltBlockEntity && plan != null && site != null && !site.inputs().isEmpty()){
+                List<BlockPos> upstream = upstreamWorkpieceSegments(processingLine(ctx.level(), ctx.pos()), ctx.pos());
+                List<IItemHandler> marked = new ArrayList<>();
+                for(var port : site.inputs()){
+                    if(area != null && !area.contains(port.pos())) continue;
+                    if(ctx.level().getBlockEntity(port.pos()) instanceof BeltBlockEntity && !upstream.contains(port.pos())) continue;
+                    marked.addAll(WorkerContainerAccess.itemHandlers(ctx.level(), port.pos(), port.face()));
+                }
+                inputs = marked;
+            }
             if(plan == null || !plan.processorType().toString().equals("create:deploying")) return inputs;
             var recipe = WorkerRecipeCatalog.recipe(ctx.level(), plan);
             if(recipe == null || recipe.getIngredients().size() < 2) return List.of();

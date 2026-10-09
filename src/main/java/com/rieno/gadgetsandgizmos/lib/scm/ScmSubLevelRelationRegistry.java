@@ -8,6 +8,10 @@ package com.rieno.gadgetsandgizmos.lib.scm;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.discovery.SubLevelBlockEntityCollector;
+import com.rieno.gadgetsandgizmos.lib.physics.SableAssemblyTopologyInvalidation;
+import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
+import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.level.Level;
@@ -24,6 +28,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.WeakHashMap;
+import java.util.function.Predicate;
 
 // Register optional physical links which make one loaded sub-level a child of another
 public final class ScmSubLevelRelationRegistry {
@@ -36,6 +42,9 @@ public final class ScmSubLevelRelationRegistry {
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     private static final Map<ResourceLocation, Entry> ENTRIES = new LinkedHashMap<>();
+    private static final Map<Level, LoadedRelations> LOADED_RELATIONS = new WeakHashMap<>();
+    private static volatile List<Entry> orderedProviders = List.of();
+    private static long providerRevision;
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -51,11 +60,18 @@ public final class ScmSubLevelRelationRegistry {
 
     // Register one optional sub-level relation provider
     public static synchronized void register(ResourceLocation id, int priority, Provider provider) {
+        register(id, priority, null, provider);
+    }
+
+    // Limit an optional provider to the block entities it can adapt
+    public static synchronized void register(ResourceLocation id, int priority,
+            Predicate<BlockEntity> filter, Provider provider){
         Objects.requireNonNull(id, "id");
         if (ENTRIES.containsKey(id)) {
             throw new IllegalStateException("SCM sub-level relation provider already registered: " + id);
         }
-        ENTRIES.put(id, new Entry(priority, Objects.requireNonNull(provider, "provider")));
+        ENTRIES.put(id, new Entry(priority, filter, Objects.requireNonNull(provider, "provider")));
+        refreshProviders();
     }
 
     /*--------------------------------------------------------##---------------------------------------------------------
@@ -68,7 +84,82 @@ public final class ScmSubLevelRelationRegistry {
 
     // Remove one optional sub-level relation provider
     public static synchronized void unregister(ResourceLocation id) {
-        ENTRIES.remove(id);
+        if(ENTRIES.remove(id) != null) refreshProviders();
+    }
+
+    // Get the provider revision for consumers that cache derived topology
+    public static synchronized long revision(){
+        return providerRevision;
+    }
+
+    // Share loaded relation discovery across controllers and collision queries in one tick
+    public static List<Relation> loadedRelations(SubLevel root){
+        List<Entry> providers = orderedProviders;
+        if(root == null || root.isRemoved() || providers.isEmpty()) return List.of();
+        Level level = root.getLevel();
+        if(level == null) return List.of();
+        long tick = level.getGameTime();
+        long topologyRevision = SableAssemblyTopologyInvalidation.revision(SableLevelApi.serverLevel(level));
+        long registryRevision;
+        synchronized(ScmSubLevelRelationRegistry.class){
+            registryRevision = providerRevision;
+            LoadedRelations cached = LOADED_RELATIONS.get(level);
+            if(cached != null && cached.tick() == tick
+                    && cached.topologyRevision() == topologyRevision
+                    && cached.providerRevision() == registryRevision
+                    && cached.bodyIds().contains(root.getUniqueId())) return cached.relations();
+        }
+        Set<UUID> bodyIds = new LinkedHashSet<>();
+        List<ScopedBlockEntity> scoped = new ArrayList<>();
+        for(Object candidate : SubLevelBlockEntityCollector.getSubLevels(level)){
+            if(!(candidate instanceof SubLevel body) || body.isRemoved()) continue;
+            collectLoaded(body, bodyIds, scoped, providers);
+        }
+        collectLoaded(root, bodyIds, scoped, providers);
+        List<Relation> relations = relations(level, scoped);
+        synchronized(ScmSubLevelRelationRegistry.class){
+            if(providerRevision == registryRevision){
+                LOADED_RELATIONS.put(level, new LoadedRelations(tick, topologyRevision,
+                        registryRevision, Set.copyOf(bodyIds), relations));
+            }
+        }
+        return relations;
+    }
+
+    // Release a dimension snapshot when its level unloads
+    public static synchronized void forgetLoadedRelations(Level level){
+        LOADED_RELATIONS.remove(level);
+    }
+
+    // Keep provider order stable until registration changes
+    private static void refreshProviders(){
+        orderedProviders = ENTRIES.values().stream()
+                .sorted(Comparator.comparingInt(Entry::priority).reversed()).toList();
+        providerRevision++;
+        LOADED_RELATIONS.clear();
+    }
+
+    // Read each loaded body once even when the root also appears in the container
+    private static void collectLoaded(SubLevel body, Set<UUID> bodyIds,
+            List<ScopedBlockEntity> scoped, List<Entry> providers){
+        if(!bodyIds.add(body.getUniqueId())) return;
+        for(BlockEntity blockEntity : SubLevelBlockEntityCollector.getBlockEntities(body)){
+            if(!matchesProvider(blockEntity, providers)) continue;
+            scoped.add(new ScopedBlockEntity(body.getUniqueId(), blockEntity));
+        }
+    }
+
+    // Avoid retaining scoped entries for blocks no loaded provider can use
+    private static boolean matchesProvider(BlockEntity blockEntity, List<Entry> providers){
+        for(Entry entry : providers){
+            if(entry.filter() == null) return true;
+            try{
+                if(entry.filter().test(blockEntity)) return true;
+            }catch(RuntimeException | LinkageError ignored){
+                return true;
+            }
+        }
+        return false;
     }
 
     // Collect the relations exposed by every registered provider
@@ -78,18 +169,23 @@ public final class ScmSubLevelRelationRegistry {
         if (level == null || blockEntities == null || blockEntities.isEmpty()) {
             return List.of();
         }
+        List<Entry> providers = orderedProviders;
+        if(providers.isEmpty()) return List.of();
         Context ctx = new Context(level, List.copyOf(blockEntities));
-        List<Entry> providers;
-        synchronized (ScmSubLevelRelationRegistry.class) {
-            providers = ENTRIES.values().stream()
-                    .sorted(Comparator.comparingInt(Entry::priority).reversed())
-                    .toList();
-        }
         Set<Relation> found = new LinkedHashSet<>();
         for (Entry entry : providers) {
             Collection<Relation> provided;
             try {
-                provided = entry.provider().relations(ctx);
+                Context selected = ctx;
+                if(entry.filter() != null){
+                    List<ScopedBlockEntity> matching = new ArrayList<>();
+                    for(ScopedBlockEntity scoped : ctx.blockEntities()){
+                        if(entry.filter().test(scoped.blockEntity())) matching.add(scoped);
+                    }
+                    if(matching.isEmpty()) continue;
+                    selected = new Context(level, matching);
+                }
+                provided = entry.provider().relations(selected);
             } catch (RuntimeException | LinkageError ignored) {
                 continue;
             }
@@ -262,6 +358,10 @@ public final class ScmSubLevelRelationRegistry {
     }
 
     // Store one provider priority and callback
-    private record Entry(int priority, Provider provider) {
+    private record Entry(int priority, Predicate<BlockEntity> filter, Provider provider) {
     }
+
+    // Retain only identities and resolved links so a snapshot cannot keep a level alive
+    private record LoadedRelations(long tick, long topologyRevision, long providerRevision,
+            Set<UUID> bodyIds, List<Relation> relations){}
 }

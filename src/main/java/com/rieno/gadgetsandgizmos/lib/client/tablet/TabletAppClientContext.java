@@ -65,6 +65,13 @@ public record TabletAppClientContext(
                 new TabletAppClientSurface(left, top, width, height), mouseX, mouseY, actions, refresh);
     }
 
+    // Use the complete app surface while retaining the host's actions and dialogs
+    public TabletAppClientContext forSurface(){
+        return new TabletAppClientContext(app, tab, data, graphics, font,
+                surface.left(), surface.top(), surface.width(), surface.height(), surface,
+                mouseX, mouseY, actions, refresh, ui);
+    }
+
     // Expose the action sender
     @FunctionalInterface
     public interface ActionSender {

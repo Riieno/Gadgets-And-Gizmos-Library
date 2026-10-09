@@ -2,20 +2,31 @@ package com.rieno.gadgetsandgizmos.lib.scm;
 
 import net.minecraft.world.phys.Vec3;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 
 // Build a live ship model and select feedback poles from available acceleration
 public final class ScmAdaptiveStateModel{
     private static final int AXES = 6;
     private static final int STATES = 12;
     private static final double EPSILON = 1.0E-12D;
+    private static final int MAX_CACHED_MODELS = 8;
+    private static final int MAX_CACHED_ACTUATORS = 16_384;
+    private static final int MAX_CACHED_AXES = 128;
+    private static final ThreadLocal<Map<ModelKey, ScmAdaptiveStateModel>> MODELS =
+            ThreadLocal.withInitial(() -> new LinkedHashMap<>(MAX_CACHED_MODELS, 0.75F, true));
 
-    private final double[][] stateMatrix;
     private final double[][] inputMatrix;
     private final double[] trim;
-    private final Map<AxisKey, double[]> authority = new HashMap<>();
+    private final double[][] columns;
+    private final double[] limits;
+    private final double[] magnitudes;
+    private final int[] activeColumns;
+    private final double[] controls;
+    private final double[] achieved = new double[AXES];
+    private final Map<AxisKey, double[]> authority = new LinkedHashMap<>(MAX_CACHED_AXES, 0.75F, true);
     private final double tickSeconds;
     private final double linearTolerance;
     private final double angularTolerance;
@@ -28,10 +39,8 @@ public final class ScmAdaptiveStateModel{
         this.linearTolerance = positive(linearTolerance);
         this.angularTolerance = positive(angularTolerance);
         this.characteristicLength = positive(characteristicLength);
-        stateMatrix = new double[STATES][STATES];
         inputMatrix = new double[STATES][actuators.size()];
         trim = new double[actuators.size()];
-        for(int axis = 0; axis < AXES; axis++) stateMatrix[axis][axis + AXES] = 1.0D;
         for(int idx = 0; idx < actuators.size(); idx++){
             Actuator actuator = actuators.get(idx);
             trim[idx] = actuator.trim();
@@ -44,6 +53,29 @@ public final class ScmAdaptiveStateModel{
             inputMatrix[10][idx] = angular.y;
             inputMatrix[11][idx] = angular.z;
         }
+        columns = new double[trim.length * 2][AXES];
+        limits = new double[columns.length];
+        magnitudes = new double[columns.length];
+        controls = new double[columns.length];
+        int[] active = new int[columns.length];
+        int count = 0;
+        for(int idx = 0; idx < trim.length; idx++){
+            limits[idx * 2] = 1.0D - trim[idx];
+            limits[idx * 2 + 1] = trim[idx];
+            for(int row = 0; row < AXES; row++){
+                double effect = inputMatrix[row + AXES][idx]
+                        * (row < 3 ? 1.0D : this.characteristicLength);
+                columns[idx * 2][row] = effect;
+                columns[idx * 2 + 1][row] = -effect;
+            }
+        }
+        for(int idx = 0; idx < columns.length; idx++){
+            for(int row = 0; row < AXES; row++){
+                magnitudes[idx] += columns[idx][row] * columns[idx][row];
+            }
+            if(limits[idx] > EPSILON && magnitudes[idx] > 1.0E-24D) active[count++] = idx;
+        }
+        activeColumns = Arrays.copyOf(active, count);
     }
 
     // Describe one live actuator around the current holding throttle
@@ -53,6 +85,19 @@ public final class ScmAdaptiveStateModel{
             angularAcceleration = finite(angularAcceleration);
             trim = clamp(trim, 0.0D, 1.0D);
         }
+    }
+
+    // Include steering response while leaving the provider's nonlinear allocation constraints intact
+    public static List<Actuator> forceActuators(ScmPrecisionAllocator.Unit unit, double mass,
+            com.rieno.gadgetsandgizmos.lib.physics.SableAssemblyDynamicsApi.Tensor inverseInertia, double trim){
+        double scale = 1.0D / positive(mass);
+        List<Actuator> res = new java.util.ArrayList<>(3);
+        res.add(new Actuator(unit.force().scale(scale), inverseInertia.transform(unit.torque()), trim));
+        for(Vec3 lateral : ScmThrustGeometry.steeringForces(unit.force(), unit.coneDegrees())){
+            Vec3 span = lateral.scale(2.0D);
+            res.add(new Actuator(span.scale(scale), inverseInertia.transform(unit.momentArm().cross(span)), 0.5D));
+        }
+        return List.copyOf(res);
     }
 
     // Store the requested acceleration and the poles selected for this axis
@@ -65,8 +110,25 @@ public final class ScmAdaptiveStateModel{
                                                double linearTolerance,
                                                double angularTolerance,
                                                double characteristicLength){
-        return new ScmAdaptiveStateModel(actuators == null ? List.of() : List.copyOf(actuators),
-                tickSeconds, linearTolerance, angularTolerance, characteristicLength);
+        List<Actuator> inputs = actuators == null ? List.of() : List.copyOf(actuators);
+        ModelKey key = new ModelKey(inputs, positive(tickSeconds), positive(linearTolerance),
+                positive(angularTolerance), positive(characteristicLength));
+        Map<ModelKey, ScmAdaptiveStateModel> models = MODELS.get();
+        ScmAdaptiveStateModel model = models.get(key);
+        if(model != null) return model;
+        model = new ScmAdaptiveStateModel(inputs, tickSeconds, linearTolerance,
+                angularTolerance, characteristicLength);
+        if(inputs.size() <= MAX_CACHED_ACTUATORS){
+            int count = inputs.size();
+            for(ModelKey cached : models.keySet()) count += cached.actuators().size();
+            while(!models.isEmpty() && (models.size() >= MAX_CACHED_MODELS || count > MAX_CACHED_ACTUATORS)){
+                ModelKey oldest = models.keySet().iterator().next();
+                count -= oldest.actuators().size();
+                models.remove(oldest);
+            }
+            models.put(key, model);
+        }
+        return model;
     }
 
     // Use one block as the geometric scale when a host has no ship dimensions
@@ -89,7 +151,9 @@ public final class ScmAdaptiveStateModel{
 
     // Return the linearized state matrix for position, attitude and their rates
     public double[][] stateMatrix(){
-        return copy(stateMatrix);
+        double[][] res = new double[STATES][STATES];
+        for(int axis = 0; axis < AXES; axis++) res[axis][axis + AXES] = 1.0D;
+        return res;
     }
 
     // Return the live actuator matrix in the same column order as the inputs
@@ -107,40 +171,35 @@ public final class ScmAdaptiveStateModel{
                 new AxisKey(requested.x, requested.y, requested.z, angular),
                 ignored -> new double[]{feasibleAuthority(requested, angular, false),
                         feasibleAuthority(requested, angular, true)});
+        if(authority.size() > MAX_CACHED_AXES) authority.remove(authority.keySet().iterator().next());
         return capacity[positive ? 1 : 0];
     }
 
     private record AxisKey(double x, double y, double z, boolean angular){}
+
+    // Reuse models only when every live actuator and sampling parameter is identical
+    private record ModelKey(List<Actuator> actuators, double tickSeconds, double linearTolerance,
+            double angularTolerance, double characteristicLength){}
 
     // Find thrust headroom that accelerates the requested axis without unwanted motion
     private double feasibleAuthority(Vec3 axis, boolean angular, boolean positive){
         int count = trim.length * 2;
         if(count == 0) return 0.0D;
         double sign = positive ? 1.0D : -1.0D;
-        double[][] columns = new double[count][AXES];
-        double[] limits = new double[count];
         double upper = 0.0D;
         for(int idx = 0; idx < trim.length; idx++){
             int offset = angular ? 9 : 6;
             double projection = axis.x * inputMatrix[offset][idx]
                     + axis.y * inputMatrix[offset + 1][idx]
                     + axis.z * inputMatrix[offset + 2][idx];
-            limits[idx * 2] = 1.0D - trim[idx];
-            limits[idx * 2 + 1] = trim[idx];
             upper += Math.max(0.0D, projection * sign) * limits[idx * 2]
                     + Math.max(0.0D, -projection * sign) * limits[idx * 2 + 1];
-            for(int row = 0; row < AXES; row++){
-                double effect = inputMatrix[row + AXES][idx]
-                        * (row < 3 ? 1.0D : characteristicLength);
-                columns[idx * 2][row] = effect;
-                columns[idx * 2 + 1][row] = -effect;
-            }
         }
         if(upper <= EPSILON) return 0.0D;
         double lower = 0.0D;
         for(int step = 0; step < 8; step++){
             double candidate = step == 0 ? upper : (lower + upper) * 0.5D;
-            if(canProduce(columns, limits, axis, angular, sign * candidate)){
+            if(canProduce(axis, angular, sign * candidate)){
                 lower = candidate;
                 if(step == 0) break;
             }else upper = candidate;
@@ -149,34 +208,31 @@ public final class ScmAdaptiveStateModel{
     }
 
     // Solve bounded actuator changes against all six acceleration axes
-    private boolean canProduce(double[][] columns, double[] limits, Vec3 axis,
-                               boolean angular, double amount){
+    private boolean canProduce(Vec3 axis, boolean angular, double amount){
         double[] target = new double[AXES];
         int offset = angular ? 3 : 0;
         double scale = angular ? characteristicLength : 1.0D;
         target[offset] = axis.x * amount * scale;
         target[offset + 1] = axis.y * amount * scale;
         target[offset + 2] = axis.z * amount * scale;
-        double[] controls = new double[limits.length];
-        double[] achieved = new double[AXES];
+        Arrays.fill(controls, 0.0D);
+        Arrays.fill(achieved, 0.0D);
         for(int iteration = 0; iteration < 96; iteration++){
             double largestChange = 0.0D;
-            for(int idx = 0; idx < controls.length; idx++){
-                if(limits[idx] <= EPSILON) continue;
+            for(int idx : activeColumns){
+                double[] column = columns[idx];
                 double gradient = 0.0D;
-                double magnitude = 0.0D;
                 for(int row = 0; row < AXES; row++){
-                    gradient += columns[idx][row] * (achieved[row] - target[row]);
-                    magnitude += columns[idx][row] * columns[idx][row];
+                    gradient += column[row] * (achieved[row] - target[row]);
                 }
-                if(magnitude <= 1.0E-24D) continue;
-                double next = clamp(controls[idx] - gradient / magnitude,
+                double next = clamp(controls[idx] - gradient / magnitudes[idx],
                         0.0D, limits[idx]);
                 double change = next - controls[idx];
+                if(change == 0.0D) continue;
                 controls[idx] = next;
                 largestChange = Math.max(largestChange, Math.abs(change));
                 for(int row = 0; row < AXES; row++){
-                    achieved[row] += columns[idx][row] * change;
+                    achieved[row] += column[row] * change;
                 }
             }
             if(largestChange <= EPSILON) break;

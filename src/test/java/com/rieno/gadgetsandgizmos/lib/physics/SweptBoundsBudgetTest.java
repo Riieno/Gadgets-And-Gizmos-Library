@@ -6,6 +6,7 @@ import net.minecraft.server.level.ServerChunkCache;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.BeforeAll;
@@ -20,6 +21,34 @@ class SweptBoundsBudgetTest{
     @BeforeAll
     static void bootstrap(){
         SableSplineConstraintTest.bootstrap();
+    }
+
+    @Test
+    void emptySectionsAvoidPaletteReadsWithoutHidingTheWallAboveThem(){
+        ServerLevel level = mock(ServerLevel.class);
+        ServerChunkCache chunks = mock(ServerChunkCache.class);
+        LevelChunk chunk = mock(LevelChunk.class);
+        LevelChunkSection air = mock(LevelChunkSection.class);
+        LevelChunkSection solid = mock(LevelChunkSection.class);
+        when(level.getChunkSource()).thenReturn(chunks);
+        when(chunks.getChunkNow(anyInt(), anyInt())).thenReturn(chunk);
+        when(chunk.getSections()).thenReturn(new LevelChunkSection[]{air, solid});
+        when(air.hasOnlyAir()).thenReturn(true);
+        when(chunk.getBlockState(any())).thenAnswer(call -> {
+            BlockPos pos = call.getArgument(0);
+            assertTrue(pos.getY() >= 16 && pos.getY() < 32);
+            return pos.getX() == 5 && pos.getY() == 20
+                    ? Blocks.STONE.defaultBlockState() : Blocks.AIR.defaultBlockState();
+        });
+        try(var collector = mockStatic(SubLevelBlockEntityCollector.class)){
+            collector.when(() -> SubLevelBlockEntityCollector.getSubLevels(level)).thenReturn(List.of());
+            var scan = SubLevelParticleOcclusion.beginSweptBoundsBlockingDistanceScan(
+                    level, null, Vec3.ZERO, new Vec3(1, 0, 0), 10,
+                    List.of(new AABB(-0.5D, -20, -0.5D, 0.5D, 21, 0.5D)), true, Set.of(), true);
+            assertTrue(scan.advance(100_000, 0L));
+            assertTrue(scan.result() > 4.0D && scan.result() < 4.5D);
+            verify(level, never()).getBlockState(any());
+        }
     }
 
     @Test

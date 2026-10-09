@@ -188,6 +188,9 @@ sourceSets.test {
 
 tasks.named('test') {
     useJUnitPlatform()
+    // Keep native physics binaries and test logs separate from local game sessions.
+    workingDir = layout.buildDirectory.dir('test-runtime').get().asFile
+    doFirst { workingDir.mkdirs() }
     // Vanilla bootstrap reads translations from the generated Minecraft resources.
     classpath += fileTree(layout.buildDirectory.dir('moddev/artifacts')) {
         include '*minecraft-resources.jar'

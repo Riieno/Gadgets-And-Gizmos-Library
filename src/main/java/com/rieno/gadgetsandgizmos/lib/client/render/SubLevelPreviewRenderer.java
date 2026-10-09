@@ -48,6 +48,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -67,13 +68,13 @@ import java.util.function.Predicate;
  * any optional block-entity decoration needed by their own integrations.</p>
  */
 public final class SubLevelPreviewRenderer implements AutoCloseable {
-    public static final int DEFAULT_MAX_RENDERED_BLOCKS = 16_384;
+    public static final int DEFAULT_MAX_RENDERED_BLOCKS = com.rieno.gadgetsandgizmos.lib.scm.ScmCapacity.MAX_PREVIEW_BLOCKS;
     private static final AtomicInteger TEXTURE_IDS = new AtomicInteger();
     private static final ResourceLocation HIGHLIGHT_PLANE_TEXTURE =
             ResourceLocation.withDefaultNamespace("textures/misc/white.png");
     private static final float FIELD_OF_VIEW = (float) Math.toRadians(42.0D);
     private static final float MIN_DISTANCE = 3.0F;
-    private static final float MAX_DISTANCE = 512.0F;
+    private static final float MAX_DISTANCE = 16_384.0F;
 
     /** A loaded non-air block in its owning sub-level's stored plot position. */
     public record PreviewBlock(UUID subLevelId, BlockPos position, BlockState state) {
@@ -152,6 +153,8 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
 
     private final ResourceLocation textureBase;
     private final int maximumBlocks;
+    private final Map<BlockKey, PreviewBlock> blockIndex = new HashMap<>();
+    private List<PreviewBlock> visibleBlockCache;
     private final List<BlockEntityPreviewDecorator> decorators;
     private final List<PreviewBlock> blocks = new ArrayList<>();
     private final Map<BlockKey, SnapshotBlock> fallbackBlocks = new LinkedHashMap<>();
@@ -236,6 +239,7 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
     /** Filter presentation and picking without altering the loaded scene. */
     public void setVisibilityPredicate(Predicate<PreviewBlock> predicate) {
         visibility = predicate == null ? ignored -> true : predicate;
+        visibleBlockCache = null;
         cameraNeedsFit = true;
         targetDirty = true;
     }
@@ -387,6 +391,9 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         texture = null;
         target = null;
         blocks.clear();
+        blockIndex.clear();
+        blocks.forEach(block -> blockIndex.put(new BlockKey(block.subLevelId(), block.position()), block));
+        visibleBlockCache = null;
         fullyOccludedBlocks.clear();
         contentsDirty = true;
     }
@@ -402,7 +409,7 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         }
         usingFallbackScene = false;
         int gameTick = (int) level.getGameTime();
-        if (contentsDirty || gameTick - lastRebuildTick >= 20) {
+        if (contentsDirty || gameTick - lastRebuildTick >= 100) {
             rebuildBlocks(level);
             lastRebuildTick = gameTick;
             contentsDirty = false;
@@ -471,6 +478,9 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
      * select interior blocks through the surrounding line geometry.
      */
     private void cullFullyOccludedBlocks() {
+        blockIndex.clear();
+        blocks.forEach(block -> blockIndex.put(new BlockKey(block.subLevelId(), block.position()), block));
+        visibleBlockCache = null;
         fullyOccludedBlocks.clear();
         if (blocks.size() < 7) return;
         Set<BlockKey> opaque = new HashSet<>();
@@ -544,7 +554,7 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
             target.clear(Minecraft.ON_OSX);
             target.bindWrite(true);
             float aspect = Math.max(0.01F, (float) target.width / target.height);
-            RenderSystem.setProjectionMatrix(new Matrix4f().perspective(FIELD_OF_VIEW, aspect, 0.05F, 1024.0F),
+            RenderSystem.setProjectionMatrix(new Matrix4f().perspective(FIELD_OF_VIEW, aspect, 0.05F, 32_768.0F),
                     VertexSorting.DISTANCE_TO_ORIGIN);
             modelView.identity();
             modelView.translate(0.0F, 0.0F, -distance);
@@ -587,11 +597,20 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
     private void renderScene(Minecraft minecraft, ClientLevel level, ClientSubLevel root,
                              float partialTick, float aspect, PoseStack pose,
                              MultiBufferSource.BufferSource buffers) {
-        for (PreviewBlock block : visibleBlocks()) {
-            if (!inCameraFrustum(level, root, block, partialTick, aspect)) continue;
+        Matrix4f inverse = new Matrix4f().rotateX((float) Math.toRadians(pitch))
+                .rotateY((float) Math.toRadians(yaw)).invert();
+        Vector3f offset = inverse.transformDirection(-panX, -panY, 0.0F, new Vector3f());
+        Vector3f origin = inverse.transformPosition(0.0F, 0.0F, distance, new Vector3f()).add(center).add(offset);
+        Vector3f forward = inverse.transformDirection(0.0F, 0.0F, -1.0F, new Vector3f());
+        Vector3f right = inverse.transformDirection(1.0F, 0.0F, 0.0F, new Vector3f());
+        Vector3f up = inverse.transformDirection(0.0F, 1.0F, 0.0F, new Vector3f());
+        for(PreviewBlock block : visibleBlocks()){
+            if(!inCameraFrustum(level, root, block, partialTick, aspect, origin, forward, right, up)) continue;
             if (!wireframe && isFullyOccluded(block)) continue;
             if (rendersWireframe(block)) {
                 renderWireframeBlock(level, root, block, partialTick, pose, buffers);
+            } else if(blocks.size() > 8192 && distance > 128.0F){
+                renderOverviewBlock(level, root, block, partialTick, pose, buffers);
             } else {
                 renderBlock(minecraft, level, root, block, partialTick, pose, buffers);
             }
@@ -600,21 +619,15 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
 
     /** CPU frustum culling avoids model and block-entity work for off-screen blocks. */
     private boolean inCameraFrustum(ClientLevel level, ClientSubLevel root, PreviewBlock block,
-                                    float partialTick, float aspect) {
+                                    float partialTick, float aspect, Vector3f origin, Vector3f forward,
+                                    Vector3f right, Vector3f up){
         Vector3f position = rootPosition(level, root, block.subLevelId(), block.position(), partialTick);
         if (position == null) return false;
-        Matrix4f inverse = new Matrix4f().rotateX((float) Math.toRadians(pitch))
-                .rotateY((float) Math.toRadians(yaw)).invert();
-        Vector3f offset = inverse.transformDirection(-panX, -panY, 0.0F, new Vector3f());
-        Vector3f origin = inverse.transformPosition(0.0F, 0.0F, distance, new Vector3f()).add(center).add(offset);
         Vector3f delta = new Vector3f(position).add(0.5F, 0.5F, 0.5F).sub(origin);
-        Vector3f forward = inverse.transformDirection(0.0F, 0.0F, -1.0F, new Vector3f());
         float depth = delta.dot(forward);
         float radius = 0.9F;
-        if (depth < -radius || depth > 1024.0F + radius) return false;
+        if (depth < -radius || depth > 32_768.0F + radius) return false;
         float tangent = (float) Math.tan(FIELD_OF_VIEW * 0.5F);
-        Vector3f right = inverse.transformDirection(1.0F, 0.0F, 0.0F, new Vector3f());
-        Vector3f up = inverse.transformDirection(0.0F, 1.0F, 0.0F, new Vector3f());
         return Math.abs(delta.dot(right)) <= Math.max(0.0F, depth) * tangent * aspect + radius
                 && Math.abs(delta.dot(up)) <= Math.max(0.0F, depth) * tangent + radius;
     }
@@ -655,31 +668,36 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
 
     // Draw the translucent selected-face plane
     private static void renderFaceHighlightPlane(PoseStack pose, VertexConsumer consumer, Direction face, int color) {
+        renderFacePlane(pose, consumer, face, color, 0.45F, 0.022F);
+    }
+
+    private static void renderFacePlane(PoseStack pose, VertexConsumer consumer, Direction face,
+                                        int color, float alpha, float expansion){
         float red = ((color >> 16) & 0xFF) / 255.0F;
         float green = ((color >> 8) & 0xFF) / 255.0F;
         float blue = (color & 0xFF) / 255.0F;
-        float min = -0.022F;
-        float max = 1.022F;
+        float min = -expansion;
+        float max = 1.0F + expansion;
         Matrix4f matrix = pose.last().pose();
         switch (face) {
             case DOWN -> addHighlightPlane(matrix, consumer,
                     0.0F, min, 0.0F, 1.0F, min, 0.0F, 1.0F, min, 1.0F, 0.0F, min, 1.0F,
-                    red, green, blue, 0.45F, 0.0F, -1.0F, 0.0F);
+                    red, green, blue, alpha, 0.0F, -1.0F, 0.0F);
             case UP -> addHighlightPlane(matrix, consumer,
                     0.0F, max, 1.0F, 1.0F, max, 1.0F, 1.0F, max, 0.0F, 0.0F, max, 0.0F,
-                    red, green, blue, 0.45F, 0.0F, 1.0F, 0.0F);
+                    red, green, blue, alpha, 0.0F, 1.0F, 0.0F);
             case NORTH -> addHighlightPlane(matrix, consumer,
                     1.0F, 0.0F, min, 0.0F, 0.0F, min, 0.0F, 1.0F, min, 1.0F, 1.0F, min,
-                    red, green, blue, 0.45F, 0.0F, 0.0F, -1.0F);
+                    red, green, blue, alpha, 0.0F, 0.0F, -1.0F);
             case SOUTH -> addHighlightPlane(matrix, consumer,
                     0.0F, 0.0F, max, 1.0F, 0.0F, max, 1.0F, 1.0F, max, 0.0F, 1.0F, max,
-                    red, green, blue, 0.45F, 0.0F, 0.0F, 1.0F);
+                    red, green, blue, alpha, 0.0F, 0.0F, 1.0F);
             case WEST -> addHighlightPlane(matrix, consumer,
                     min, 0.0F, 0.0F, min, 0.0F, 1.0F, min, 1.0F, 1.0F, min, 1.0F, 0.0F,
-                    red, green, blue, 0.45F, -1.0F, 0.0F, 0.0F);
+                    red, green, blue, alpha, -1.0F, 0.0F, 0.0F);
             case EAST -> addHighlightPlane(matrix, consumer,
                     max, 0.0F, 1.0F, max, 0.0F, 0.0F, max, 1.0F, 0.0F, max, 1.0F, 1.0F,
-                    red, green, blue, 0.45F, 1.0F, 0.0F, 0.0F);
+                    red, green, blue, alpha, 1.0F, 0.0F, 0.0F);
         }
     }
 
@@ -777,6 +795,37 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         LevelRenderer.renderLineBox(pose, buffers.getBuffer(RenderType.lines()),
                 new AABB(0.01D, 0.01D, 0.01D, 0.99D, 0.99D, 0.99D),
                 0.36F, 0.78F, 1.0F, 0.92F);
+        pose.popPose();
+    }
+
+    /** Large overviews use solid silhouettes; nearby views retain detailed models. */
+    private void renderOverviewBlock(ClientLevel level, ClientSubLevel root, PreviewBlock block,
+                                     float partialTick, PoseStack pose,
+                                     MultiBufferSource.BufferSource buffers){
+        Vector3f position = rootPosition(level, root, block.subLevelId(), block.position(), partialTick);
+        Quaternionf orientation = rootOrientation(level, root, block.subLevelId(), partialTick);
+        if(usingFallbackScene){
+            SnapshotBlock snapshot = fallbackBlocks.get(new BlockKey(block.subLevelId(), block.position()));
+            if(snapshot != null) orientation = snapshot.orientation();
+        }
+        if(position == null || orientation == null) return;
+        pose.pushPose();
+        pose.translate(position.x, position.y, position.z);
+        pose.translate(0.5F, 0.5F, 0.5F);
+        pose.mulPose(orientation);
+        pose.translate(-0.5F, -0.5F, -0.5F);
+        VertexConsumer vertices = buffers.getBuffer(RenderType.entityTranslucentEmissive(HIGHLIGHT_PLANE_TEXTURE, true));
+        int color = block.state().getMapColor(level, block.position()).col;
+        if(color == 0) color = 0x8B929A;
+        for(Direction face : Direction.values()){
+            PreviewBlock neighbor = blockIndex.get(new BlockKey(block.subLevelId(), block.position().relative(face)));
+            if(neighbor != null && neighbor.state().canOcclude()) continue;
+            float shade = face == Direction.UP ? 1.0F : face == Direction.DOWN ? 0.55F
+                    : face.getAxis() == Direction.Axis.X ? 0.7F : 0.85F;
+            int shaded = ((int) (((color >> 16) & 255) * shade) << 16)
+                    | ((int) (((color >> 8) & 255) * shade) << 8) | (int) ((color & 255) * shade);
+            renderFacePlane(pose, vertices, face, shaded, 1.0F, 0.0F);
+        }
         pose.popPose();
     }
 
@@ -970,8 +1019,10 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         ClientSubLevel source = resolve(level, sourceId);
         if (source == null || source.isRemoved() || position == null) return null;
         Vector3d point = new Vector3d(position.x, position.y, position.z);
-        source.renderPose(partialTick).transformPosition(point);
-        root.renderPose(partialTick).transformPositionInverse(point);
+        if(source != root){
+            source.renderPose(partialTick).transformPosition(point);
+            root.renderPose(partialTick).transformPositionInverse(point);
+        }
         BlockPos rootCenter = root.getPlot().getCenterBlock();
         point.sub(rootCenter.getX(), rootCenter.getY(), rootCenter.getZ());
         return !Double.isFinite(point.x) || !Double.isFinite(point.y) || !Double.isFinite(point.z) ? null
@@ -983,12 +1034,14 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         if (root == null) return null;
         ClientSubLevel source = resolve(level, sourceId);
         if (source == null || source.isRemoved()) return null;
+        if(source == root) return new Quaternionf();
         return new Quaternionf(new Quaterniond(root.renderPose(partialTick).orientation()).conjugate()
                 .mul(source.renderPose(partialTick).orientation()).normalize());
     }
 
     private List<PreviewBlock> visibleBlocks() {
-        return blocks.stream().filter(this::isVisible).toList();
+        if(visibleBlockCache == null) visibleBlockCache = blocks.stream().filter(this::isVisible).toList();
+        return visibleBlockCache;
     }
 
     private boolean isVisible(UUID subLevelId, BlockPos position) {
@@ -1019,8 +1072,7 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
 
     private PreviewBlock previewBlock(UUID subLevelId, BlockPos position) {
         if (subLevelId == null || position == null) return null;
-        return blocks.stream().filter(block -> subLevelId.equals(block.subLevelId()) && position.equals(block.position()))
-                .findFirst().orElse(null);
+        return blockIndex.get(new BlockKey(subLevelId, position));
     }
 
     private float worldUnitsPerPixel() {
