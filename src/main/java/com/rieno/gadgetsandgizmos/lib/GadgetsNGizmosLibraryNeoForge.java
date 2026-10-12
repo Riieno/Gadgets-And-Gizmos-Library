@@ -29,5 +29,6 @@ public final class GadgetsNGizmosLibraryNeoForge {
     public GadgetsNGizmosLibraryNeoForge(IEventBus modEventBus, ModContainer modContainer) {
         GadgetsNGizmosLibraryConfigs.register(modContainer);
         SableSubLevelResidency.bootstrap();
+        com.rieno.gadgetsandgizmos.lib.item.TimedItemTransformations.register();
     }
 }

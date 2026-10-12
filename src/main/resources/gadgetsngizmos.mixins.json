@@ -6,6 +6,12 @@
   "compatibilityLevel": "JAVA_21",
   "refmap": "gadgetsngizmos.refmap.json",
   "mixins": [
+    "TimedItemHandlerMixin",
+    "TimedContainerBlockEntityMixin",
+    "TimedSimpleContainerMixin",
+    "TimedBeltInventoryMixin",
+    "TimedDepotBehaviourMixin",
+    "TimedBasinOutputMixin",
     "AeroworksServoPreciseAngleOutputMixin",
     "HandCrankPreciseAngleOutputMixin",
     "KineticBlockEntityHeldAngleMixin",
