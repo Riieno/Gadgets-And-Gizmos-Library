@@ -28,6 +28,9 @@
   ],
   "client": [
     "DiagramScreenAccessMixin",
+    "ViewSceneFogAccess",
+    "ViewSceneRenderSystemAccess",
+    "ViewSceneShaderAccess",
     "SimulatedPhysicsStaffClientHandlerMixin"
   ],
   "injectors": {
