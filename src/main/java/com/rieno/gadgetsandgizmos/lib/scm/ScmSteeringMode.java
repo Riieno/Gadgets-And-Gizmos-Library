@@ -82,6 +82,27 @@ public enum ScmSteeringMode {
         return SELECTIONS;
     }
 
+    // Hide wheel and differential steering when ground/sea control is disabled
+    public static List<ScmSteeringMode> availableSelections(){
+        return SELECTIONS.stream().filter(ScmSteeringMode::isAvailable).toList();
+    }
+
+    // Rudder and shared control strategies remain available for airships
+    public boolean isAvailable(){
+        return !(usesWheelGeometry() || this == TANK) || ScmBuiltinControlModes.isGroundSeaEnabled();
+    }
+
+    // Resolve live steering without replacing a disabled saved choice
+    public ScmSteeringMode availableOrFallback(ScmSteeringMode fallback){
+        if(isAvailable()) return this;
+        return fallback != null && fallback.isAvailable() ? fallback : CUSTOM;
+    }
+
+    // Check a player selection against the host's current availability
+    public static boolean isAvailableSelection(@Nullable String id){
+        return isSelection(id) && fromId(id).isAvailable();
+    }
+
     // Resolve a serialized steering mode
     public static ScmSteeringMode fromId(@Nullable String id){
         String normalized = id == null ? "" : id.strip().toLowerCase(Locale.ROOT);
@@ -133,8 +154,7 @@ public enum ScmSteeringMode {
         double trailing = finite(trailingPosition);
         double leading = finite(leadingPosition);
         boolean singleAxle = leading - trailing <= SINGLE_AXLE_EPSILON;
-        boolean front = singleAxle ? leading >= 0.0D
-                : position >= (trailing + leading) * 0.5D;
+        boolean front = singleAxle || position >= (trailing + leading) * 0.5D;
         boolean rear = singleAxle || !front;
         return switch (this) {
             case FRONT_WHEEL -> front ? demand : 0.0D;

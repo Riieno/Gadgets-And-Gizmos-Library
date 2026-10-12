@@ -9,6 +9,7 @@ import net.minecraft.world.level.ChunkPos;
 import org.jetbrains.annotations.Nullable;
 
 import java.lang.reflect.Method;
+import java.util.function.LongConsumer;
 
 // Track ready Sodium chunks independently without draining the player's event queue
 public final class ViewChunkCompat{
@@ -57,15 +58,26 @@ public final class ViewChunkCompat{
                 removeChunk.invoke(manager, ChunkPos.getX(pos), ChunkPos.getZ(pos));
                 removed.remove();
             }
-            var added = ready.iterator();
-            while(added.hasNext()){
-                long pos = added.nextLong();
-                if(inRange(pos, x, z, distance) && known.add(pos)){
-                    addChunk.invoke(manager, ChunkPos.getX(pos), ChunkPos.getZ(pos));
+            forEachReadyChunk(ready, x, z, distance, pos -> {
+                if(known.add(pos)){
+                    try{
+                        addChunk.invoke(manager, ChunkPos.getX(pos), ChunkPos.getZ(pos));
+                    }catch(ReflectiveOperationException err){
+                        throw new IllegalStateException("Sodium secondary chunk could not be added", err);
+                    }
                 }
-            }
+            });
         }catch(ReflectiveOperationException err){
             throw new IllegalStateException("Sodium secondary chunks could not be updated", err);
+        }
+    }
+    // Probe only the lens window instead of walking every chunk loaded around the player
+    static void forEachReadyChunk(LongCollection ready, int x, int z, int distance, LongConsumer action){
+        for(int chunkX = x - distance; chunkX <= x + distance; chunkX++){
+            for(int chunkZ = z - distance; chunkZ <= z + distance; chunkZ++){
+                long pos = ChunkPos.asLong(chunkX, chunkZ);
+                if(ready.contains(pos)) action.accept(pos);
+            }
         }
     }
     // Older Sodium releases do not need an explicit pre-update stage

@@ -117,6 +117,29 @@ public final class SplineConstraintFrame{
                 <= radius * radius;
     }
 
+    // Let ground steering acquire the route before a guide starts pulling across its tyres
+    public static boolean canGuide(Vec3 position, Vec3 velocity, Vec3 forward,
+                                   WaypointSpline.Projection projection, AxisPolicy axes,
+                                   double guideRadius, double maximumHeadingAngle,
+                                   double maximumLateralSpeed){
+        if(!canGuide(position, velocity, forward, projection, axes, guideRadius)
+                || !headingAligned(forward, projection.tangent(), policy(axes), maximumHeadingAngle)) return false;
+        Vec3 dir = tangent(projection, axes);
+        Vec3 motion = policy(axes).filter(velocity);
+        Vec3 lateral = motion.subtract(dir.scale(motion.dot(dir)));
+        double speed = Math.max(0.0D, finite(maximumLateralSpeed));
+        return motion.dot(dir) >= -0.05D && lateral.lengthSqr() <= speed * speed;
+    }
+
+    // Advance ordered progress only after physically capturing the end of the current leg
+    public static boolean canAdvance(Vec3 position, WaypointSpline.Projection projection,
+                                     AxisPolicy axes, double captureRadius, double minimumFraction){
+        if(!finite(position) || projection == null || !projection.found()) return false;
+        double radius = Math.max(0.0D, finite(captureRadius));
+        return projection.fraction() >= clamp(minimumFraction, 0.0D, 1.0D)
+                && policy(axes).filter(position.subtract(projection.position())).lengthSqr() <= radius * radius;
+    }
+
     // Find an ordered spline point which overlaps one physical hull
     public static HullCapture captureHull(
             WaypointSpline spline,

@@ -65,6 +65,17 @@ public final class KineticGraphHelper {
         }
     }
 
+    // Follow output connections without crossing a known upstream source
+    public static List<KineticBlockEntity> getDownstreamNeighbours(KineticBlockEntity target){
+        if(target == null || target.isRemoved() || target.getLevel() == null) return List.of();
+        BlockPos source = target.hasSource() ? target.source : null;
+        return getConnectedNeighbours(target).stream()
+                .filter(next -> next != null && !next.isRemoved() && next.getLevel() == target.getLevel())
+                .filter(next -> !next.getBlockPos().equals(source))
+                .filter(next -> !next.hasSource() || target.getBlockPos().equals(next.source))
+                .toList();
+    }
+
     // Add the diagonal positions used by large cogwheel meshing
     public static List<BlockPos> addLargeCogwheelPropagationLocations(BlockPos origin, List<BlockPos> neighbours) {
         BlockPos.betweenClosedStream(new BlockPos(-1, -1, -1), new BlockPos(1, 1, 1))

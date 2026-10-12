@@ -29,6 +29,7 @@ public final class HostedBlockEntities{
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     private static final Map<BlockEntity, Map<BlockPos, BlockEntity>> COMPONENTS = new IdentityHashMap<>();
+    private static final Map<BlockEntity, BlockEntity> HOSTS = new IdentityHashMap<>();
 
     private HostedBlockEntities(){}
 
@@ -61,7 +62,10 @@ public final class HostedBlockEntities{
                 }
             }
         }
-        COMPONENTS.put(host, Map.copyOf(next));
+        Map<BlockPos, BlockEntity> snapshot = Map.copyOf(next);
+        remove(host);
+        COMPONENTS.put(host, snapshot);
+        snapshot.values().forEach(component -> HOSTS.put(component, host));
     }
 
     // Resolve a component only for an integration's native lookup path
@@ -77,14 +81,18 @@ public final class HostedBlockEntities{
 
     // Find the real block which owns one detached component
     public static synchronized @Nullable BlockEntity host(BlockEntity component){
-        for(var entry : COMPONENTS.entrySet()){
-            if(!entry.getKey().isRemoved() && entry.getValue().containsValue(component)) return entry.getKey();
-        }
-        return null;
+        BlockEntity host = HOSTS.get(component);
+        return host == null || host.isRemoved() ? null : host;
     }
 
     // Release all published components during removal, unload or relocation
-    public static synchronized void remove(BlockEntity host){ COMPONENTS.remove(host); }
+    public static synchronized void remove(BlockEntity host){
+        Map<BlockPos, BlockEntity> components = COMPONENTS.remove(host);
+        if(components == null) return;
+        components.values().forEach(component -> {
+            if(HOSTS.get(component) == host) HOSTS.remove(component);
+        });
+    }
 
     // Check whether a detached identity can be published without hiding a real block entity
     public static synchronized boolean positionAvailable(BlockEntity host, BlockPos pos){

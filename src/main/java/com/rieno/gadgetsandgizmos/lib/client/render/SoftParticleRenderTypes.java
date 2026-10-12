@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.util.function.BooleanSupplier;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferBuilder;
@@ -138,7 +137,7 @@ public final class SoftParticleRenderTypes {
     };
 
     // Scene depth snapshot shared by the particle batch
-    private static TextureTarget depthCopy;
+    private static final DepthTextureSnapshot DEPTH = new DepthTextureSnapshot();
     // Shader registered by the library client bootstrap
     private static ShaderInstance shader;
     // Lightweight shader for the particle depth pass
@@ -359,15 +358,9 @@ public final class SoftParticleRenderTypes {
             RenderSystem.setShader(GameRenderer::getParticleShader);
             RenderSystem.setShaderTexture(0, texture);
         } else {
-            if (depthCopy == null) {
-                depthCopy = new TextureTarget(main.width, main.height, true, false);
-            } else if (depthCopy.width != main.width || depthCopy.height != main.height) {
-                depthCopy.resize(main.width, main.height, false);
-            }
-            depthCopy.copyDepthFrom(main);
-            main.bindWrite(false);
+            int depth = DEPTH.capture(0, 0, main.width, main.height);
             RenderSystem.setShaderTexture(0, texture);
-            RenderSystem.setShaderTexture(3, depthCopy.getDepthTextureId());
+            RenderSystem.setShaderTexture(3, depth);
             shader.safeGetUniform("ScreenSize").set((float) main.width, (float) main.height);
             shader.safeGetUniform("HasSceneDepth").set(1);
             shader.safeGetUniform("EmissionStrength").set(emissive ? 0.85F : 0.0F);
@@ -411,6 +404,7 @@ public final class SoftParticleRenderTypes {
 
     // Register the shared particle shader
     public static void onRegisterShaders(RegisterShadersEvent evt) throws IOException {
+        DEPTH.close();
         evt.registerShader(new ShaderInstance(evt.getResourceProvider(), SOFT_BILLBOARD_SHADER_ID,
                 DefaultVertexFormat.PARTICLE), registered -> shader = registered);
         evt.registerShader(new ShaderInstance(evt.getResourceProvider(), PARTICLE_DEPTH_SHADER_ID,

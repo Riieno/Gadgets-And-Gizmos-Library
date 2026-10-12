@@ -16,4 +16,9 @@ public final class ViewRefreshSchedule{
         long interval = 1_000_000_000L / Math.max(1, rate);
         next += (Math.max(0, now - next) / interval + 1) * interval;
     }
+    // Keep each source's cadence while spreading secondary renders across the refresh interval
+    public void captured(long now, long phase){
+        long interval = 1_000_000_000L / Math.max(1, rate);
+        next = now + interval - Math.floorMod(now - phase, interval);
+    }
 }

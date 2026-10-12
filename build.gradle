@@ -39,19 +39,33 @@ repositories {
         name = 'Modrinth'
         url = 'https://api.modrinth.com/maven'
     }
+    maven {
+        name = 'Shedaniel'
+        url = 'https://maven.shedaniel.me/'
+    }
 }
 
 def libsDir = file('libs')
 def requiredSableJar = file("libs/sable-neoforge-${minecraft_version}-${sable_version}.jar")
 def localJars = fileTree(libsDir) {
     include '*.jar'
+    exclude 'aeroclaims-*.jar', 'open-parties-and-claims-*.jar'
     exclude 'sable-neoforge-*.jar'
 }
 def localRuntimeJars = fileTree(libsDir) {
     include '*.jar'
+    exclude 'aeroclaims-*.jar', 'open-parties-and-claims-*.jar'
     exclude 'veil-neoforge-*.jar'
     exclude 'sable-neoforge-*.jar'
 }
+def containerGameTests = providers.gradleProperty('containerGameTests').map { it.toBoolean() }.getOrElse(false)
+if(containerGameTests){
+    localRuntimeJars = localRuntimeJars.filter { jar ->
+        jar.name.startsWith('create-') || jar.name.startsWith('ponder-')
+                || jar.name.startsWith('dev.simulated_team.simulated.simulated-')
+    }
+}
+
 def replaceProperties = [
     mod_group_id: mod_group_id,
     mod_id: mod_id,
@@ -66,6 +80,13 @@ def replaceProperties = [
     sable_version: sable_version
 ]
 
+sourceSets {
+    containerGameTest {
+        compileClasspath += sourceSets.main.output + configurations.compileClasspath
+        runtimeClasspath += sourceSets.main.output + configurations.runtimeClasspath
+    }
+}
+
 neoForge {
     version = neoforge_version
 
@@ -77,10 +98,17 @@ neoForge {
     mods {
         "${mod_id}" {
             sourceSet(sourceSets.main)
+            if(containerGameTests) sourceSet(sourceSets.containerGameTest)
         }
     }
 
     runs {
+        containerGameTest {
+            type = 'gameTestServer'
+            sourceSet = sourceSets.containerGameTest
+            gameDirectory = file('build/container-gametest')
+            systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
+        }
         configureEach {
             systemProperty 'forge.logging.console.level', 'debug'
             systemProperty 'mixin.env.remapRefMap', 'true'
@@ -158,43 +186,18 @@ def validateMixinConfig = tasks.register('validateMixinConfig') {
 }
 
 dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
     compileOnly localJars
+    compileOnly 'mezz.jei:jei-1.21.1-neoforge-api:19.27.0.340'
+    compileOnly 'dev.emi:emi-neoforge:1.1.22+1.21.1'
+    compileOnly 'me.shedaniel:RoughlyEnoughItems-api-neoforge:16.0.799'
     compileOnly files(requiredSableJar)
     compileOnly "dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}"
     runtimeOnly localRuntimeJars
     runtimeOnly files(requiredSableJar)
     runtimeOnly "dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}"
-}
-
-dependencies {
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
-    testImplementation 'org.mockito:mockito-core:5.14.2'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-    testRuntimeOnly files(localJars.files.findAll { it.name.startsWith('create-') }.collect { jar ->
-        zipTree(jar).matching {
-            include 'META-INF/jarjar/Registrate-*.jar'
-            include 'META-INF/jarjar/ponder-*.jar'
-        }
-    })
-    testRuntimeOnly files(zipTree(requiredSableJar).matching {
-        include 'META-INF/jarjar/*sable-sable_rapier-*.jar'
-    })
-}
-
-sourceSets.test {
-    compileClasspath += configurations.compileClasspath
-    runtimeClasspath += configurations.compileClasspath
-}
-
-tasks.named('test') {
-    useJUnitPlatform()
-    // Keep native physics binaries and test logs separate from local game sessions.
-    workingDir = layout.buildDirectory.dir('test-runtime').get().asFile
-    doFirst { workingDir.mkdirs() }
-    // Vanilla bootstrap reads translations from the generated Minecraft resources.
-    classpath += fileTree(layout.buildDirectory.dir('moddev/artifacts')) {
-        include '*minecraft-resources.jar'
-    }
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -219,3 +222,11 @@ processResources {
         expand replaceProperties
     }
 }
+
+// Run schedule and ship-control regressions against the same local dependencies
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+sourceSets.test.compileClasspath += sourceSets.main.compileClasspath
+sourceSets.test.runtimeClasspath += sourceSets.main.runtimeClasspath

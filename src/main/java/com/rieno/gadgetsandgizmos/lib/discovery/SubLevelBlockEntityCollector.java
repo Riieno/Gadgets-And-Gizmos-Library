@@ -34,6 +34,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 // Read loaded block entities from Sable plots without forcing their chunks to load
 public final class SubLevelBlockEntityCollector {
@@ -330,6 +331,53 @@ public final class SubLevelBlockEntityCollector {
         }
 
         return new ArrayList<>(blockEntities.values());
+    }
+
+    // Read only the requested block entity type without collecting unrelated plot contents
+    public static <T extends BlockEntity> List<T> getBlockEntities(@Nullable Object subLevel, Class<T> type){
+        return collectMatchingBlockEntities(subLevel, type, val -> true);
+    }
+
+    // Filter loaded entities before allocating the position map while retaining actor precedence
+    public static List<BlockEntity> getBlockEntities(@Nullable Object subLevel, Predicate<BlockEntity> filter){
+        return collectMatchingBlockEntities(subLevel, BlockEntity.class, filter);
+    }
+
+    private static <T extends BlockEntity> List<T> collectMatchingBlockEntities(
+            @Nullable Object subLevel, Class<T> type, Predicate<T> filter){
+        if(type == null || filter == null || !(subLevel instanceof SubLevel body)
+                || !isUsableSubLevel(body, null)) return List.of();
+        Map<BlockPos, T> matches = new LinkedHashMap<>();
+        try{
+            LevelPlot plot = body.getPlot();
+            for(Object actor : plot.getBlockEntityActors()){
+                if(!type.isInstance(actor)) continue;
+                T blockEntity = type.cast(actor);
+                if(filter.test(blockEntity)) matches.putIfAbsent(blockEntity.getBlockPos().immutable(), blockEntity);
+            }
+            for(PlotChunkHolder holder : plot.getLoadedChunks()){
+                LevelChunk chunk = holder.getChunk();
+                if(chunk == null) continue;
+                for(BlockEntity blockEntity : chunk.getBlockEntities().values()){
+                    if(!type.isInstance(blockEntity)) continue;
+                    BlockPos pos = blockEntity.getBlockPos();
+                    if(matches.containsKey(pos) || hasActorBlockEntity(plot, pos)) continue;
+                    T match = type.cast(blockEntity);
+                    if(filter.test(match)) matches.put(pos.immutable(), match);
+                }
+            }
+        }catch(RuntimeException | LinkageError ignored){
+        }
+        return new ArrayList<>(matches.values());
+    }
+
+    // An actor keeps its position even when it does not match the requested filter
+    private static boolean hasActorBlockEntity(LevelPlot plot, BlockPos pos){
+        if(plot instanceof SubLevelActorLookup lookup) return lookup.gadgetsngizmos$actorBlockEntity(pos) != null;
+        for(Object actor : plot.getBlockEntityActors()){
+            if(actor instanceof BlockEntity blockEntity && pos.equals(blockEntity.getBlockPos())) return true;
+        }
+        return false;
     }
 
     // Find one typed block entity across levels that are already loaded

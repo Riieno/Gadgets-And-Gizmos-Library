@@ -80,6 +80,43 @@ public final class GraphNodePresentationRegistry{
         if(!options.isEmpty()) data.put("InputOptions", options);
     }
 
+    // Add new presentation fields to saved nodes without replacing their configured values
+    public static synchronized void synchronize(String type, CompoundTag data){
+        if(!ENTRIES.containsKey(type)) return;
+        CompoundTag fresh = new CompoundTag();
+        initialize(type, fresh);
+        CompoundTag defaults = data.getCompound("Defaults");
+        CompoundTag added = fresh.getCompound("Defaults");
+        added.getAllKeys().forEach(port -> { if(!defaults.contains(port)) defaults.put(port, added.get(port).copy()); });
+        data.put("Defaults", defaults);
+        CompoundTag options = data.getCompound("InputOptions");
+        CompoundTag choices = fresh.getCompound("InputOptions");
+        choices.getAllKeys().forEach(port -> options.put(port, choices.get(port).copy()));
+        data.put("InputOptions", options);
+        CompoundTag sides = data.getCompound("PortSections");
+        CompoundTag sections = sides.getCompound("Inputs");
+        CompoundTag next = fresh.getCompound("PortSections").getCompound("Inputs");
+        for(String id : next.getAllKeys()){
+            CompoundTag section = sections.getCompound(id);
+            if(!section.contains("Label")) section.putString("Label", next.getCompound(id).getString("Label"));
+            ListTag ports = section.getList("Ports", 8);
+            for(var port : next.getCompound(id).getList("Ports", 8)) if(!ports.contains(port)) ports.add(port.copy());
+            section.put("Ports", ports);
+            sections.put(id, section);
+        }
+        sides.put("Inputs", sections);
+        data.put("PortSections", sides);
+        ListTag order = data.getList("InputOrder", 8);
+        for(var port : fresh.getList("InputOrder", 8)) if(!order.contains(port)) order.add(port.copy());
+        data.put("InputOrder", order);
+    }
+
+    // Resolve registered selectors even when a saved node predates their metadata
+    public static synchronized List<String> inputOptions(String type, String port){
+        Presentation presentation = ENTRIES.get(type);
+        return presentation == null ? List.of() : presentation.options().getOrDefault(port, List.of());
+    }
+
     // Remove retired input metadata without changing remaining settings or section state
     public static void removeInputs(CompoundTag data, Set<String> ports){
         for(String key : List.of("Defaults", "DynamicInputs", "InputOptions")){

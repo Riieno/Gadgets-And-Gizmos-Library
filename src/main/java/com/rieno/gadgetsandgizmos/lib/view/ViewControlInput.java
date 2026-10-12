@@ -3,11 +3,20 @@ package com.rieno.gadgetsandgizmos.lib.view;
 import net.minecraft.nbt.CompoundTag;
 
 // Carry relative motion and optional absolute settings from one control surface
-public record ViewControlInput(double pan, double tilt, double fov, String mode, int flashlight){
+public record ViewControlInput(double pan, double tilt, double fov, String mode, int flashlight, int autoTracking, int lockTarget){
+    // Preserve unspecified tracking when older control surfaces send a command
+    public ViewControlInput(double pan, double tilt, double fov, String mode, int flashlight){
+        this(pan, tilt, fov, mode, flashlight, -1);
+    }
+    // Keep the current target-lock setting when an older command changes tracking
+    public ViewControlInput(double pan, double tilt, double fov, String mode, int flashlight, int autoTracking){
+        this(pan, tilt, fov, mode, flashlight, autoTracking, -1);
+    }
     // Reject invalid numbers and unknown settings before any source is changed
     public boolean valid(){
         if(mode == null || !Double.isFinite(pan) || !Double.isFinite(tilt) || !Double.isFinite(fov)
-                || Math.abs(pan) > 3 || Math.abs(tilt) > 3 || flashlight < -1 || flashlight > 1) return false;
+                || Math.abs(pan) > 3 || Math.abs(tilt) > 3 || flashlight < -1 || flashlight > 1
+                || autoTracking < -1 || autoTracking > 1 || lockTarget < -1 || lockTarget > 1) return false;
         if(fov != -1 && (fov < 5 || fov > 120)) return false;
         try{ if(!mode.isEmpty()) ViewRig.Mode.valueOf(mode); }
         catch(IllegalArgumentException err){ return false; }
@@ -16,7 +25,9 @@ public record ViewControlInput(double pan, double tilt, double fov, String mode,
     // Retain unspecified settings from the source's current state
     public ViewControlState settings(ViewControlState prev){
         return new ViewControlState(mode.isEmpty() ? prev.mode() : ViewRig.Mode.valueOf(mode),
-                fov == -1 ? prev.fov() : fov, flashlight == -1 ? prev.flashlight() : flashlight == 1);
+                fov == -1 ? prev.fov() : fov, flashlight == -1 ? prev.flashlight() : flashlight == 1,
+                autoTracking == -1 ? prev.autoTracking() : autoTracking == 1,
+                lockTarget == -1 ? prev.lockTarget() : lockTarget == 1);
     }
     // Encode the same control command for tablet actions and display packets
     public CompoundTag toTag(){
@@ -26,12 +37,16 @@ public record ViewControlInput(double pan, double tilt, double fov, String mode,
         tag.putDouble("Fov", fov);
         tag.putString("Mode", mode);
         tag.putInt("Flashlight", flashlight);
+        tag.putInt("AutoTracking", autoTracking);
+        tag.putInt("LockTarget", lockTarget);
         return tag;
     }
     // Read optional settings without interpreting an absent field as a request
     public static ViewControlInput fromTag(CompoundTag tag){
         return new ViewControlInput(tag.getDouble("Pan"), tag.getDouble("Tilt"),
                 tag.contains("Fov") ? tag.getDouble("Fov") : -1, tag.getString("Mode"),
-                tag.contains("Flashlight") ? tag.getInt("Flashlight") : -1);
+                tag.contains("Flashlight") ? tag.getInt("Flashlight") : -1,
+                tag.contains("AutoTracking") ? tag.getInt("AutoTracking") : -1,
+                tag.contains("LockTarget") ? tag.getInt("LockTarget") : -1);
     }
 }

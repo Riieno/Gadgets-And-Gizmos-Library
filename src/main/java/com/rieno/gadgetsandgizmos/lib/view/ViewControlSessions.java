@@ -37,7 +37,8 @@ public final class ViewControlSessions{
         src.applyViewSettings(state);
         boolean motion = input.pan() != 0 || input.tilt() != 0;
         if(motion && state.mode() != ViewRig.Mode.MANUAL){
-            src.applyViewSettings(new ViewControlState(ViewRig.Mode.MANUAL, state.fov(), state.flashlight()));
+            src.applyViewSettings(new ViewControlState(ViewRig.Mode.MANUAL, state.fov(), state.flashlight(),
+                    state.autoTracking(), state.lockTarget()));
         }
         if(prev == null){
             prev = new Lease(player, src);

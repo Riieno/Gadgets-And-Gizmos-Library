@@ -102,6 +102,12 @@ public final class KineticAngleHelper {
         return normalizeDegrees(target.getLevel().getGameTime() * target.getSpeed() * 3.0f / 10.0f + offset);
     }
 
+    // Advance a physical shaft angle without Create's model alignment offsets
+    public static double advanceRotationAngleDegrees(double angleDegrees, float rpm, long elapsedTicks) {
+        if (elapsedTicks <= 0L) return normalizeDegrees(angleDegrees);
+        return normalizeDegrees(angleDegrees + rpm * 0.3D * elapsedTicks);
+    }
+
     // Get the rotation offset for pos
     private static float getRotationOffsetForPos(KineticBlockEntity target, BlockState state, Direction.Axis axis) {
         return getRotationOffset(state, axis, target.getBlockPos()) + target.getRotationAngleOffset(axis);

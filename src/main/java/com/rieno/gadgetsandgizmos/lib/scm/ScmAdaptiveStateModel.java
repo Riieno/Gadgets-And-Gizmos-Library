@@ -22,10 +22,15 @@ public final class ScmAdaptiveStateModel{
     private final double[] trim;
     private final double[][] columns;
     private final double[] limits;
+    private final double[] lowerLimits;
     private final double[] magnitudes;
     private final int[] activeColumns;
     private final double[] controls;
     private final double[] achieved = new double[AXES];
+    private final double[] target = new double[AXES];
+    private final double[] minimum = new double[AXES];
+    private final double[] maximum = new double[AXES];
+    private final boolean available;
     private final Map<AxisKey, double[]> authority = new LinkedHashMap<>(MAX_CACHED_AXES, 0.75F, true);
     private final double tickSeconds;
     private final double linearTolerance;
@@ -53,29 +58,47 @@ public final class ScmAdaptiveStateModel{
             inputMatrix[10][idx] = angular.y;
             inputMatrix[11][idx] = angular.z;
         }
-        columns = new double[trim.length * 2][AXES];
+        // Raising and lowering one throttle use opposite signs of the same acceleration column
+        columns = new double[trim.length][AXES];
         limits = new double[columns.length];
+        lowerLimits = new double[columns.length];
         magnitudes = new double[columns.length];
         controls = new double[columns.length];
         int[] active = new int[columns.length];
         int count = 0;
         for(int idx = 0; idx < trim.length; idx++){
-            limits[idx * 2] = 1.0D - trim[idx];
-            limits[idx * 2 + 1] = trim[idx];
+            double upper = 1.0D - trim[idx];
+            limits[idx] = upper > EPSILON ? upper : 0.0D;
+            lowerLimits[idx] = trim[idx] > EPSILON ? -trim[idx] : 0.0D;
             for(int row = 0; row < AXES; row++){
                 double effect = inputMatrix[row + AXES][idx]
                         * (row < 3 ? 1.0D : this.characteristicLength);
-                columns[idx * 2][row] = effect;
-                columns[idx * 2 + 1][row] = -effect;
+                columns[idx][row] = effect;
             }
         }
         for(int idx = 0; idx < columns.length; idx++){
             for(int row = 0; row < AXES; row++){
                 magnitudes[idx] += columns[idx][row] * columns[idx][row];
             }
-            if(limits[idx] > EPSILON && magnitudes[idx] > 1.0E-24D) active[count++] = idx;
+            if((limits[idx] > 0.0D || lowerLimits[idx] < 0.0D)
+                    && magnitudes[idx] > 1.0E-24D) active[count++] = idx;
         }
         activeColumns = Arrays.copyOf(active, count);
+        boolean hasInput = false;
+        for(int idx = 0; idx < trim.length; idx++){
+            for(int row = 6; row < STATES; row++){
+                if(Math.abs(inputMatrix[row][idx]) > EPSILON) hasInput = true;
+            }
+        }
+        available = hasInput;
+        for(int idx : activeColumns){
+            for(int row = 0; row < AXES; row++){
+                double lower = columns[idx][row] * lowerLimits[idx];
+                double upper = columns[idx][row] * limits[idx];
+                minimum[row] += Math.min(lower, upper);
+                maximum[row] += Math.max(lower, upper);
+            }
+        }
     }
 
     // Describe one live actuator around the current holding throttle
@@ -141,12 +164,7 @@ public final class ScmAdaptiveStateModel{
 
     // Check if this ship has at least one live acceleration input
     public boolean available(){
-        for(int idx = 0; idx < inputMatrix[6].length; idx++){
-            for(int axis = 6; axis < STATES; axis++){
-                if(Math.abs(inputMatrix[axis][idx]) > EPSILON) return true;
-            }
-        }
-        return false;
+        return available;
     }
 
     // Return the linearized state matrix for position, attitude and their rates
@@ -183,8 +201,7 @@ public final class ScmAdaptiveStateModel{
 
     // Find thrust headroom that accelerates the requested axis without unwanted motion
     private double feasibleAuthority(Vec3 axis, boolean angular, boolean positive){
-        int count = trim.length * 2;
-        if(count == 0) return 0.0D;
+        if(trim.length == 0) return 0.0D;
         double sign = positive ? 1.0D : -1.0D;
         double upper = 0.0D;
         for(int idx = 0; idx < trim.length; idx++){
@@ -192,8 +209,8 @@ public final class ScmAdaptiveStateModel{
             double projection = axis.x * inputMatrix[offset][idx]
                     + axis.y * inputMatrix[offset + 1][idx]
                     + axis.z * inputMatrix[offset + 2][idx];
-            upper += Math.max(0.0D, projection * sign) * limits[idx * 2]
-                    + Math.max(0.0D, -projection * sign) * limits[idx * 2 + 1];
+            upper += Math.max(0.0D, projection * sign) * (1.0D - trim[idx])
+                    + Math.max(0.0D, -projection * sign) * trim[idx];
         }
         if(upper <= EPSILON) return 0.0D;
         double lower = 0.0D;
@@ -207,44 +224,95 @@ public final class ScmAdaptiveStateModel{
         return lower;
     }
 
-    // Solve bounded actuator changes against all six acceleration axes
+    // Solve one signed throttle change per actuator against all six acceleration axes
     private boolean canProduce(Vec3 axis, boolean angular, double amount){
-        double[] target = new double[AXES];
+        Arrays.fill(target, 0.0D);
         int offset = angular ? 3 : 0;
         double scale = angular ? characteristicLength : 1.0D;
         target[offset] = axis.x * amount * scale;
         target[offset + 1] = axis.y * amount * scale;
         target[offset + 2] = axis.z * amount * scale;
+        double squaredTarget = 0.0D;
+        for(double val : target) squaredTarget += val * val;
+        if(squaredTarget <= 0.0D) return false;
+        double tolerance = squaredTarget * 0.01D;
+        // Reject only targets whose component bounds already prove excessive residual
+        double boundedError = 0.0D;
+        for(int row = 0; row < AXES; row++){
+            double error = target[row] < minimum[row] ? minimum[row] - target[row]
+                    : Math.max(0.0D, target[row] - maximum[row]);
+            boundedError += error * error;
+        }
+        if(boundedError > tolerance + Math.max(boundedError, tolerance) * 1.0E-10D) return false;
         Arrays.fill(controls, 0.0D);
         Arrays.fill(achieved, 0.0D);
+        double x = 0.0D, y = 0.0D, z = 0.0D;
+        double rx = 0.0D, ry = 0.0D, rz = 0.0D;
         for(int iteration = 0; iteration < 96; iteration++){
             double largestChange = 0.0D;
             for(int idx : activeColumns){
                 double[] column = columns[idx];
                 double gradient = 0.0D;
-                for(int row = 0; row < AXES; row++){
-                    gradient += column[row] * (achieved[row] - target[row]);
-                }
+                gradient += column[0] * (x - target[0]);
+                gradient += column[1] * (y - target[1]);
+                gradient += column[2] * (z - target[2]);
+                gradient += column[3] * (rx - target[3]);
+                gradient += column[4] * (ry - target[4]);
+                gradient += column[5] * (rz - target[5]);
                 double next = clamp(controls[idx] - gradient / magnitudes[idx],
-                        0.0D, limits[idx]);
+                        lowerLimits[idx], limits[idx]);
                 double change = next - controls[idx];
                 if(change == 0.0D) continue;
                 controls[idx] = next;
                 largestChange = Math.max(largestChange, Math.abs(change));
-                for(int row = 0; row < AXES; row++){
-                    achieved[row] += column[row] * change;
-                }
+                x += column[0] * change;
+                y += column[1] * change;
+                z += column[2] * change;
+                rx += column[3] * change;
+                ry += column[4] * change;
+                rz += column[5] * change;
             }
+            achieved[0] = x;
+            achieved[1] = y;
+            achieved[2] = z;
+            achieved[3] = rx;
+            achieved[4] = ry;
+            achieved[5] = rz;
+            double squaredError = 0.0D;
+            for(int row = 0; row < AXES; row++){
+                double error = achieved[row] - target[row];
+                squaredError += error * error;
+            }
+            // Coordinate updates only reduce error, so an accepted wrench needs no further refinement
+            if(squaredError <= tolerance) return true;
+            if((iteration & 3) == 0 && infeasible(target, squaredError, tolerance)) return false;
             if(largestChange <= EPSILON) break;
         }
         double squaredError = 0.0D;
-        double squaredTarget = 0.0D;
         for(int row = 0; row < AXES; row++){
             squaredError += Math.pow(achieved[row] - target[row], 2.0D);
-            squaredTarget += target[row] * target[row];
         }
-        return squaredTarget > 0.0D
-                && squaredError <= squaredTarget * 0.01D;
+        return squaredError <= tolerance;
+    }
+
+    // Bound the best possible residual before spending more iterations on an impossible wrench
+    private boolean infeasible(double[] target, double squaredError, double tolerance){
+        double lower = squaredError;
+        double x = achieved[0] - target[0], y = achieved[1] - target[1], z = achieved[2] - target[2];
+        double rx = achieved[3] - target[3], ry = achieved[4] - target[4], rz = achieved[5] - target[5];
+        for(int idx : activeColumns){
+            double[] column = columns[idx];
+            double gradient = 0.0D;
+            gradient += column[0] * x;
+            gradient += column[1] * y;
+            gradient += column[2] * z;
+            gradient += column[3] * rx;
+            gradient += column[4] * ry;
+            gradient += column[5] * rz;
+            lower += 2.0D * gradient * (gradient > 0.0D
+                    ? lowerLimits[idx] - controls[idx] : limits[idx] - controls[idx]);
+        }
+        return lower > tolerance + Math.max(squaredError, tolerance) * 1.0E-10D;
     }
 
     // Place repeated stable poles from the ship's available acceleration and error

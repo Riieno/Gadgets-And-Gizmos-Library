@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.scm;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.access.ProtectionBypass;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -46,6 +47,7 @@ public final class ShipPermissionManager extends SavedData {
 
     private final Map<UUID, Claim> claims = new LinkedHashMap<>();
     private final Map<UUID, UUID> roots = new LinkedHashMap<>();
+    private MinecraftServer server;
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -55,13 +57,22 @@ public final class ShipPermissionManager extends SavedData {
 
     ------------------------------------------------------------##-----------------------------------------------------*/
 
+    // Resolve the saved claims with the current server's permission policy
     public static ShipPermissionManager get(MinecraftServer server){
-        return server.overworld().getDataStorage().computeIfAbsent(FACTORY, "gadgetsngizmos_ship_permissions");
+        ShipPermissionManager manager = server.overworld().getDataStorage()
+                .computeIfAbsent(FACTORY, "gadgetsngizmos_ship_permissions");
+        manager.server = server;
+        return manager;
+    }
+
+    // Enable ship permissions on servers and worlds opened to LAN
+    public static boolean isEnabled(@Nullable MinecraftServer server){
+        return server != null && (!server.isSingleplayer() || server.isPublished());
     }
 
     // Claim one ship for its placer without replacing an existing owner
     public boolean claim(UUID shipId, UUID ownerId){
-        if(shipId == null || ownerId == null) return false;
+        if(!isEnabled(server) || shipId == null || ownerId == null) return false;
         Claim existing = claims.get(shipId);
         if(existing != null) return existing.ownerId.equals(ownerId);
         claims.put(shipId, new Claim(ownerId));
@@ -115,22 +126,67 @@ public final class ShipPermissionManager extends SavedData {
         return ownerId != null && ownerId.equals(playerId);
     }
 
-    // An unclaimed ship retains ordinary game and claim-mod behavior
-    public boolean allows(@Nullable UUID subLevelId, UUID playerId, ShipPermission permission){
-        if(subLevelId == null) return true;
+    // Permit administrative edits without changing the saved ship owner
+    public boolean canManage(UUID subLevelId, UUID playerId){
+        return isEnabled(server) && isClaimed(subLevelId) && (isOwner(subLevelId, playerId)
+                || ProtectionBypass.isEnabled(server, playerId));
+    }
+
+    // Read the saved access mode, defaulting ownerless ships to open
+    public boolean isOpen(@Nullable UUID subLevelId){
         Claim claim = claims.get(root(subLevelId));
-        if(claim == null) return true;
+        return claim == null || claim.open;
+    }
+
+    // Closing an ownerless ship assigns ownership to the player closing it
+    public boolean setOpen(UUID subLevelId, UUID actorId, boolean open){
+        if(!isEnabled(server) || subLevelId == null || actorId == null) return false;
+        UUID shipId = root(subLevelId);
+        Claim claim = claims.get(shipId);
+        if(claim == null){
+            if(open) return true;
+            if(!claim(shipId, actorId)) return false;
+            claim = claims.get(shipId);
+        }else if(!canManage(subLevelId, actorId)) return false;
+        if(claim.open != open){
+            claim.open = open;
+            setDirty();
+        }
+        return true;
+    }
+
+    // Keep the former owner's access while transferring management to another player
+    public boolean transferOwnership(UUID subLevelId, UUID actorId, UUID ownerId, String prevOwnerName){
+        Claim claim = claims.get(root(subLevelId));
+        if(claim == null || !canManage(subLevelId, actorId) || ownerId == null
+                || ownerId.equals(claim.ownerId)) return false;
+        Member prev = new Member();
+        prev.name = prevOwnerName == null ? "" : prevOwnerName.strip();
+        prev.permissions.addAll(EnumSet.allOf(ShipPermission.class));
+        claim.members.put(claim.ownerId, prev);
+        claim.members.remove(ownerId);
+        claim.ownerId = ownerId;
+        setDirty();
+        return true;
+    }
+
+    // Ignore the permission list while open or in private single player
+    public boolean allows(@Nullable UUID subLevelId, UUID playerId, ShipPermission permission){
+        if(!isEnabled(server) || subLevelId == null) return true;
+        Claim claim = claims.get(root(subLevelId));
+        if(claim == null || claim.open) return true;
         if(playerId == null || permission == null) return false;
+        if(ProtectionBypass.isEnabled(server, playerId)) return true;
         if(claim.ownerId.equals(playerId)) return true;
         Member member = claim.members.get(playerId);
         return member != null && member.permissions.contains(permission);
     }
 
-    // Only the immutable owner may update another player's rights
+    // Owners and operators bypassing protection may update another player's rights
     public boolean set(UUID subLevelId, UUID actorId, UUID playerId, String name,
                        ShipPermission permission, boolean enabled){
         Claim claim = claims.get(root(subLevelId));
-        if(claim == null || actorId == null || !actorId.equals(claim.ownerId)
+        if(claim == null || actorId == null || !canManage(subLevelId, actorId)
                 || playerId == null || playerId.equals(claim.ownerId) || permission == null) return false;
         Member member = claim.members.computeIfAbsent(playerId, ignored -> new Member());
         member.name = name == null ? "" : name.strip();
@@ -156,6 +212,7 @@ public final class ShipPermissionManager extends SavedData {
 
     ------------------------------------------------------------##-----------------------------------------------------*/
 
+    // Save ownership, access modes, members and connected bodies
     @Override
     public CompoundTag save(CompoundTag tag, HolderLookup.Provider provider){
         ListTag rows = new ListTag();
@@ -163,6 +220,7 @@ public final class ShipPermissionManager extends SavedData {
             CompoundTag row = new CompoundTag();
             row.putUUID("Ship", shipId);
             row.putUUID("Owner", claim.ownerId);
+            row.putBoolean("Open", claim.open);
             ListTag members = new ListTag();
             claim.members.forEach((playerId, member) -> {
                 CompoundTag entry = new CompoundTag();
@@ -192,6 +250,7 @@ public final class ShipPermissionManager extends SavedData {
         return tag;
     }
 
+    // Restore saved claims and default legacy access modes to open
     private static ShipPermissionManager load(CompoundTag tag, HolderLookup.Provider provider){
         ShipPermissionManager manager = new ShipPermissionManager();
         ListTag rows = tag.getList("Claims", Tag.TAG_COMPOUND);
@@ -200,6 +259,8 @@ public final class ShipPermissionManager extends SavedData {
             if(!row.hasUUID("Ship") || !row.hasUUID("Owner")) continue;
             UUID shipId = row.getUUID("Ship");
             Claim claim = new Claim(row.getUUID("Owner"));
+            // Older claims become open until an owner closes them through the GUI
+            claim.open = !row.contains("Open", Tag.TAG_BYTE) || row.getBoolean("Open");
             ListTag members = row.getList("Members", Tag.TAG_COMPOUND);
             for(int memberIdx = 0; memberIdx < members.size() && memberIdx < 4096; memberIdx++){
                 CompoundTag entry = members.getCompound(memberIdx);
@@ -229,7 +290,9 @@ public final class ShipPermissionManager extends SavedData {
     public record MemberView(UUID playerId, String name, Set<ShipPermission> permissions){}
 
     private static final class Claim {
-        private final UUID ownerId;
+        // Current owner and saved access mode
+        private UUID ownerId;
+        private boolean open = true;
         private final Map<UUID, Member> members = new LinkedHashMap<>();
         private Claim(UUID ownerId){ this.ownerId = ownerId; }
     }

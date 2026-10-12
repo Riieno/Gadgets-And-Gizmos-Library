@@ -1,5 +1,13 @@
 package com.rieno.gadgetsandgizmos.lib.scm;
 
+/*--------------------------------------------------------##---------------------------------------------------------
+
+=======================================================================================================================
+                                                        IMPORTS
+=======================================================================================================================
+
+------------------------------------------------------------##-----------------------------------------------------*/
+
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 
@@ -7,12 +15,20 @@ import java.util.List;
 
 // Allocate independent positive speed-control effort from mapped force and torque responses
 public final class ScmSpeedGroupAllocator{
+    // Prevent construction
     private ScmSpeedGroupAllocator(){}
 
     public record Influence(Vec3 force, Vec3 torque){
+        // Retain a finite full-output wrench
         public Influence{
             force = finite(force);
             torque = finite(torque);
+        }
+
+        // Resolve a force's moment about the current centre of mass
+        public static Influence at(Vec3 force, Vec3 pos, Vec3 center){
+            Vec3 response = finite(force);
+            return new Influence(response, finite(pos).subtract(finite(center)).cross(response));
         }
     }
 
@@ -21,6 +37,26 @@ public final class ScmSpeedGroupAllocator{
             control = Mth.clamp(finite(control), 0.0D, 1.0D);
             effect = Math.max(0.0D, finite(effect));
         }
+    }
+
+    /*--------------------------------------------------------##---------------------------------------------------------
+
+    =======================================================================================================================
+                                                            FUNCTIONS
+    =======================================================================================================================
+
+    ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Allocate a live mass-scaled wrench without sharing one setpoint across drive branches
+    public static double[] allocatePhysical(List<Influence> influences, Vec3 force, Vec3 torque, double maximumPower){
+        double maximum = Mth.clamp(finite(maximumPower), 0.0D, 1.0D);
+        if(maximum <= 0.0D) return new double[influences.size()];
+        List<ScmPrecisionAllocator.Unit> units = influences.stream().map(influence ->
+                new ScmPrecisionAllocator.Unit(influence.force().scale(maximum),
+                        influence.torque().scale(maximum), false)).toList();
+        double[] controls = ScmPrecisionAllocator.allocate(units, finite(force), finite(torque), null).controls();
+        for(int idx = 0; idx < controls.length; idx++) controls[idx] *= maximum;
+        return controls;
     }
 
     // Normalize support force using only the outputs that these speed controls actually drive

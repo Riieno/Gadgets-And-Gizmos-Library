@@ -143,8 +143,8 @@ public final class ScmSubLevelRelationRegistry {
     private static void collectLoaded(SubLevel body, Set<UUID> bodyIds,
             List<ScopedBlockEntity> scoped, List<Entry> providers){
         if(!bodyIds.add(body.getUniqueId())) return;
-        for(BlockEntity blockEntity : SubLevelBlockEntityCollector.getBlockEntities(body)){
-            if(!matchesProvider(blockEntity, providers)) continue;
+        for(BlockEntity blockEntity : SubLevelBlockEntityCollector.getBlockEntities(
+                body, val -> matchesProvider(val, providers))){
             scoped.add(new ScopedBlockEntity(body.getUniqueId(), blockEntity));
         }
     }

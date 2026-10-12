@@ -9,8 +9,7 @@ package com.rieno.gadgetsandgizmos.lib.mixin;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.mojang.logging.LogUtils;
-import net.neoforged.fml.ModList;
-import net.neoforged.fml.loading.LoadingModList;
+import com.rieno.gadgetsandgizmos.lib.compat.MixinCompatibility;
 import org.objectweb.asm.tree.ClassNode;
 import org.slf4j.Logger;
 import org.spongepowered.asm.mixin.extensibility.IMixinConfigPlugin;
@@ -66,9 +65,16 @@ public final class GadgetsNGizmosLibraryMixinConfigPlugin implements IMixinConfi
     // Check if this should apply mixin
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if("com.rieno.gadgetsandgizmos.lib.mixin.ViewSceneEntityCullingMixin".equals(mixinClassName)){
+            return MixinCompatibility.isModLoaded("entityculling");
+        }
+        if(targetClassName.startsWith("net.caffeinemc.mods.sodium.")) return MixinCompatibility.canApply(targetClassName, "sodium");
+        if(targetClassName.startsWith("net.irisshaders.iris.")) return MixinCompatibility.canApply(targetClassName, "iris");
+        if(targetClassName.startsWith("me.cortex.voxy.")) return MixinCompatibility.canApply(targetClassName, "voxy");
+        if(targetClassName.startsWith("com.seibel.distanthorizons.")) return MixinCompatibility.canApply(targetClassName, "distanthorizons");
         // -----------------------------------------------------OPTIONAL COMPAT---------------------------------------------------
         if ("com.rieno.gadgetsandgizmos.lib.mixin.AeroworksServoPreciseAngleOutputMixin".equals(mixinClassName)) {
-            boolean loaded = isModLoadedDuringMixinSelection("aeroworks");
+            boolean loaded = MixinCompatibility.canApply(targetClassName, "aeroworks");
             if (loaded && LOGGED_AEROWORKS_COMPAT.compareAndSet(false, true)) {
                 LOGGER.info("[GadgetsNGizmos][Compat] Enabled Aeroworks precise-angle compatibility");
             }
@@ -109,16 +115,6 @@ public final class GadgetsNGizmosLibraryMixinConfigPlugin implements IMixinConfi
         }
 
         return true;
-    }
-
-    // Check if the mod is loaded during mixin selection
-    private static boolean isModLoadedDuringMixinSelection(String modId) {
-        LoadingModList loadingModList = LoadingModList.get();
-        if (loadingModList != null) {
-            return loadingModList.getModFileById(modId) != null;
-        }
-        ModList modList = ModList.get();
-        return modList != null && modList.isLoaded(modId);
     }
 
     // Check the current and legacy system property names

@@ -8,7 +8,6 @@ package com.rieno.gadgetsandgizmos.lib.compat;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
-import com.rieno.gadgetsandgizmos.lib.access.WorldAccessPolicy;
 import com.rieno.gadgetsandgizmos.lib.physics.SableAssemblyTopologyCache;
 import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
 import com.rieno.gadgetsandgizmos.lib.scm.ShipPermission;
@@ -16,7 +15,6 @@ import com.rieno.gadgetsandgizmos.lib.scm.ShipPermissionManager;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
-import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.player.Player;
@@ -26,7 +24,7 @@ import java.util.Collection;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-// Authorize Physics Staff targets and protect assemblies during SCM initialization
+// Authorize Physics Staff with ship permissions and protect SCM initialization
 public final class PhysicsStaffInteractionGuard {
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -63,31 +61,21 @@ public final class PhysicsStaffInteractionGuard {
 
     ------------------------------------------------------------##-----------------------------------------------------*/
 
-    // Authorize a physics staff target
+    // Check the ACC ship's physics staff permission before using a loaded target
     public static boolean authorizeTarget(ServerPlayer player, UUID targetSubLevelId) {
+        if(player == null || player.server == null) return false;
         if (isInitializationProtected(targetSubLevelId)) {
             showFailureMessage(player,
                     Component.literal("Ship control initialization is in progress"));
             return false;
         }
-        if (player != null && player.server != null && targetSubLevelId != null
+        if (targetSubLevelId != null
                 && !ShipPermissionManager.get(player.server).allows(
                 targetSubLevelId, player.getUUID(), ShipPermission.PHYSICS_STAFF)) {
-            showFailureMessage(player, Component.literal("Ship permission denied"));
+            showFailureMessage(player, "item.createthrusters.physics_staff.error.permission_denied");
             return false;
         }
-        if(targetSubLevelId != null){
-            SubLevel body = SableLevelApi.subLevel(player.serverLevel(), targetSubLevelId);
-            if(body == null) return false;
-            var point = body.logicalPose().position();
-            if(!WorldAccessPolicy.canAccess(player, player.serverLevel(), targetSubLevelId,
-                    BlockPos.containing(point.x, point.y, point.z))){
-                showFailureMessage(player, "item.createthrusters.physics_staff.error.claim_denied");
-                return false;
-            }
-        }
-
-        return true;
+        return targetSubLevelId == null || SableLevelApi.subLevel(player.serverLevel(), targetSubLevelId) != null;
     }
 
     // Authorize a physics staff movement target

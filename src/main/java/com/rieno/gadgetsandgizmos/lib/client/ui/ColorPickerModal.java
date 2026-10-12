@@ -118,8 +118,8 @@ public final class ColorPickerModal {
 
         drawColorArea(graphics, bounds.colorX(), bounds.colorY(), bounds.colorSize());
         drawHueBar(graphics, bounds.hueX(), bounds.colorY(), bounds.hueWidth(), bounds.colorSize());
-        drawColorCursor(graphics, bounds.colorX(), bounds.colorY(), bounds.colorSize(), style);
-        drawHueCursor(graphics, bounds.hueX(), bounds.colorY(), bounds.hueWidth(), bounds.colorSize(), style);
+        drawColorCursor(graphics, bounds.colorX(), bounds.colorY(), bounds.colorSize(), style.primary());
+        drawHueCursor(graphics, bounds.hueX(), bounds.colorY(), bounds.hueWidth(), bounds.colorSize(), style.primary());
 
         graphics.drawString(font, "Hex", bounds.hexLabelX(), bounds.hexY() + 6, style.secondary(), false);
         int hexBorder = hexFocused ? style.accent() : style.border();
@@ -137,6 +137,38 @@ public final class ColorPickerModal {
                 bounds.cancelContains(mouseX, mouseY), style, false);
         drawButton(graphics, font, bounds.acceptX(), bounds.buttonY(), bounds.buttonWidth(), "Accept",
                 bounds.acceptContains(mouseX, mouseY), style, true);
+    }
+
+    // Draw the picker using the host's established modal frame and controls.
+    public void renderStyled(GuiGraphics graphics, Font font, int screenWidth, int screenHeight,
+                             Appearance appearance, int mouseX, int mouseY){
+        if(!open || graphics == null || font == null) return;
+        if(appearance == null){
+            render(graphics, font, screenWidth, screenHeight, Chrome.DEFAULT, mouseX, mouseY);
+            return;
+        }
+        bounds = layout(screenWidth, screenHeight, true);
+        graphics.fill(0, 0, screenWidth, screenHeight, appearance.backdrop());
+        appearance.panel().draw(graphics, bounds.x(), bounds.y(), bounds.width(), bounds.height());
+        graphics.drawString(font, "Color Picker", bounds.x() + 12, bounds.y() + 10, appearance.titleColor(), false);
+
+        drawColorArea(graphics, bounds.colorX(), bounds.colorY(), bounds.colorSize());
+        drawHueBar(graphics, bounds.hueX(), bounds.colorY(), bounds.hueWidth(), bounds.colorSize());
+        drawColorCursor(graphics, bounds.colorX(), bounds.colorY(), bounds.colorSize(), appearance.cursorColor());
+        drawHueCursor(graphics, bounds.hueX(), bounds.colorY(), bounds.hueWidth(), bounds.colorSize(), appearance.cursorColor());
+
+        graphics.drawString(font, "Hex", bounds.hexLabelX(), bounds.hexY() + 6, appearance.labelColor(), false);
+        appearance.field().draw(graphics, bounds.hexX(), bounds.hexY(), bounds.hexRight() - bounds.hexX(),
+                bounds.hexBottom() - bounds.hexY(), hexFocused);
+        graphics.drawString(font, hex, bounds.hexX() + 6, bounds.hexY() + 6, appearance.valueColor(), false);
+        graphics.fill(bounds.previewX(), bounds.hexY(), bounds.previewRight(), bounds.hexBottom(), currentColor());
+        drawOutline(graphics, bounds.previewX(), bounds.hexY(), bounds.previewRight() - bounds.previewX(),
+                bounds.hexBottom() - bounds.hexY(), appearance.borderColor());
+
+        appearance.button().draw(graphics, font, bounds.cancelX(), bounds.buttonY(), bounds.cancelWidth(),
+                bounds.buttonHeight(), "Cancel", bounds.cancelContains(mouseX, mouseY));
+        appearance.button().draw(graphics, font, bounds.acceptX(), bounds.buttonY(), bounds.acceptWidth(),
+                bounds.buttonHeight(), "Apply", bounds.acceptContains(mouseX, mouseY));
     }
 
     // Handle a mouse press inside this modal.
@@ -261,12 +293,16 @@ public final class ColorPickerModal {
 
     // Build the centered modal layout.
     private static Bounds layout(int screenWidth, int screenHeight) {
+        return layout(screenWidth, screenHeight, false);
+    }
+
+    private static Bounds layout(int screenWidth, int screenHeight, boolean styled){
         int width = Math.min(MODAL_WIDTH, Math.max(260, screenWidth - 16));
-        int height = Math.min(MODAL_HEIGHT, Math.max(220, screenHeight - 16));
+        int height = Math.min(MODAL_HEIGHT + (styled ? 16 : 0), Math.max(220, screenHeight - 16));
         int x = Math.max(8, (screenWidth - width) / 2);
         int y = Math.max(8, (screenHeight - height) / 2);
-        int colorSize = Math.min(COLOR_AREA_SIZE, Math.max(112, height - 92));
-        return new Bounds(x, y, width, height, colorSize);
+        int colorSize = Math.min(COLOR_AREA_SIZE, Math.max(112, height - (styled ? 108 : 92)));
+        return new Bounds(x, y, width, height, colorSize, styled);
     }
 
     // Draw the HSV saturation/value square for the active hue.
@@ -292,18 +328,18 @@ public final class ColorPickerModal {
     }
 
     // Draw the saturation/value selection indicator.
-    private void drawColorCursor(GuiGraphics graphics, int x, int y, int size, Chrome style) {
+    private void drawColorCursor(GuiGraphics graphics, int x, int y, int size, int color) {
         int centerX = x + Math.round(saturation * Math.max(0, size - 1));
         int centerY = y + Math.round((1.0F - value) * Math.max(0, size - 1));
         drawOutline(graphics, centerX - 5, centerY - 5, 11, 11, 0xFF000000);
-        drawOutline(graphics, centerX - 4, centerY - 4, 9, 9, style.primary());
+        drawOutline(graphics, centerX - 4, centerY - 4, 9, 9, color);
     }
 
     // Draw the hue selection indicator.
-    private void drawHueCursor(GuiGraphics graphics, int x, int y, int width, int height, Chrome style) {
+    private void drawHueCursor(GuiGraphics graphics, int x, int y, int width, int height, int color) {
         int markerY = y + Math.round(hue * Math.max(0, height - 1));
         drawOutline(graphics, x - 2, markerY - 2, width + 4, 5, 0xFF000000);
-        drawOutline(graphics, x - 1, markerY - 1, width + 2, 3, style.primary());
+        drawOutline(graphics, x - 1, markerY - 1, width + 2, 3, color);
     }
 
     // Draw one picker action button.
@@ -449,9 +485,35 @@ public final class ColorPickerModal {
                 0xFFFFFFFF);
     }
 
+    @FunctionalInterface
+    public interface PanelRenderer{
+        void draw(GuiGraphics graphics, int x, int y, int width, int height);
+    }
+
+    @FunctionalInterface
+    public interface ButtonRenderer{
+        void draw(GuiGraphics graphics, Font font, int x, int y, int width, int height, String label, boolean hovered);
+    }
+
+    @FunctionalInterface
+    public interface FieldRenderer{
+        void draw(GuiGraphics graphics, int x, int y, int width, int height, boolean focused);
+    }
+
+    // Let the host own theme rendering without exposing host implementation classes.
+    public record Appearance(PanelRenderer panel, ButtonRenderer button, FieldRenderer field,
+                             int backdrop, int titleColor, int valueColor, int labelColor,
+                             int borderColor, int cursorColor){
+        public Appearance{
+            java.util.Objects.requireNonNull(panel);
+            java.util.Objects.requireNonNull(button);
+            java.util.Objects.requireNonNull(field);
+        }
+    }
+
     // Store the computed picker hit regions.
-    private record Bounds(int x, int y, int width, int height, int colorSize) {
-        private static final Bounds EMPTY = new Bounds(0, 0, 0, 0, 0);
+    private record Bounds(int x, int y, int width, int height, int colorSize, boolean styled) {
+        private static final Bounds EMPTY = new Bounds(0, 0, 0, 0, 0, false);
 
         private int right() {
             return x + width;
@@ -462,7 +524,7 @@ public final class ColorPickerModal {
         }
 
         private int colorX() {
-            return x + 14;
+            return styled ? x + (width - colorSize - 10 - HUE_BAR_WIDTH) / 2 : x + 14;
         }
 
         private int colorY() {
@@ -478,7 +540,7 @@ public final class ColorPickerModal {
         }
 
         private int hexLabelX() {
-            return x + 14;
+            return x + (styled ? 12 : 14);
         }
 
         private int hexX() {
@@ -494,7 +556,7 @@ public final class ColorPickerModal {
         }
 
         private int hexBottom() {
-            return hexY() + 18;
+            return hexY() + (styled ? 20 : 18);
         }
 
         private int previewX() {
@@ -502,23 +564,29 @@ public final class ColorPickerModal {
         }
 
         private int previewRight() {
-            return x + width - 14;
+            return x + width - (styled ? 10 : 14);
         }
 
         private int buttonY() {
-            return y + height - 28;
+            return y + height - (styled ? 32 : 28);
         }
 
         private int buttonWidth() {
             return 76;
         }
 
+        private int buttonHeight(){ return styled ? 20 : 18; }
+
+        private int cancelWidth(){ return styled ? 62 : buttonWidth(); }
+
+        private int acceptWidth(){ return styled ? 64 : buttonWidth(); }
+
         private int acceptX() {
-            return x + width - 14 - buttonWidth();
+            return x + width - (styled ? 10 : 14) - acceptWidth();
         }
 
         private int cancelX() {
-            return acceptX() - buttonWidth() - 8;
+            return acceptX() - cancelWidth() - (styled ? 6 : 8);
         }
 
         private boolean colorContains(double mouseX, double mouseY) {
@@ -536,13 +604,13 @@ public final class ColorPickerModal {
         }
 
         private boolean acceptContains(double mouseX, double mouseY) {
-            return mouseX >= acceptX() && mouseX < acceptX() + buttonWidth()
-                    && mouseY >= buttonY() && mouseY < buttonY() + 18;
+            return mouseX >= acceptX() && mouseX < acceptX() + acceptWidth()
+                    && mouseY >= buttonY() && mouseY < buttonY() + buttonHeight();
         }
 
         private boolean cancelContains(double mouseX, double mouseY) {
-            return mouseX >= cancelX() && mouseX < cancelX() + buttonWidth()
-                    && mouseY >= buttonY() && mouseY < buttonY() + 18;
+            return mouseX >= cancelX() && mouseX < cancelX() + cancelWidth()
+                    && mouseY >= buttonY() && mouseY < buttonY() + buttonHeight();
         }
     }
 }

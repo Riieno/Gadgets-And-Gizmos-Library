@@ -1,5 +1,17 @@
 package com.rieno.gadgetsandgizmos.lib.seat;
 
+/*--------------------------------------------------------##---------------------------------------------------------
+
+=======================================================================================================================
+                                                        IMPORTS
+=======================================================================================================================
+
+------------------------------------------------------------##-----------------------------------------------------*/
+
+import com.rieno.gadgetsandgizmos.lib.discovery.SubLevelBlockEntityCollector;
+import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
+import com.rieno.gadgetsandgizmos.lib.physics.SableTransformApi;
+import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.Entity;
@@ -8,6 +20,8 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import net.neoforged.neoforge.common.util.FakePlayer;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -22,9 +36,48 @@ import java.util.UUID;
 
 // Discover seat blocks and count players mounted at their mapped positions
 public final class MountedSeatRegistry {
+    // Retain strictly named providers owned by their registering mods
     private static final Map<ResourceLocation, SeatProvider> PROVIDERS = new LinkedHashMap<>();
 
+    // Prevent construction
     private MountedSeatRegistry() {
+    }
+
+    /*--------------------------------------------------------##---------------------------------------------------------
+
+    =======================================================================================================================
+                                                            FUNCTIONS
+    =======================================================================================================================
+
+    ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Discover seats on loaded bodies without creating chunk tickets
+    public static List<MappedSeat> discover(Collection<? extends SubLevel> bodies, int maximumBlocks){
+        if(bodies == null || maximumBlocks <= 0) return List.of();
+        List<MappedSeat> res = new ArrayList<>();
+        int remaining = maximumBlocks;
+        for(SubLevel body : bodies){
+            if(body == null || body.isRemoved() || remaining <= 0) continue;
+            for(var block : SubLevelBlockEntityCollector.getLoadedBlocks(body, remaining)){
+                remaining--;
+                BlockEntity blockEntity = block.state().hasBlockEntity()
+                        ? SubLevelBlockEntityCollector.getBlockEntity(body, block.position()) : null;
+                if(isSeat(body.getLevel(), block.position(), block.state(), blockEntity)){
+                    res.add(new MappedSeat(body.getLevel(), block.position(), block.state(), blockEntity));
+                }
+            }
+        }
+        return res.stream().distinct().toList();
+    }
+
+    // Resolve a mount in either plot coordinates or its tracked body's world frame
+    public static boolean isMountedAt(Level level, BlockPos pos, Entity mount){
+        if(level == null || pos == null || mount == null || !mount.isAlive() || mount.level() != level) return false;
+        if(pos.equals(mount.blockPosition())) return true;
+        SubLevel body = SableLevelApi.containing(level, pos);
+        if(body == null || SableLevelApi.containing(mount) != null || SableLevelApi.tracking(mount) != body) return false;
+        Vec3 local = SableTransformApi.toLocalPosition(body, mount.position());
+        return local != null && pos.equals(BlockPos.containing(local));
     }
 
     /** Register one strictly named seat provider owned by the caller's namespace. */
@@ -65,19 +118,25 @@ public final class MountedSeatRegistry {
         List<SeatProvider> providers = providers();
         Set<UUID> seatedPlayers = new LinkedHashSet<>();
         int occupiedSeats = 0;
-        for (MappedSeat seat : seats) {
+        Set<MappedSeat> uniqueSeats = new LinkedHashSet<>(seats);
+        int seatCount = 0;
+        for (MappedSeat seat : uniqueSeats) {
             if (seat == null || seat.level() == null || seat.state() == null) continue;
+            if(!seat.level().isLoaded(seat.position())) continue;
+            BlockState state = seat.level().getBlockState(seat.position());
             List<SeatProvider> matching = providers.stream().filter(provider ->
-                    provider.isSeat(seat.level(), seat.position(), seat.state(),
+                    provider.isSeat(seat.level(), seat.position(), state,
                             seat.blockEntity())).toList();
+            if(matching.isEmpty()) continue;
+            seatCount++;
             boolean occupied = matching.stream().anyMatch(provider ->
-                    provider.isOccupied(seat.level(), seat.position(), seat.state(),
+                    provider.isOccupied(seat.level(), seat.position(), state,
                             seat.blockEntity()));
             if (players != null) {
                 for (Player player : players) {
-                    if (player == null || !player.isAlive()) continue;
+                    if (player == null || !player.isAlive() || player instanceof FakePlayer || player.isSpectator()) continue;
                     for (SeatProvider provider : matching) {
-                        if (provider.isPlayerSeatedAt(seat.level(), seat.position(), seat.state(),
+                        if (provider.isPlayerSeatedAt(seat.level(), seat.position(), state,
                                 seat.blockEntity(), player)) {
                             seatedPlayers.add(player.getUUID());
                             occupied = true;
@@ -88,7 +147,7 @@ public final class MountedSeatRegistry {
             }
             if (occupied) occupiedSeats++;
         }
-        return new Occupancy(seats.size(), occupiedSeats, seatedPlayers.size());
+        return new Occupancy(seatCount, occupiedSeats, seatedPlayers.size());
     }
 
     private static synchronized List<SeatProvider> providers() {
@@ -123,7 +182,7 @@ public final class MountedSeatRegistry {
         ) {
             Entity vehicle = player == null ? null : player.getVehicle();
             while (vehicle != null) {
-                if (vehicle.level() == level && position.equals(vehicle.blockPosition())) return true;
+                if (isMountedAt(level, position, vehicle)) return true;
                 vehicle = vehicle.getVehicle();
             }
             return false;

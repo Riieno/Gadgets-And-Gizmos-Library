@@ -34,6 +34,8 @@ public final class ScmBuiltinControlModes {
     private static final Set<ResourceLocation> BUILTINS = Set.of(
             AIRSHIP_ID, GROUND_SEA_ID, PLANE_ID, IK_ID);
     private static final double MIN_CLEARANCE = 3.0D;
+    private static boolean groundSeaEnabled = true;
+    private static boolean planeEnabled = true;
     private static boolean ikEnabled;
 
     /*--------------------------------------------------------##---------------------------------------------------------
@@ -51,8 +53,8 @@ public final class ScmBuiltinControlModes {
     // Register the defaults
     static void registerDefaults() {
         ScmControlModeRegistry.register(new AirshipMode());
-        ScmControlModeRegistry.register(new GroundSeaMode());
-        ScmControlModeRegistry.register(new PlaneMode());
+        if(groundSeaEnabled) ScmControlModeRegistry.register(new GroundSeaMode());
+        if(planeEnabled) ScmControlModeRegistry.register(new PlaneMode());
         if (ikEnabled) ScmControlModeRegistry.register(new LeggedMode());
     }
 
@@ -67,6 +69,28 @@ public final class ScmBuiltinControlModes {
     // Check if this is builtin
     public static boolean isBuiltin(ResourceLocation id) {
         return BUILTINS.contains(id);
+    }
+
+    // Enable or remove ground/sea control without changing its saved identifier
+    public static synchronized void setGroundSeaEnabled(boolean enabled){
+        groundSeaEnabled = enabled;
+        ScmControlModeRegistry.setBuiltin(GROUND_SEA_ID, enabled ? new GroundSeaMode() : null);
+    }
+
+    // Check whether ground/sea control is available
+    public static synchronized boolean isGroundSeaEnabled(){
+        return groundSeaEnabled;
+    }
+
+    // Enable or remove plane control without changing its saved identifier
+    public static synchronized void setPlaneEnabled(boolean enabled){
+        planeEnabled = enabled;
+        ScmControlModeRegistry.setBuiltin(PLANE_ID, enabled ? new PlaneMode() : null);
+    }
+
+    // Check whether plane control is available
+    public static synchronized boolean isPlaneEnabled(){
+        return planeEnabled;
     }
 
     // Enable or remove the experimental IK control mode from the shared selector
@@ -117,7 +141,8 @@ public final class ScmBuiltinControlModes {
             boolean liveLinear = liveModel && (model.authority(
                     input.pathDirection(), false, true) > 0.0D
                     || model.authority(input.pathDirection(), false, false) > 0.0D);
-            Vec3 force = (liveLinear
+            boolean separatePropulsion = input.hasPropulsionRequest() && !terminalCapture;
+            Vec3 force = separatePropulsion ? Vec3.ZERO : (liveLinear
                     ? model.linearVelocityFeedback(desiredVelocity, input.velocity(),
                     input.tolerance()) : new Vec3(
                     ScmStateFeedback.velocityAcceleration(
@@ -130,7 +155,7 @@ public final class ScmBuiltinControlModes {
             double driveStrength = input.hasPropulsionRequest()
                     ? speedControlLevel(input, desiredSpeed)
                     : Mth.clamp(force.length(), 0.0D, 1.0D);
-            if (input.hasPropulsionRequest() && !terminalCapture) {
+            if(separatePropulsion){
                 double pathSpeed = input.velocity().dot(input.pathDirection());
                 double propulsion = liveLinear
                         ? model.velocityFeedback(input.pathDirection(), false,
@@ -248,8 +273,9 @@ public final class ScmBuiltinControlModes {
             double yawRate = input.angularVelocity().dot(worldUp);
             // Retain the heading request while damping the measured turn rate.
             // This is a steering PD term, not a binary left/right selector.
-            double steering = ScmControlAxes.groundSteeringDemand(
-                    yawError, yawRate, input.steeringFeedForward());
+            double steering = ScmControlAxes.routeSteeringDemand(
+                    yawError, input.pathCurvature(), currentSpeed,
+                    yawRate, input.steeringFeedForward());
             if (Math.abs(throttle) < 0.04D && Math.abs(yawError) > 0.2D
                     && Math.abs(currentSpeed) < 0.25D && desiredSpeed > 1.0E-4D
                     && (!input.hasPropulsionRequest() || input.propulsion() > 1.0E-5D)) {

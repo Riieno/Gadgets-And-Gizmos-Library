@@ -81,12 +81,45 @@ public final class ScmControlAxes {
                 -1.0D, 1.0D);
     }
 
+    // Recover heading before relying on curvature tracking alone
+    public static double routeSteeringDemand(double headingError, double curvature, double forwardSpeed,
+                                             double yawRate, double steeringFeedForward){
+        double error = Double.isFinite(headingError) ? headingError : 0.0D;
+        double tracking = Mth.clamp(curvatureSteeringDemand(curvature, forwardSpeed, yawRate, steeringFeedForward)
+                + error / MAX_GROUND_STEERING_ANGLE * 0.25D, -1.0D, 1.0D);
+        double recovery = groundSteeringDemand(error, yawRate, steeringFeedForward);
+        double blend = Mth.clamp((Math.abs(error) - Math.toRadians(8.0D))
+                / Math.toRadians(37.0D), 0.0D, 1.0D);
+        return Mth.lerp(blend, tracking, recovery);
+    }
+
+    // Leave room for a steering vehicle to turn while reducing its recovery speed
+    public static double groundRecoverySpeedLimit(double headingError, double requestedSpeed,
+                                                  double turningRadius, double lateralAcceleration){
+        double requested = Double.isFinite(requestedSpeed) ? Math.max(0.0D, requestedSpeed) : 0.0D;
+        double error = Double.isFinite(headingError) ? Math.abs(headingError) : 0.0D;
+        double blend = Mth.clamp((error - Math.toRadians(30.0D)) / Math.toRadians(60.0D), 0.0D, 1.0D);
+        if(blend <= 0.0D) return requested;
+        double radius = Double.isFinite(turningRadius) ? Math.max(0.25D, turningRadius) : 0.25D;
+        double acceleration = Double.isFinite(lateralAcceleration) ? Math.max(0.0D, lateralAcceleration) : 0.0D;
+        double recovery = Math.min(requested, Math.max(0.5D, Math.sqrt(radius * acceleration) * 0.5D));
+        return Mth.lerp(blend, requested, recovery);
+    }
+
     // Bound one steering update so a route target cannot swing wheels across full lock in one tick
     public static double slewSteering(double previous, double requested, double maximumChange){
         double prev = Double.isFinite(previous) ? Mth.clamp(previous, -1.0D, 1.0D) : 0.0D;
         double next = Double.isFinite(requested) ? Mth.clamp(requested, -1.0D, 1.0D) : 0.0D;
         double step = Double.isFinite(maximumChange) ? Math.max(0.0D, maximumChange) : 0.0D;
         return Mth.clamp(next, prev - step, prev + step);
+    }
+
+    // Quantize a position input symmetrically and preserve the neutral steering deadband
+    public static int steeringSignal(double demand, int maximumSignal){
+        int maximum = Math.max(0, maximumSignal);
+        double val = Double.isFinite(demand) ? Mth.clamp(demand, -1.0D, 1.0D) : 0.0D;
+        int signal = (int) Math.round(Math.abs(val) * maximum);
+        return val < 0.0D ? -signal : signal;
     }
 
     /** Construct physical torque for a signed right-turn request (negative means left). */

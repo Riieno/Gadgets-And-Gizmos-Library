@@ -9,11 +9,17 @@ package com.rieno.gadgetsandgizmos.lib.mixin;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexBuffer;
 import com.rieno.gadgetsandgizmos.lib.client.view.ViewSceneAccess;
 import com.rieno.gadgetsandgizmos.lib.client.view.ViewSceneRenderer;
+import net.minecraft.client.Camera;
+import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.PostChain;
+import net.minecraft.client.renderer.RenderBuffers;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.ViewArea;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
@@ -21,8 +27,10 @@ import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -41,6 +49,7 @@ public abstract class ViewSceneLevelRendererMixin implements ViewSceneAccess{
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     @Shadow private RenderTarget translucentTarget;
+    @Shadow @Final private RenderBuffers renderBuffers;
     @Shadow private RenderTarget itemEntityTarget;
     @Shadow private RenderTarget particlesTarget;
     @Shadow private RenderTarget weatherTarget;
@@ -149,5 +158,19 @@ public abstract class ViewSceneLevelRendererMixin implements ViewSceneAccess{
     @Inject(method = "shouldShowEntityOutlines", at = @At("HEAD"), cancellable = true)
     private void captureWithoutOutlines(CallbackInfoReturnable<Boolean> cir){
         if(ViewSceneRenderer.isCapturing()) cir.setReturnValue(false);
+    }
+    // Draw remaining camera layers before vanilla removes the scene's view matrix
+    @Inject(method = "renderLevel", at = @At(value = "INVOKE",
+            target = "Lorg/joml/Matrix4fStack;popMatrix()Lorg/joml/Matrix4fStack;", remap = false))
+    private void finishCaptureGeometry(DeltaTracker tracker, boolean outline, Camera camera,
+            GameRenderer renderer, LightTexture lightmap, Matrix4f view, Matrix4f projection, CallbackInfo ci){
+        if(ViewSceneRenderer.captureBuffers() != renderBuffers) return;
+        ViewSceneRenderer.captureTarget().bindWrite(false);
+        RenderSystem.getModelViewStack().set(view);
+        RenderSystem.applyModelViewMatrix();
+        RenderSystem.setProjectionMatrix(projection, RenderSystem.getVertexSorting());
+        renderBuffers.bufferSource().endBatch();
+        renderBuffers.crumblingBufferSource().endBatch();
+        renderBuffers.outlineBufferSource().endOutlineBatch();
     }
 }

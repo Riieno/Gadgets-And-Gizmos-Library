@@ -586,20 +586,22 @@ public final class GroundPathPlanner {
                 ? new VehicleCapabilities(2.0D, Math.toRadians(30.0D),
                 0.0D, 0.0D, 0.0D, true) : capabilities;
         double baseLookahead = Math.max(0.75D, finite(lookahead));
+        Vec3 offset = horizontal(projection.position().subtract(current));
+        Vec3 routeTangent = horizontalUnit(projection.tangent(), Vec3.ZERO);
+        Vec3 heading = horizontal(forward);
+        double alignment = heading.lengthSqr() > 1.0E-8D
+                ? clamp(heading.normalize().dot(routeTangent), -1.0D, 1.0D) : 1.0D;
         double joinLookahead = Math.max(baseLookahead,
-                Math.max(vehicle.minimumTurningRadius() * 1.25D,
-                        projection.distance() * 1.75D));
+                Math.max(vehicle.minimumTurningRadius() * (1.25D + 1.0D - alignment),
+                        offset.length() * 2.5D));
         WaypointSpline.TrackingTarget target = spline.trackingTarget(
                 projection, joinLookahead);
         if (!target.found()) return ForwardRouteControl.clear(Vec3.ZERO, maximumSpeed);
 
-        Vec3 routeTangent = horizontalUnit(projection.tangent(),
-                target.position().subtract(current));
+        routeTangent = horizontalUnit(routeTangent, target.position().subtract(current));
         Vec3 targetTangent = horizontalUnit(target.tangent(), routeTangent);
         // Small offsets get small corrections; larger offsets aim at the
         // forward curve target instead of the nearest point beside the vehicle.
-        Vec3 offset = new Vec3(projection.position().x - current.x, 0.0D,
-                projection.position().z - current.z);
         Vec3 crossTrack = offset.subtract(routeTangent.scale(offset.dot(routeTangent)));
         Vec3 tracking = routeTangent.scale(joinLookahead).add(crossTrack);
         if(crossTrack.length() > 0.35D) tracking = target.position().subtract(current);
@@ -614,7 +616,6 @@ public final class GroundPathPlanner {
         double steeringFeedForward = clamp(Math.atan(
                 vehicle.wheelbase() * signedCurvature)
                 / vehicle.maximumSteeringRadians(), -1.0D, 1.0D);
-        Vec3 heading = horizontal(forward);
         if (heading.lengthSqr() > 1.0E-8D) {
             Vec3 toTarget = horizontal(target.position().subtract(current));
             double distanceSquared = toTarget.lengthSqr();

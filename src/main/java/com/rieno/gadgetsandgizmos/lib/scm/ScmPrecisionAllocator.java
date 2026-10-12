@@ -145,6 +145,8 @@ public final class ScmPrecisionAllocator{
         double[] target = components(finite(force), finite(torque));
         double[] directed = solve(available, target, previous, false, false, allowed);
         double directedError = residual(available, directed, target);
+        // Every unrestricted residual is nonnegative, so this directed result already wins
+        if(directedError <= 0.03D) return new Allocation(directed, false, directedError);
         double[] all = solve(available, target, previous, false, false, null);
         double allError = residual(available, all, target);
         return directedError <= allError + 0.03D
@@ -159,13 +161,33 @@ public final class ScmPrecisionAllocator{
         double[] target = components(finite(force), finite(torque));
         boolean hasPrecision = available.stream().anyMatch(unit ->
                 unit.precision() && powered(unit));
-        if(preferPrecision && hasPrecision){
+        if(preferPrecision && hasPrecision && canMeetPrecisionDemand(available, target)){
             double[] precise = solve(available, target, previous, true, true, null);
             double error = residual(available, precise, target);
             if(error <= 0.03D) return new Allocation(precise, true, error);
         }
         double[] all = solve(available, target, previous, false, preferPrecision, null);
         return new Allocation(all, false, residual(available, all, target));
+    }
+
+    // Reject a precision-only solve when an axis cannot reach the existing residual tolerance
+    private static boolean canMeetPrecisionDemand(List<Unit> units, double[] target){
+        double[] min = new double[AXES], max = new double[AXES], available = new double[AXES];
+        for(Unit unit : units){
+            for(int axis = 0; axis < AXES; axis++){
+                double val = axis < 3 ? component(unit.force(), axis) : component(unit.torque(), axis - 3);
+                available[axis] += Math.abs(val);
+                if(!unit.precision()) continue;
+                min[axis] += Math.min(0.0D, val);
+                max[axis] += Math.max(0.0D, val);
+            }
+        }
+        for(int axis = 0; axis < AXES; axis++){
+            double scale = Math.max(1.0E-6D, Math.max(Math.abs(target[axis]), available[axis] * 0.02D));
+            double tolerance = 0.03D * scale + 1.0E-10D * Math.max(scale, available[axis]);
+            if(target[axis] < min[axis] - tolerance || target[axis] > max[axis] + tolerance) return false;
+        }
+        return true;
     }
 
     private static Vec3 physicalDemand(List<Unit> units, Vec3 request, boolean torque){
@@ -206,18 +228,26 @@ public final class ScmPrecisionAllocator{
                                   double[] previous, boolean precisionOnly,
                                   boolean preferPrecision, boolean[] allowed){
         int count = units.size();
-        boolean hasPrecision = units.stream().anyMatch(unit ->
-                unit.precision() && powered(unit));
-        double regularization = 1.0D / Math.max(1, units.stream().filter(ScmPrecisionAllocator::powered).count());
+        boolean hasPrecision = false;
+        int poweredCount = 0;
+        for(Unit unit : units){
+            if(!powered(unit)) continue;
+            poweredCount++;
+            if(unit.precision()) hasPrecision = true;
+        }
+        double regularization = 1.0D / Math.max(1, poweredCount);
         double[][] columns = new double[count][AXES];
         double[] scale = new double[AXES];
         double[] control = new double[count];
         boolean[] active = new boolean[count];
+        int[] activeIndices = new int[count];
+        int activeCount = 0;
         for(int idx = 0; idx < count; idx++){
             Unit unit = units.get(idx);
             if(!powered(unit) || precisionOnly && !unit.precision()
                     || allowed != null && !allowed[idx]) continue;
             active[idx] = true;
+            activeIndices[activeCount++] = idx;
             columns[idx] = components(unit.force(), unit.torque());
             control[idx] = previous != null && idx < previous.length
                     && (preferPrecision || !unit.precision())
@@ -257,22 +287,33 @@ public final class ScmPrecisionAllocator{
                 magnitudes[idx] += columns[idx][axis] * columns[idx][axis];
             }
         }
+        double x = achieved[0], y = achieved[1], z = achieved[2];
+        double rx = achieved[3], ry = achieved[4], rz = achieved[5];
         for(int iteration = 0; iteration < ITERATIONS; iteration++){
             double largestChange = 0.0D;
-            for(int idx = 0; idx < count; idx++){
-                if(!active[idx]) continue;
+            for(int slot = 0; slot < activeCount; slot++){
+                int idx = activeIndices[slot];
+                double[] column = columns[idx];
                 double gradient = penalties[idx]
                         * control[idx]
                         + 0.004D * regularization * (control[idx] - prevControls[idx]);
-                for(int axis = 0; axis < AXES; axis++){
-                    gradient += columns[idx][axis] * (achieved[axis] - desired[axis]);
-                }
+                gradient += column[0] * (x - desired[0]);
+                gradient += column[1] * (y - desired[1]);
+                gradient += column[2] * (z - desired[2]);
+                gradient += column[3] * (rx - desired[3]);
+                gradient += column[4] * (ry - desired[4]);
+                gradient += column[5] * (rz - desired[5]);
                 double next = Math.max(0.0D, Math.min(1.0D, control[idx] - gradient / magnitudes[idx]));
                 double change = next - control[idx];
                 if(change == 0.0D) continue;
                 control[idx] = next;
                 largestChange = Math.max(largestChange, Math.abs(change));
-                for(int axis = 0; axis < AXES; axis++) achieved[axis] += columns[idx][axis] * change;
+                x += column[0] * change;
+                y += column[1] * change;
+                z += column[2] * change;
+                rx += column[3] * change;
+                ry += column[4] * change;
+                rz += column[5] * change;
             }
             if(largestChange <= 1.0E-8D) break;
         }

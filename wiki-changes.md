@@ -669,3 +669,557 @@ All angles are radians, time is seconds, and angular velocities are radians/seco
 SableSubLevelResidency.isFullyLoaded now checks the restored chunks published by Sable's plot load, rather than the unused slots in its reserved plot grid. Sparse plots can resume control after restart; missing plots, empty loads, removed bodies and unavailable chunk data still return false.
 
 WorldProjectionRenderTypes.color() explicitly disables an inherited GL depth test during its draw and restores the previous enable state afterward. Its color quads remain visible from either side and do not modify world depth.
+
+## Saved graph presentation updates
+
+`GraphNodePresentationRegistry.synchronize(type, data)` adds newly registered defaults, selector choices, category ports and input order to a saved node. Existing values and category state are retained. Call it when decoding a node whose registered presentation may have gained fields. `inputOptions(type, port)` returns the immutable registered selector choices for editors that need a fallback before saved metadata has been updated.
+
+## Sable camera references and anchored billboards
+
+`SubLevelClientRenderApi.localCameraAnchor(level, pos)` creates a detached camera reference entity at a sub-level plot position. It does not spawn an entity or mount a player. This lets a consumer pass the containing Sable body to a native camera that ordinarily requires a vehicle.
+
+`SubLevelClientRenderApi.billboardModelView(modelView, scale)` preserves the model-view translation and replaces its orientation with a camera-facing basis. Pass signed scale explicitly to preserve reflections. Calculate the anchor from the interpolated Sable pose before applying this method; craft telemetry should continue to use the configured orientation independently of the billboard.
+
+## Optional translation intent in SCM wrench sources
+
+`ScmWrenchSourceRegistry.Wrench` now accepts a sixth argument, `Set<String> translationActions`, alongside `rotationActions`. It declares actively authored translation axes independently of damping and environmental support. An optional height controller can declare `ship_ascend` and `ship_descend` so primary hover feedback yields while that controller owns height. Existing three-, four- and five-argument constructors remain available and default to an empty set. Sampling, `aboutCenter` and `ScmControlPriority.additionalWrench` preserve this intent. Inactive sources contribute no intent.
+### Sable camera frames for unmounted interactions
+
+`SubLevelCameraFrameRegistry.register(ResourceLocation, Provider)` supplies a local-to-world camera rotation for an interaction without mounting or spawning a player entity. Providers return null outside their active interaction. Registration is strict, uses the consumer's namespace, and follows registration order. `unregister(ResourceLocation)` releases the provider. `orientation(Entity, float)` returns a normalized copy and ignores invalid quaternions.
+
+Sable's camera rotation helper consumes this registry only for camera frames and preserves its unlocked-camera option. Body positions, entity orientation and mounting are unchanged. An adapter that expresses player look angles in a physical SubLevel's frame must supply that same physical render rotation; its configured forward/up axes are used when resolving the control target.
+
+## Timed item transformations
+
+Both library branches now expose `com.rieno.gadgetsandgizmos.lib.item.TimedTransformingItem` and `TimedItemTransformations`.
+
+Construct a `TimedTransformingItem` with item properties, a result-item supplier, a supplier for an owner-registered persistent and network-synchronized `DataComponentType<Long>`, and a positive duration in ticks. `beginTransformation(stack, now)` saves the completion tick once. `transform(stack, now)` returns the same stack until complete, then a replacement with its count and other components preserved and the timer removed. Callers must store the returned replacement. Copies, splits, dimension transfers, and reloads keep the original deadline.
+
+`TimedItemTransformations.gameTime(level)` uses persistent overworld game time for every dimension. `transform(stack, level)`, `beginTransformation(stack, level)`, and `tick(handler, now)` are available to custom integrations; level overloads only mutate on the logical server. Register passive custom containers with `track(container, level)`. All calls that mutate stacks must run on the owning server thread.
+
+The library automatically integrates player inventories, dropped items, vanilla block and entity containers, `SimpleContainer` inventories (including closed ender chests), NeoForge `ItemStackHandler` inventories, and Create basins, depots, and belts (including stopped belts and buffered basin outputs). Passive containers are checked every 20 ticks to discover timed items, then active containers tick every tick until completion. Both `tick` overloads report whether any items are still waiting; custom inventory implementations can call the same API. Unopened loot containers are skipped. Completion is measured in server game ticks, including time spent in an unloaded inventory while that server is running, and pauses while the server is stopped.
+
+Consumers can override `onWaitingInventoryTick` for gameplay effects. The addon owns item/component IDs, scorching fuel damage, compacting ingredients, models, names, and thruster fuel values. It consumes four lava-bucket items plus blackstone, returns the buckets, and cools the result for 600 ticks. No addon implementation classes are exposed through the library API.
+
+## Fluid completion for timed items
+
+`TimedTransformingItem` now provides an additive fluid-contact API:
+
+- Override `protected boolean canTransformInFluid(Fluid fluid)` to select fluids that immediately finish an item. The default returns false and preserves existing timed behavior.
+- `transformInFluid(ItemStack stack, Fluid fluid)` returns the original stack on rejected contact, or a completed copy on accepted contact.
+- `completeTransformation(ItemStack stack)` preserves stack count and other data components while removing the completion timer.
+
+`TimedItemTransformations.transform(ItemStack, Level, AABB)` checks actual contact with source, flowing and waterlogged fluid surfaces, plus filled water/lava cauldron interiors, before normal timed completion. It does not transform items on the client. Entity inventories and dropped items use this overload automatically. Carried items can complete before the waiting inventory effect runs.
+
+`transformInFluids(ItemStack, IFluidHandler)` and `transformInFluids(IItemHandlerModifiable, IFluidHandler)` check every nonempty tank without consuming fluid. The inventory overload replaces completed stacks and returns whether any slot changed. Fluid handlers expose no level, so callers must use the owning server thread.
+
+Create integration applies contact detection to depot and belt stacks, including stopped belts, and checks basin input/output slots and buffered item outputs against the basin's combined fluid handler. Dry stacks still follow their saved completion deadline. Consumers own the gameplay choice of acceptable fluids; the library owns contact detection, conversion and storage integration.
+
+## Processing recipes with a timed completion step
+
+`com.rieno.gadgetsandgizmos.lib.create.ProcessingTransformationRecipes.create(ResourceLocation id, RecipeHolder<?> source, Component process, Component completion)` returns an optional viewer presentation of a live Create processing recipe followed by a `TimedTransformingItem` conversion. The ID belongs to the consuming mod. The source must have one guaranteed item result, no fluid results, and at most twelve item/fluid input slots. Unsupported recipes return an empty optional.
+
+The returned `View` retains the source recipe, item ingredients, copies of matching fluid stacks including amounts and components, the intermediate stack, the completed stack, and caller-owned labels. Creating a view never changes the gameplay recipe or starts a cooling timer. Rebuild views from the current recipe manager after recipe reloads. Stack values are presentation snapshots; consumers should not mutate them.
+
+Optional client adapters live under `lib.compat`: `jei.ProcessingTransformationJeiCategory`, `rei.ProcessingTransformationReiCategory` with its nested `Display`, and `emi.ProcessingTransformationEmiRecipe`. They show the real intermediate in a separate slot and index only the completed result as the chain output. Register them from the consumer's installed-viewer plugin, together with its own category ID, title, icon, and workstations. These adapters use viewer APIs as compile-only dependencies; the library does not require recipe viewers at runtime. EMI presentations disable automatic recipe transfer/tree crafting because passive completion is not a transferable machine recipe.
+
+`lib.client.recipe.ProcessingTransformationLayout` shares slot positions and stage captions across the adapters. Its render method is client-only.
+
+`TimedTransformingItem.durationTicks()` exposes the configured completion interval for accurate presentation text without starting or changing a timer.
+
+## Create item Shift descriptions
+
+`com.rieno.gadgetsandgizmos.lib.item.CreateDescriptionItem` extends `Item` and adds Create's normal Shift description to its tooltip. Supply ordinary item properties and translated `item.<namespace>.<item>.tooltip.summary` keys, with optional Create condition/behaviour keys. The consuming mod owns content and fuel rules; the library owns the tooltip wiring.
+
+
+## Performance API additions
+
+### RevisionSnapshotCache
+
+`com.rieno.gadgetsandgizmos.lib.util.RevisionSnapshotCache<T>` retains one detached snapshot on the owning game thread. `get(Object source, long revision, Supplier<? extends T> loader)` reuses it only when the source is the same object and its revision is unchanged. Replacing a source at the same saved revision also reloads the snapshot. The loader must complete successfully before the new entry replaces the old one; null values can be cached. `invalidate()` releases the source and snapshot on unload or explicit lifecycle changes.
+
+The cache owns no synchronization and performs no copying itself. Its consuming mod supplies the copy operation and must advance the revision when content changes. Consumers should keep their own cache rather than exposing its mutable snapshot as shared host state. The ACC's native integration uses this API while the existing `getActiveGraph()` method continues returning a fresh detached copy.
+
+### Phased view refresh
+
+`ViewRefreshSchedule.captured(long now, long phase)` is an additive overload that schedules the next capture on a phase within the feed's refresh interval. Both arguments use the same nanosecond clock as `ready(long now, int refreshRate)`. Rate changes still take effect immediately, and missed deadlines produce one future capture rather than a burst. The existing `captured(long now)` overload retains its original behavior.
+
+`ViewSceneRenderer` assigns separate phases to retained camera sources. Each source retains the configured refresh rate; simultaneous feeds can render on different main frames without reducing resolution or introducing a global capture limit.
+
+The SCM solver optimizations change private storage and iteration work. Existing public APIs, saved throttle values, identifiers, NBT, and controller tick cadence are preserved.
+
+## Depth texture snapshots
+
+`com.rieno.gadgetsandgizmos.lib.client.render.DepthTextureSnapshot` owns a reusable scene-depth texture. Use `capture(x, y, width, height)` on the render thread with a complete draw framebuffer containing depth and a rectangle inside its bounds. It returns a texture id containing normalized depth, with nearest filtering, clamped coordinates and comparison disabled. Non-positive dimensions return zero.
+
+The first capture and size changes allocate depth storage; later captures update the same texture. Copies accept differing source depth formats without a framebuffer depth blit. The read/draw framebuffer, active texture unit and existing 2D texture binding are preserved. The source must be single sampled.
+
+Call `close()` on the render thread during resource teardown. Closing releases storage and is repeatable; a later capture can allocate again. Soft particle and surface floodlight rendering use this API. Temporary recipe containers passed to `TimedItemTransformations.track(container, null)` are ignored without reading their inventory.
+
+## Filtered loaded ship entities
+
+`SubLevelBlockEntityCollector.getBlockEntities(body, type)` returns only loaded entities assignable to the requested `Class<T>`. `getBlockEntities(body, predicate)` accepts a side-effect-free filter. Both read current plot contents without loading chunks or retaining a cache, deduplicate positions and preserve actor precedence over chunk entities even when an actor is excluded by the filter. Returned lists remain mutable, and same-tick replacements and removals are visible to the next call.
+
+Gantry carriage discovery and SCM relation discovery use these overloads to avoid collecting unrelated block entities. The existing single-argument method retains its behavior.
+
+### Secondary scene framebuffer compatibility
+
+`SceneRenderTargets.createLike(source, width, height, clearError)` creates an owned `TextureTarget` using the source's standard Minecraft depth and NeoForge stencil settings. This supports depth copies between secondary scenes and effects that retain a primary-view depth buffer. Custom attachment formats and multisampling are outside this contract.
+
+`hasMatchingDepth(first, second)` compares depth use and stencil settings without a GPU query. Recreate a secondary target if these settings change. `wrap(target)` creates a Veil framebuffer borrowing the target's colour and depth/stencil textures; free the wrapper before resizing or destroying its target. Freeing the wrapper never deletes borrowed textures. Creation, wrapping and disposal belong on the render thread. These methods follow Minecraft target allocation and binding behaviour; callers restore their surrounding render state.
+
+## Moving terrain residency
+
+`MovingChunkResidency.lease(ServerLevel)` creates an independent, temporary terrain owner. Call `Lease.synchronize(Collection<Region>)` on the owning server thread; each `Region` contains current world bounds and velocity in blocks per second. Prediction covers up to two seconds, clamps travel to 64 blocks per axis, and limits direct full-chunk tickets to 256 per lease. Stationary bodies request no extra terrain. Chunk generation proceeds through the normal asynchronous ticket scheduler; synchronization never reads or waits for a chunk.
+
+Tickets use the library's `gadgetsngizmos_moving_terrain` type, an independent lease UUID, and full-chunk level without requesting block or entity ticking. Footprint changes remove only the lease's previous tickets. Shared ship, player and loader tickets remain intact. Tickets refresh every 20 ticks and expire after 40 ticks if their owner stops updating. Close the lease when its owner detaches, changes level or shuts down.
+
+`SableSubLevelResidency.Lease.prefetchMovingChunks()` applies this API to retained Sable bodies once per server tick. Ship residency continues through `ServerSubLevelContainer.addForceLoadTicket` and `removeForceLoadTicket`; Sable handles collision terrain, ticking and its own expiring per-ship world tickets. Both `close()` and `detach()` release temporary terrain predictions; `detach()` preserves the existing saved ship tickets for restart. Restored force tickets are adopted even when Sable's add method reports that the ticket already existed, allowing the lease to release them later.
+
+## Complete textured quad vertices
+
+`TexturedQuadWriter.drawDoubleSided(...)` submits a double-sided textured quad through Minecraft's complete-vertex API. Supply the current `PoseStack.Pose`, consumer, four local points, UV bounds, endpoint light values and overlay. Positions are transformed once per corner and normals once per winding. The writer preserves vertex order and attributes and supports ordinary or wrapped vertex consumers; `BufferBuilder` can use its native complete-vertex fast path. Geometry remains identical under translated, rotated and nonuniformly scaled poses.
+
+## Optional mixin selection
+
+`com.rieno.gadgetsandgizmos.lib.compat.MixinCompatibility` provides shared checks for addon and library mixin configuration plugins.
+
+- `isModLoaded(String modId)` uses NeoForge's discovery mod list during bootstrap, then the runtime mod list when discovery is unavailable. It returns false if neither list is available.
+- `canApply(String targetClassName, String... requiredMods)` requires every named mod and an accessible target class resource. It uses Mixin's resource lookup without requesting bytecode, loading or initializing the target class, or running transformers. Missing or inaccessible class resources return false. This supports NeoForge's ModLauncher, which cannot retrieve untransformed bytecode.
+
+Call `canApply` from `IMixinConfigPlugin.shouldApplyMixin` before Mixin resolves an optional target:
+
+```java
+return MixinCompatibility.canApply(targetClassName, "your_optional_mod");
+```
+
+Consumers own their mod IDs, target mappings, version checks, and compatibility behavior. The library does not depend on optional mod implementation classes. Existing APIs and saved data are unchanged.
+
+### Mixin array-clone compatibility
+
+`MixinArrayCloneCompatibility.register(targetClassName, mixinClassName)` registers a workaround during a Mixin configuration plugin's `onLoad`. It applies only to the named target and mixin. On Minecraft 1.21.1 / NeoForge's Mixin 0.8.7, array-owned `clone` calls can fail when Mixin resolves a detached superclass. The workaround substitutes `Arrays.copyOf` in the in-memory mixin bytecode before application. Primitive and reference arrays retain their runtime type, length, contents and shallow-copy behavior. No mod files are modified, and the mixin's interfaces and injections remain enabled.
+
+`MixinArrayCloneCompatibility.replaceArrayClones(ClassNode)` provides the same bytecode normalization for callers that already own a preparation hook. It returns whether any call was replaced and is safe to repeat. The library contains no addon or Flight Control implementation references; consumers select the affected target and mixin.
+
+
+## Operator protection bypass API
+
+`com.rieno.gadgetsandgizmos.lib.access.ProtectionBypass` provides session-scoped server protection bypasses. All calls belong on the owning server thread.
+
+- `REQUIRED_PERMISSION_LEVEL` is `2`.
+- `setEnabled(ServerPlayer, boolean)` returns the resulting state. Enabling requires an operator at level 2 or higher.
+- `isEnabled(ServerPlayer)` rechecks operator permissions and revokes the session when they are lost.
+- `isEnabled(MinecraftServer, UUID)` resolves the current online player on that server.
+- `clear(ServerPlayer)` ends one player's session; `clear(MinecraftServer)` ends all sessions on a stopped server.
+
+Bypasses start disabled, are cleared on logout or server stop, and do not persist in NBT. A replacement player session does not inherit the old state. WorldAccessPolicy access checks, all ShipPermission actions and optional AeroClaims/Open Parties and Claims player protection integrations consult this API. The bypass does not change automatic unclaimed checks or physical staff safety checks.
+
+`ShipPermissionManager.canManage(UUID subLevelId, UUID playerId)` allows the saved owner or an online operator with an active bypass to edit a claimed ship's permissions. Obtain the manager through `get(MinecraftServer)` to associate UUID-based checks with the server. `allows` and `set` honor active bypasses; `owner` and `isOwner` retain their saved ownership meaning. Saved owners, bindings and permission IDs remain unchanged.
+
+
+## ACC physics staff authorization
+
+`PhysicsStaffInteractionGuard.authorizeTarget` and `authorizeMovementTarget` now authorize staff actions exclusively through `ShipPermissionManager` and the existing `ShipPermission.PHYSICS_STAFF` (`physics_staff`) permission. The staff guard does not consult `WorldAccessPolicy` or external claim mods. Both Simulated staff action and drag packets continue to call this shared guard. Owners and permitted members can use the staff; unowned ships retain ordinary staff access. Operator session bypasses continue to use `ProtectionBypass`. Initialization, unloaded-target and movement safety checks remain in effect.
+
+The addon ACC permissions modal already exposes the Physics Staff checkbox, using the existing saved permission ID and bit position. Enabling or disabling it applies to bound sublevels and is rechecked during dragging.
+
+Built-in AeroClaims and Open Parties and Claims integrations, dependency declarations and mixins have been removed. `WorldAccessPolicy` retains its public provider registration and access methods for consumers. Registered policies still govern other API consumers, and `unclaimed` additionally rejects ships owned through `ShipPermissionManager`, including bound sublevels; operator bypasses do not authorize automatic cleanup of owned ships.
+
+
+## Mechanical crafting in EMI
+
+`com.rieno.gadgetsandgizmos.lib.compat.emi.MechanicalCraftingEmiRecipe` is a client-side, optional EMI API for displaying Create mechanical crafting recipes at their actual grid dimensions. Construct it with an `EmiRecipeCategory`, a `RecipeHolder<MechanicalCraftingRecipe>`, and the current `HolderLookup.Provider`.
+
+`MechanicalCraftingEmiRecipe.createCategory(ResourceLocation id, EmiRenderable icon)` preserves the caller's namespace and ID and uses Create's localized `create.recipe.mechanical_crafting` title. The consuming mod registers the category, workstations, and recipes and applies its own content filters. Load this API only when EMI is available on the client.
+
+The original addon recipe-display constructor remains as a deprecated compatibility wrapper. Controller draft saves no longer clone graphs or image assets into an inserted linker. Existing stored linker graphs, shared graph import/export, controller persistence, database schema, and saved identifiers are preserved.
+
+## Entity render role snapshots
+
+`com.rieno.gadgetsandgizmos.lib.client.render.EntityRenderRoleCache` caches one supplied `Predicate<LivingEntity>` on the client render thread. `get(rendered)` resolves `HeadwearRenderSource` proxies to their real entity and reuses the role while the world tick, entity age, level, mount UUID and seat position remain unchanged. Both positive and negative results are cached, including while single-player simulation is paused. `invalidate(rendered)` discards an explicitly changed role; `clear()` releases all snapshots. Cache keys are weak, levels are weak references, and snapshots do not retain entities or vehicles.
+
+The addon pilot-cap mixin consumes this cache. Pilot/controller discovery consumes the existing `BlockEntityLookupApi.findLoadedExact` API in a bounded area beside the seat, preserving the existing front/back seat distance rule and SCM checks without collecting an entire ship or requesting chunk tickets. Explicit pilot-cap equipment is checked before role discovery.
+
+Validation: both clean builds succeeded, and native checks in a copied Youtube world passed for scheduled pilot caps, render proxies, explicit caps without seats, nearest-controller selection, cached positive/negative roles, explicit invalidation, tick/mount/seat changes, dismounting and entity removal. The 10,000-call pilot-cap lookup benchmark fell from 45,668,336 allocated bytes to 480,072 bytes (about 99% less). Full-scene frame measurements did not establish an overall FPS improvement or reproduce the reported two-second cadence consistently; a remaining paused-frame stall was sampled in a native graphics-buffer upload through ImmediatelyFast.
+
+## Telemetry orientation and scene update APIs
+
+`OrientationMath.pitchYawRollDegrees(Quaterniondc)` returns a `Vec3` containing pitch (X), yaw (Y), and roll (Z), in degrees, using YXZ rotation order. Yaw spans -180 to +180 degrees; a flat ship can turn through every heading while its pitch and roll remain zero. The input quaternion is normalized without mutation. Missing, zero-length, or non-finite components return zero. Pitch spans -90 to +90 degrees; Euler heading and roll are ambiguous at the vertical pitch singularity.
+
+`ViewSceneRenderer.updateSections(LevelRenderer, minX, minY, minZ, maxX, maxY, maxZ)` forwards an inclusive section range to retained secondary scene renderers. It immediately returns when there are no scenes or the source belongs to a secondary scene. Single-section and chunk update APIs remain available. Sodium integration uses this batch method for chunk updates.
+
+SCM authority calculations reuse their synchronized scratch buffers and reject a candidate only when actuator component bounds prove that it cannot meet the existing residual tolerance. Control limits, solver iteration limits, and authority search resolution are preserved. Airship navigation omits a preliminary force calculation when the authored propulsion branch replaces it.
+
+`ReflectionMethods.find(Class<?>, String, int)` caches compatibility method discovery by class, method name, and parameter count. It preserves declared-method order and prefers the supplied class over its superclasses; interfaces are not traversed. The same method object is reused, and absent methods remain inexpensive. Methods retain the previous best-effort accessibility behavior. Callers must not change the returned method's accessibility. The class-scoped cache allows class loaders to be collected. `ReflectionMethods.invalidate(Class<?>)` rebuilds an entry when a host changes class metadata.
+
+## Loaded face support lookup
+
+`BlockEntityLookupApi.findLoadedBehindFace(Level, UUID, BlockPos, Direction)` resolves the block entity one block behind the supplied face, using the opposite direction in the target's root or Sable plot coordinates. A null face, missing SubLevel, unloaded chunk, or missing block entity returns null. It neither loads chunks nor adds tickets, and never falls back from a missing SubLevel to a root block at the same coordinates. Consumers retain their own binding identity and retry policy.
+
+## Independent client interpolation
+
+`SubLevelClientRenderApi.interpolatedPose(ClientSubLevel subLevel, float partialTicks)` returns an owned `Pose3dc` snapshot interpolating position, orientation, rotation point and scale from Sable's last and logical poses. It does not call `ClientSubLevel.renderPose(float)` or alter the shared cached render pose. Use this client API for lenses or shape/model calculations that sample a different interpolation time from the current world render.
+
+The client `ViewTransforms` pose provider now uses this snapshot API. Remote feed lens poses use `getGameTimeDeltaPartialTick(true)`, matching Sable's terrain interpolation while paused. Existing view controls, serialized source identifiers and server transforms are unchanged.
+
+## Bounded client text input
+
+`com.rieno.gadgetsandgizmos.lib.client.ui.TextInputScreen` is a client-only abstract screen for collecting one text value. Its protected constructor accepts a nullable parent `Screen`, title `Component`, nullable initial text, nullable `Consumer<String>` confirmation callback, and maximum length (clamped to at least one).
+
+Consumers create their own widgets in `init()` and call `initializeInput(EditBox)` to register and focus the field. The limit is applied before the initial value, and current edits survive widget rebuilding on resize. Call `confirm()` from a Save button; Enter and keypad Enter also confirm. Escape or `onClose()` returns to the parent without invoking the callback. Confirmation supplies the field text unchanged, including whitespace, on the client thread; consumers own normalization and packet submission.
+
+The dialog inherits its parent's pause behavior; a null parent uses normal screen pausing. The API does not load addon classes or register content. Existing controller dialog constructors and trimming behavior remain available through the addon's `ControllerTextInputScreen`.
+
+
+## Native schedule authoring and live SCM drive geometry
+
+`lib.client.schedule.CreateScheduleInputFields` builds the registered Create input's own widgets. `data(input)` includes native defaults, `choices(key)` exposes the native ordinal labels, and `edit(input, key, val)` applies the native text filter and numeric bounds. This API is client-only.
+
+`CreateScheduleInputScreen` retains its existing data-only constructor and adds a complete-input constructor accepting `Consumer<IScheduleInput>`, a destination suggestion callback and a type predicate. The editor handles registered instruction/condition types, native widgets, destination completion, ghost item parameters and configured inventory items. The caller owns the detached input and applies the accepted result to its own graph or schedule.
+
+`MountedSeatRegistry.discover(bodies, maximumBlocks)` discovers seats in loaded body plots without forcing chunks. `isMountedAt(level, pos, mount)` accepts plot mounts and world-space mounts tracked on the seat's body. Player occupancy excludes dead players, spectators and NeoForge fake players, deduplicates player UUIDs and seat addresses, and retains ordinary entity occupancy separately for seat availability.
+
+`KineticGraphHelper.getDownstreamNeighbours(block)` follows Create's actual connection rules while excluding the source side and unrelated powered branches. Zero-ratio outputs retain compatible reverse connections where Create exposes them.
+
+`PropellerForceGeometry` supplies an unsigned thrust axis and application point in the owning block's local frame. An addon implements it for propellers with moving heads; the consumer applies the provider's signed thrust separately.
+
+`ScmSpeedGroupAllocator.Influence.at(force, pos, center)` derives the current moment arm. `allocatePhysical(influences, force, torque, maximumPower)` allocates independent positive efforts against a physical wrench. The existing normalized allocator remains available. Hosts remain responsible for drivetrain ownership, calibration curves and selector routing.
+
+`ScmGeometryFrame` retains an origin and orthonormal axes, transforms saved positions/directions into a live frame, remaps its origin, and reads/writes additive NBT. Invalid or missing stored frames return null so callers can retain legacy geometry.
+
+`ScmPoseControl.advance(current, target, degreesPerSecond, tickSeconds)` bounds continuous joint setpoint motion without changing the requested pose.
+
+These APIs do not depend on addon classes or own addon blocks, schedules, maps or saved identifiers.
+
+
+## Ground route recovery and steering API
+
+- `ScmGroundSteering.update(headingError, curvature, forwardSpeed, yawRate, steeringFeedForward, tickSeconds)` retains the selected turn across opposing-heading noise and advances a physical yaw setpoint at 1.6 normalized units per second. Keep one instance per active vehicle command; discard it when command ownership changes. Reverse steering is converted once by the host at its actuator boundary.
+- `ScmControlAxes.routeSteeringDemand` blends curvature tracking with heading recovery. `groundRecoverySpeedLimit` reduces speed through a large heading correction while preserving an already stopped command. `steeringSignal` rounds signed position inputs symmetrically, including a neutral deadband; propulsion selectors continue to use `ScmSpeedControl.quantizedSignal`.
+- `ScmControlPriority.navigationOwnsYaw` keeps ground transit yaw available for connected assemblies and hands it to an authored final heading only during final approach. Flight retains its existing translation and final-heading authority.
+- `GroundPathPlanner.forwardSplineControl` derives recovery lookahead from horizontal displacement and the vehicle heading. Height differences no longer dilute ground steering, and large lateral offsets use a longer forward merge.
+- `SplineConstraintFrame.canGuide` has an additive overload accepting maximum heading angle and lateral speed, so hosts can wait for tyre alignment before attaching a route guide. `canAdvance` requires physical endpoint capture on the selected axes before committing an ordered spline cursor. Existing overloads remain available.
+- `ScmPoseControl.steeringTarget` interpolates generic `SteeringPose` samples from neutral through measured positive or negative yaw authority. Apply the resulting angles with `advance` for a bounded physical setpoint. Missing directional response returns `null` so the host can retain its other actuator strategy.
+- `ScmSteeringMode.wheelDemand` retains the configured single steering axle when mass moves the centre of mass across it; multiple axles continue to use their relative positions. No serialized IDs or saved data keys change.
+
+The addon supplies live world geometry, calibrated responses, route state and actuator bindings. The library owns reusable recovery, authority, interpolation and signal math.
+
+## Explicit signal value types
+
+`com.rieno.gadgetsandgizmos.lib.control.SignalValueType` exposes `REDSTONE` and `SCALAR` with stable ids `redstone` and `scalar`. `optionIds()` returns the dropdown order; `fromId(String)` defaults missing, null, or invalid ids to `REDSTONE` without inspecting the numeric value.
+
+`toRedstoneStrength(double)` rounds and clamps to 0-15: Redstone 1 gives strength 1; Scalar 1 gives strength 15. `toNormalizedRedstone(double)` divides the quantized strength by 15 for transport. `toScalar(double)` preserves continuous 0-1 precision for Scalar values and converts quantized Redstone strengths to 0-1 for analogue receivers. Negative values clamp to zero, positive infinity to full output, and NaN to zero.
+
+The addon saves `SignalValueType` on Configured Key Output, Direct Target Output, Linker Face Output, Local Redstone Output, Redstone Link Output, and Set Block Data nodes, including nested functions. Missing selections now become Redstone; existing graphs using 0-1 fractions must select Scalar. Set Block Data applies the selection only to signal fields; RPM, angles, arbitrary data, and raw Nixie values keep their existing units. The library has no addon dependencies or registrations.
+
+
+## SCM vehicle and steering availability
+
+`ScmBuiltinControlModes.setGroundSeaEnabled(boolean)` and `setPlaneEnabled(boolean)` add or remove the respective built-in control modes from the shared registry. `isGroundSeaEnabled()` and `isPlaneEnabled()` report their availability. Both remain enabled by default in the library for API compatibility; a consuming mod owns its server defaults and configuration synchronization. Disabled modes resolve to Airship through `ScmControlModeRegistry.resolve`, while the stable `car` and `plane` identifiers remain unchanged.
+
+`ScmVehicleClassifier.isSelection(String)` recognizes saved built-in identifiers even while disabled. `isAvailableSelection(String)` validates current selectable modes, and `suggestAvailable(boolean wheels, boolean liftingSurfaces)` restricts automatic detection to enabled modes. Wings retain precedence over wheel discovery.
+
+`ScmSteeringMode.availableSelections()` omits Front Wheel, Rear Wheel, 4-Wheel and Tank while Ground/Sea is disabled. `isAvailable()` and `isAvailableSelection(String)` expose the same policy. `availableOrFallback(ScmSteeringMode)` resolves live steering without rewriting a disabled saved choice. Rudder, Custom and Auto remain available. The existing `selections()`, `fromId(String)` and `isSelection(String)` methods retain their complete serialized selection set.
+
+
+## Live spatial obstacle bypasses
+
+`com.rieno.gadgetsandgizmos.lib.navigation.ObstacleDetourPlanner` prepares a complete local bypass through a requested route rejoin. `queue(Request)` retains its candidate and leg cursors between ticks. A request supplies the world start/rejoin, travel direction, horizontal and vertical clearance offsets, maximum offset, vertical movement availability, and upper/lower preference.
+
+Call `QueuedPlan.advance(Probe, maximumProbes, workAvailable)` on the owning game thread. The host probe must validate the full swept vehicle hull against current loaded world and vehicle geometry, and reject directions its controls cannot execute. The boolean work supplier lets callers use a measured tick allowance. `waypoints()` remains empty until every leg of one candidate is clear; `finished()` with empty waypoints means no candidate succeeded. Accepted routes start with a pure sidestep or vertical step, pass the obstacle, then return to the requested rejoin. Discard/requeue the plan when its scene, start, or rejoin becomes incompatible, and keep checking the next live movement segment after adoption. This API does not mutate saved routes or vehicle state.
+
+`RouteTrafficPriority.requestsDetour(Decision)` requests a bypass for a yielding conflict or either participant in a head-on encounter. `prefersUpperPass(subjectId, otherId)` gives opposing UUID pairs complementary vertical preferences. Each vehicle's right-hand direction similarly gives opposing traffic separate lateral passages. Existing traffic decisions and serialized routes are unchanged.
+
+The SCM consumer supplies its connected compound hull, loaded Sable collision policy, and live acceleration authority. It commits accepted prefixes to the vehicle's transient route, retains the authored schedule spline, restores normal traffic yielding after the prefix is traversed, and can reopen planning when another obstacle closes the bypass. Full path search remains the fallback when local spatial candidates fail.
+
+
+## Saved equipment model offsets
+
+`com.rieno.gadgetsandgizmos.lib.item.ItemModelOffset` stores bounded integer steps in an item-owned custom NBT key through `DataComponents.CUSTOM_DATA`. Its constructor accepts the key, minimum and maximum steps (including zero), and positive finite model pixels per step. `readSteps`, `writeSteps`, `adjustSteps`, and `offsetPixels` clamp the saved value, avoid arithmetic overflow, and preserve other item data. Zero removes only this API's key; an empty custom component is removed. Mutating methods return whether the stack changed. The host owns item eligibility, server authorization and synchronization.
+
+`com.rieno.gadgetsandgizmos.lib.client.ui.EquipmentSlotScrollHandler.matchesSlot` identifies a player's own humanoid armor slot by its backing inventory and slot index, including creative slot wrappers. `handle(ScreenEvent.MouseScrolled.Pre, Player, EquipmentSlot, Predicate<ItemStack>, IntConsumer)` consumes finite vertical wheel input only over an eligible equipped stack with an empty carried stack, supplies one signed step and cancels the event. Register it on the client event bus; the host sends the adjustment request.
+
+`com.rieno.gadgetsandgizmos.lib.client.render.HeadOffsetArmorModel` wraps a posed humanoid head armor model. Positive pixel offsets move armor upward along the rotated head; its render calls preserve the original model parts and restore the caller's pose even when rendering fails. Return it from an item's client `getGenericArmorModel` hook only for the head slot. Existing textures, tint, trim and glint passes continue using the wrapped model. Keep client APIs off the dedicated server.
+
+The addon uses quarter-pixel steps from -4 to +4 model pixels, saves `PhysicsGogglesHeight` on the goggles stack, validates signed steps and the current menu on the server, synchronizes the inventory, and relies on normal equipment packets for tracking players and later joins. Existing goggles default to zero; binding data and HUD settings are preserved. Both stable and experimental consumers register the helpers independently.
+
+
+## Display source selection and linked text sizing
+
+`com.rieno.gadgetsandgizmos.lib.display.DisplaySourceSelection.available(sources, presentations)` merges payload and presentation-only sources in order, preserving the payload when both lists contain the same ID. `selected(sources, selectedId)` returns the currently available source or null so the host can choose a fallback. The host must resolve a manual selection before automatic presentation preferences.
+
+`DisplayTextScale` defines the additive `LinkedTextScale` NBT key, a default multiplier of 1.0, limits of 0.25-4.0, and a 0.25 adjustment step. `normalize` and `read` validate network or saved input. `supportsFrame` permits display-link text, schedules, and external text/CRN frames while excluding content owned by a graph node and non-text sources. `layout` returns fitted font scale, row spacing, vertical position, maximum text width, and the visible row count. `canvasSize` computes the virtual schedule viewport for the requested multiplier. Hosts render within that viewport and keep source selectors outside the scaled content.
+
+The addon persists the selected source as `AccDisplaySelectedSource` and text size as `LinkedTextScale`, copying both settings across connected display panels. Existing saves use their previous default text size. The display wrench GUI provides decrease, reset-to-100%, and increase controls; the scale packet updates the setting without changing source selection. Authored ACC nodes, graphs, plotters, cameras, tablet mirrors, and CC:Tweaked retain their own sizing. Source tabs include presentation-only schedules and remain usable while a terminal source is active.
+
+## Element inspector layout
+
+`com.rieno.gadgetsandgizmos.lib.display.ElementInspectorLayout.forType(type)` supplies the shared font, color, and style rows for element property inspectors. Text inputs, buttons, and toggles share paired style columns; values retain their separate port row. `hasFontControls`, `pairedStyles`, offset accessors, `colorLabelOffset`, and `fontStyleWidth` let hosts draw controls and calculate hitboxes from the same policy. The API has no client or addon dependencies.
+
+The HUD designer consumes these rows for drawing, font/style selection, and color/font sliders. Long button labels use the existing `GraphTextLayout.ellipsize` API. Canvas previews are clipped to their bounds, and canvas selection cannot capture sidebar clicks.
+
+
+## TextInputScreen background rendering
+
+`TextInputScreen.renderBackground` now leaves the world visible without Minecraft menu blur or dimming. Consumers draw their own dialog background in `render`; bounded input, resizing, focus, Save/Enter delivery and cancellation use the existing library API.
+
+
+## GraphValueMirrors
+
+`GraphValueMirrors.merge(live, sampled, authoritative)` returns a new map without changing either input. Preview samples fill absent ports and replace ordinary live values. For ports selected by the predicate, existing executed values take precedence, including empty strings, false and zero. The host supplies its policy for authoritative ports; the library has no addon dependency.
+
+
+## GUI partial grids
+
+`GuiTextureRegion` defines a validated rectangle inside a texture atlas and draws it at native or requested dimensions. `GuiNineSlice` takes nine regions in row order (top-left through bottom-right), requiring matching column widths and row heights. `draw(graphics, x, y, width, height)` keeps native corners and stretches edges and center. The overload with `borderScale` scales the corners with the host layout; small destinations reduce opposing corners proportionally without overlapping. Nonpositive destination sizes do not draw; a positive destination requires a finite, positive border scale. Each region is sampled separately, so atlas gutters are excluded. Texture IDs, partial coordinates and widget text remain owned by the consuming addon.
+
+
+## Authoritative physical fields during controller recovery
+
+`com.rieno.gadgetsandgizmos.lib.nbt.CompoundTagCopies.copyReplacing(source, replacements, keys)` returns an independent copy of the source with an authoritative field group replaced. A key missing from `replacements` is removed from the result; other source fields remain. Both retained payloads and replacement values are copied. Null source/replacement snapshots are supported; null keys leave the source unchanged in the returned copy.
+
+The addon separates physical controller state from retained SCM programs. The additive `ControllerPhysicalState` block-NBT compound stores the actual embedded block, material, block entity data, and current placer identities, including an empty snapshot for standalone controllers. Explicit block snapshots take precedence over database attachment data on reload. Existing saves without this compound retain their legacy data; standalone controller block states reject embedded backing data.
+
+SCM persistence recovery, publication, and sublevel rebinding require a physical Ship Control Module. Retained records cannot create an SCM on an ordinary ACC. Recovering graphs/settings preserves the current mount, orientation, backing data, and placer identities. Controller items clear their physical snapshot while retaining their program metadata, and schematic payloads retain their existing placement/remapping behavior.
+
+## ARGB opacity API
+
+`com.rieno.gadgetsandgizmos.lib.color.ColorOpacity` exposes `opacity(int color)` as a normalized 0?1 value and `withOpacity(int color, float opacity)` to replace alpha while preserving RGB. Replacement values clamp to 0?1; non-finite values become transparent. Colors remain packed ARGB integers.
+
+HUD editors can combine this API with `ColorPickerModal`: the modal owns color selection, live preview, accept and cancel, while the host owns its preview hitbox, opacity slider, model updates and undo history.
+
+## Camera scene compatibility â€” 11 October 2026
+
+`ViewSceneRenderer` captures now retain their owned entity and damage buffer sources ahead of optional deferred buffer replacements. Remaining scene geometry is flushed before its view matrix is restored, using the capture framebuffer and supplied projection/view matrices.
+
+When Entity Culling is installed, secondary captures ignore cached player-view occlusion and leave player out-of-camera history unchanged. Lens frustum and depth tests still apply. The ordinary player view retains its optional render optimizations.
+
+No public methods, saved data, identifiers, or addon-facing contracts changed. Existing ACC and CCTV consumers receive the protection through the current capture API. These changes address identified compatibility gaps; the reported partial-player screenshot still requires an in-game retest in RE_Rotaria.
+
+## Camera capture render stage isolation
+
+The existing ViewSceneRenderer API now preserves its framebuffer bindings and viewport across NeoForge world render callbacks. Callbacks that clear screen-sized post-processing targets can no longer change the viewport used by subsequent camera terrain and entity draws. This applies to display and tablet feed captures; direct camera control keeps the normal world render path. No new public methods or addon imports are required.
+
+In RE_Rotaria, KubeJS 2101.7.2-build.321 clears its highlight targets after the sky pass, then rebinds the main target without restoring the viewport. Live inspection measured terrain using 2560 x 1369 while camera entities used 264 x 168. Restoring the capture target after the callbacks made the inspected terrain and entity viewports agree at 264 x 168.
+
+In-game verification: the user confirmed correct alignment after the capture viewport was restored, including zoom. The fix does not change camera gameplay, saved data, or display/tablet callers.
+
+Validation: library and addon clean builds passed (62 tests total). The addon bundle contains the freshly built library with ViewSceneRenderStageMixin registered for the client. The equivalent live viewport correction was confirmed by the user, including camera zoom.
+
+
+## Persistent strand anchors
+
+`com.rieno.gadgetsandgizmos.lib.physics.StrandAnchor` retains a strand UUID, arc distance,
+optional owning block position, and optional owner SubLevel UUID. It has no addon or
+Simulated dependency. Owner positions are copied to immutable `BlockPos` values.
+
+- `write(CompoundTag)` and `read(CompoundTag)` retain the existing `AnchorRopeUUID` and
+  `AnchorPathPosition` keys. `AnchorOwnerPos` and `AnchorOwnerSubLevelUUID` are additive.
+  Old saves load with an unknown owner; use `withOwner(...)` when the strand reappears.
+- `sample(...)` / `samplePath(...)` sample current world-space points by arc distance,
+  skip collapsed segments, and clamp to the endpoints. Empty or nonfinite paths return
+  `null`; the point list is read synchronously and is not retained or mutated.
+- Call `isBroken(ownerLoaded, ownedStrandId)` only when the strand is unavailable.
+  `ownerLoaded` must mean the owning chunk/SubLevel and its saved block entity data are
+  available. Unknown or unloaded owners never count as a broken strand. A matching owner
+  UUID also remains valid while registration with the strand manager is pending.
+
+Consumers keep their last attachment position while the source is unavailable, save
+owner information when it is discovered, and remove attachments only after confirming
+that a loaded owner no longer owns the saved strand. Gameplay interactions, content
+registration, and dependency-specific physics operations remain in the consuming addon.
+
+## Scene texture precision and presentation
+
+`SceneRenderTargets.createPreciseLike(RenderTarget source, int width, int height, boolean clearError)` creates an owned RGBA16F texture target with linear filtering. It retains the source's depth/stencil settings, including through resize and stencil changes. Existing `createLike` behavior is preserved.
+
+`SceneRenderTypes.opaqueTexture(ResourceLocation texture)` creates a render type for an already lit, opaque scene. Retain it with the texture. It samples RGB without using intermediate framebuffer alpha, player lightmap, or world fog, and distributes final 8-bit rounding error with stationary noise below one color step. Register its shader through the library client bootstrap. The vertex format is POSITION_TEX_COLOR.
+
+`ViewSceneRenderer.draw` and `drawFitted` now use these capabilities. This preserves the vanilla fog background at the horizon and sunrise colors, which previously disappeared or blended incorrectly through the text shader. Public view signatures and camera source contracts are unchanged.
+
+Validation: both clean builds passed, with 68 tests passing. A hidden GPU context compiled and linked the actual scene shader, confirmed preservation of fog RGB across intermediate alpha values, and measured approximately seven times lower average-column gradient rounding error with precise storage and final dithering. The complete in-game feed still needs the requested visual recheck.
+
+The actual compiled SceneRenderTargets API also passed a hidden-context lifecycle check: creation with depth on/off, resize, stencil enable and source matching, framebuffer completeness, and disposal preserved precision/filtering without GPU errors.
+
+## Physical shaft angle accumulation
+
+`com.rieno.gadgetsandgizmos.lib.kinetics.KineticAngleHelper.advanceRotationAngleDegrees(double angleDegrees, float rpm, long elapsedTicks)` advances a caller-owned shaft angle using Minecraft's 20 ticks per second and returns a normalized angle in (-180, 180]. It adds no model alignment or position-dependent phase offset. Zero RPM retains the angle; zero or negative elapsed ticks add no motion.
+
+Consumers retain their last sample tick and supply elapsed ticks since that sample. Use zero elapsed ticks for the first sample after placement or loading so saved angles survive reloads without a world-time jump. Explicit held angles and precise source angles can still replace the accumulated angle through the existing APIs.
+
+```java
+long elapsed = lastSampleTick == Long.MIN_VALUE ? 0L : now - lastSampleTick;
+angle = KineticAngleHelper.advanceRotationAngleDegrees(angle, rpm, elapsed);
+lastSampleTick = now;
+```
+
+The Aileron Bearing consumes this API for shaft motion. Selecting Computer mode without a target command retains each head's current angle, and an idle fresh bearing keeps a neutral target.
+
+## Configurable action input API
+
+`lib.client.input.ClientActionKey` is a client-only configurable NeoForge key mapping. The owning mod supplies its translation key, category and default key, and registers it through `register(event::register)`. `isHeld()` reads the configured keyboard or mouse button and NeoForge modifier, independently of sprint/sneak movement. `sample(active)` returns press/release transitions and releases inactive contexts. `matchesKeyboard` and `matchesMouse` support actions intercepted before vanilla handling. `label()` and `hint(translationKey)` resolve the current assignment every time they are displayed, including unbound and modified keys.
+
+`lib.control.ActionInputState.sample(previous, current)` derives held, pressed and released action masks. Owning mods define the action bits, validate received masks, and choose how to apply actions on the server.
+
+`lib.control.ActionKeyLabels` registers lazy label providers keyed by the owning mod's key translation ID. `ClientActionKey` installs its label provider. Common-side tooltips can use `label(action)` or `hint(translationKey, actions...)` without loading Minecraft client classes. Duplicate IDs are rejected. Labels are looked up live; unregistered IDs display the unbound key label.
+
+`lib.control.PlayerActionInputs.update(player, held)` retains validated server-side player actions in memory. `isHeld(player, action)` expires samples after 40 player ticks; callers refresh active input within that interval and send zero when controls release. Keys and input state are not saved. Owning mods define and validate their action masks and call these methods only on the owning game thread.
+
+## Dynamic scene-buffer readiness
+
+`com.rieno.gadgetsandgizmos.lib.client.render.DynamicRenderBuffers.enableForFrame(VeilRenderer renderer, ResourceLocation owner, DynamicBufferType... buffers)` requests the owner's scene buffers on the render thread and returns whether the caller can use them in this frame.
+
+- `false`: the buffer configuration changed, or one or more required buffers remain inactive. Skip the dependent render pass and retry on a later frame.
+- `true`: the request did not change the configuration and every required buffer is active.
+
+Use an owner ID from the consuming mod's namespace. Release the owner's request through Veil's `disableBuffers` API when the effect no longer needs it. This helper does not create support for buffers disabled by another renderer.
+
+The library's Veil lighting compatibility consumes this API before binding or clearing the light framebuffer. Veil 4.0.0 and 4.3.2 were checked. When Iris prevents Veil's albedo and normal buffers from becoming active, the unsupported deferred-light pass is skipped; supported rendering and idle buffer release continue. No addon-specific types are exposed.
+
+
+## Retained interaction data outputs
+
+`GraphInteractionOutputs<V>` retains the latest submitted value per host-defined data-port key independently of player-scoped UI storage. `submit(key, value, playerId)` publishes a non-null value and an optional player UUID; submissions from different players replace the shared graph value for that port. `valueOrDefault(key, fallback)` returns the latest submission, including empty strings, or the supplied fallback before a submission exists. `submission(key)` returns the value and owner, or null if absent.
+
+The host chooses when graph evaluation reads submitted outputs and when personal UI evaluation reads personal state. `snapshot()` returns an immutable map for host-owned serialization; restore entries through `submit`. Call `retainKeys(predicate)` after compiling topology changes and `clear()` when resetting the runtime. Keep mutation and evaluation on the owning thread. This API does not depend on addon nodes, NBT, or Minecraft player classes.
+
+
+## Numeric comparisons and pulse counters
+
+`GraphComparison.numbers(a, b, operator)` compares numeric values across integral and floating-point representations. Equality uses numeric equality, including signed zero; NaN is unordered and only satisfies inequality. `normalizeOperator` resolves symbolic and named operators to `==`, `!=`, `<`, `<=`, `>`, or `>=`, returning an empty string for unsupported operators. `matches(operator, equal, ordering)` applies the same operators to host-defined nonnumeric equality and ordering.
+
+`GraphCounters.wholeCount(value)` truncates finite positive limits to a nonnegative int, saturating at Integer.MAX_VALUE and treating nonfinite values as zero. `limitedPulse(count, limit, reset)` returns the new one-based execution count and whether the pulse passed. A true reset restarts before processing that pulse; the host owns reset-only execution paths. There is no per-loop iteration cap on retained pulse counts.
+
+`GraphCounters.step(value, amount, direction)` adds or subtracts one step. Counters start at zero in the host, permit negative results and fractional steps, and retain the previous finite value for nonfinite steps or overflow. `Direction` exposes stable `increment` and `decrement` IDs; missing or unknown IDs default to Increment. Hosts own graph state, persistence, node registration, controls, and execution dispatch.
+
+
+`GraphDataDependencies.compile(graph, dataEdgePredicate)` captures data dependencies separately from execution edges. `affectedNodes(nodeId, port)` returns an immutable set of direct and transitive consumer node IDs for targeted evaluation-cache invalidation, stopping safely at cycles. Recompile after topology changes; keep cached traversal on the owning graph thread. The host decides which retained value changes invalidate evaluation results.
+
+
+## Ship access modes and ownership transfer
+
+`lib.scm.ShipPermissionManager.isEnabled(MinecraftServer)` enables ship permissions on multiplayer servers and integrated worlds opened to LAN. Private single-player worlds ignore saved restrictions, reject permission edits and do not create new claims. The check uses common server APIs and is evaluated on every action, so opening to LAN immediately activates the saved mode and permission list. Existing owners, members and modes remain saved between sessions.
+
+`isOpen(UUID)` reads the saved access mode through connected-body bindings. Unclaimed ships, new claims and legacy claims without an `Open` tag default to Open. `allows(...)` ignores the permission list while Open or while permissions are disabled. Closed claims continue to grant all actions to the owner, honor session-based operator protection bypasses, and apply each member's saved rights. These changes apply equally to interaction, graph editing, placement, destruction, physics staff use and storage. External protection providers retain their rules.
+
+`setOpen(UUID subLevelId, UUID actorId, boolean open)` changes the mode only for the owner or an active protection-bypass operator. Closing an ownerless ship creates a claim for the actor; leaving it Open creates no claim. Both access modes preserve the permission list. The `Open` boolean is saved alongside the existing `Ship`, `Owner`, `Members` and `Bodies` tags without changing those keys or permission IDs. Legacy claims become Open until manually closed.
+
+`transferOwnership(UUID subLevelId, UUID actorId, UUID ownerId, String prevOwnerName)` requires management rights and a different, non-null new owner. It updates the root claim, preserves its mode and connected-body bindings, removes the new owner's redundant member entry, and retains the former owner as a member with every ship action. The former owner loses management rights unless an operator protection bypass is active. The supplied previous-owner name is saved for offline member display.
+
+Call these APIs on the owning server thread. `members(...)` continues to return immutable snapshots of explicit members; consumers should add the current `owner(...)` to any player list and show its implicit full access separately. The addon permission screens now consume these APIs, label the owner, and expose Open/Closed access and ownership transfer. Permission controls are unavailable in private single-player worlds.
+
+`lib.util.PlayerNames.resolve(MinecraftServer, UUID)` resolves an online player's name, then the local UUID profile cache, then the UUID text. It performs no remote name lookup. A null player ID returns an empty string; a null server uses the UUID fallback.
+
+
+## Counter reset API
+
+`GraphCounters.step(double value, double amount, Direction direction, boolean reset)` adds reset control without changing the existing three-argument overload. When reset is true, it returns zero without applying the step, including when the step is non-finite. With reset false, it uses the existing increment/decrement behavior. The host owns pulse timing and retained state.
+
+
+## Chat API
+
+`ChatArguments.capture(startWord, message)` returns an optional immutable list of string arguments. Matching is literal and case-sensitive at the start of the message; the prefix must end at whitespace or the end of the message. Separating whitespace is collapsed. A prefix-only match returns an empty list, while a missing or blank prefix never matches.
+
+`ServerChatApi.listen(server, receiver)` observes accepted raw player chat with the sender UUID on the server thread. Close the returned subscription when the host unloads. Server shutdown closes all subscriptions. Messages sent through `ServerChatApi.send(server, playerId, text, global, allowGlobal)` are literal system chat: private mode requires an online recipient; global mode broadcasts only when the host-provided gate allows it. Rejected global delivery does not fall back to private delivery. Call send on the owning server thread. System messages are not republished as player chat.
+
+## Worldless container tracking
+
+`TimedItemTransformations.track(Container, @Nullable Level)` accepts a null level and skips worldless recipe probes and client-side containers. It does not inspect the container or change its inventory in either case. A non-null server level retains the existing tracking behavior. The block-entity `setLevel` hook follows the same nullable contract.
+
+Run the library's container lifecycle regression tests with `gradlew runContainerGameTest -PcontainerGameTests=true "-Pneoforge_version=21.1.228"`. The runtime version override meets the local Sable dependency's minimum; it does not change the project's version settings. The tests reproduce temporary chest recipe probes calling `setLevel(null)` and a placed chest detaching and reattaching. They use an isolated world under `build/container-gametest`; test classes and structures are excluded from release jars.
+
+
+
+## Nearby chat audiences
+
+`ServerChatApi.sendNearby(BlockEntity source, String text, boolean allowed)` sends literal chat only within the source root dimension. For a source on a Sable sublevel, recipients must be tracking/riding or contained in that exact sublevel; world-space distance does not add recipients. For a source outside a sublevel, player positions are projected to world space and must lie in the source chunk or one of its eight adjacent chunks. Unavailable sources, disabled delivery, empty messages and empty audiences return false. Call on the owning server thread. Experimental hosted components resolve their real host before choosing the location.
+
+`NearbyChatRange` exposes the same pure UUID/chunk selection rule for other hosts. Its three-by-three chunk bounds include corners, handle negative chunk coordinates and reject other dimensions.
+
+The addon now exposes Broadcast Nearby. It reads legacy BroadcastGlobally NBT values as nearby mode. The existing server config key `server.advanced_controller.allowGlobalChatBroadcast` remains the compatibility gate for nearby delivery so previously disabled servers stay disabled; its description and Java accessor now refer to nearby chat. Private delivery remains independent of that gate.
+
+
+### Chat capture and sender filters
+
+- `ChatPlayerFilter.matches(players, playerId, playerName)` accepts an empty list for all senders, or matches complete account names (case-insensitive) and UUID strings. Nonempty invalid lists match nobody.
+- `ServerChatApi.intercept(server, Predicate<Message>)` subscribes a receiver that returns `true` only after capturing a message that should be hidden. Every active receiver sees the message even if another requests hiding. Close the subscription when its host unloads.
+- `ServerChatApi.receivePlayerChat(server, message)` completes all receivers on the server thread and returns whether the original player message should be canceled before broadcast. Off-thread callers wait for server-thread processing.
+- `Message` now includes the authenticated `playerName`; the original two-argument constructor remains available. `listen` remains an observing subscription and never requests hiding itself.
+- The NeoForge adapter cancels only successfully captured messages; already canceled events remain excluded.
+
+
+### Explicit chat recipients
+
+- `ServerChatApi.sendToPlayers(server, players, text)` sends a literal system-chat message on the server thread to online players whose account name or UUID appears in the list. Names match case-insensitively. Each player receives the message once, including when listed by both name and UUID. Empty lists, blank messages, and lists containing only unknown/offline players deliver nothing. This API never broadcasts or falls back to another recipient.
+- `ChatPlayers.identifiers(GraphValue)` reads raw or typed string entries from a graph list. Invalid entries remain empty identifiers so an invalid nonempty list cannot become an unrestricted audience.
+- `ChatPlayers.parse(text)` and `format(players)` provide comma-separated player-list editing, accepting whitespace between entries as well.
+
+
+### Title announcements and player selection
+
+- `ServerTitleApi.send(server, players, fallbackPlayer, action, text, animation)` sends the vanilla title, subtitle, actionbar, times, clear, or reset packet to listed online account names/UUIDs, once per recipient. Empty lists use only the optional fallback player; unmatched lists never broadcast. Invoke on the owning server thread.
+- `Action.options()` supplies all six command modes. `TimeUnit` converts ticks, seconds, or Minecraft days into bounded nonnegative animation ticks. `Animation.DEFAULT` uses vanilla timings (10/70/20 ticks).
+- `Text` supports literal or JSON components, optional RGB color, and inherit/true/false options for bold, italic, underlined, strikethrough, and obfuscated styles. JSON component data is resolved per recipient, without running a command or reporting command success in chat.
+- `OnlinePlayerSelection` retains saved names/UUIDs, toggles online players by UUID, supports select-all/clear, and preserves offline entries until explicitly cleared.
+- `PlayerSelectModal` is a reusable client modal with online-player checkboxes, skins, scrolling, and All/None/Cancel/Apply controls. It accepts saved identities and returns a typed selection through a callback; client code remains under `lib.client.ui`.
+
+
+### Host-styled player selection modal
+
+- `PlayerSelectModal.renderStyled(..., Appearance, ...)` accepts the host's established panel, button and input-field renderers, plus its selection and text colors. The library retains reusable modal layout, roster rendering and interaction behavior without importing addon UI classes.
+- Player rows use the established worker-selector dimensions (50-pixel cards, 54-pixel spacing). All/None stay on the left; Cancel/Apply use the established compact footer buttons on the right, with a compact fallback on small screens.
+- The original `render(..., ColorPickerModal.Chrome, ...)` remains available as a deprecated compatibility adapter.
+
+## Graph data operations
+
+`com.rieno.gadgetsandgizmos.lib.graph.GraphDataOperations` provides reusable, host-independent operations:
+
+- `int length(GraphValue value)` counts top-level list entries, map entries, or UTF-16 string units (matching the established String Length node). Null and unsupported values return zero. The raw value determines the result, including values wrapped with type `any`.
+- `String stripJson(String text)` decodes JSON primitive strings and recursively joins array/object values with a single space. Object keys are omitted. Numbered object keys are visited in numeric order; other objects retain source order. Null and empty values contribute no text. String escapes are decoded by the JSON parser; punctuation inside string values is retained.
+- The decoder also accepts unquoted numbered keys and missing colons immediately before quoted values in numbered objects, such as `{0"Hello",1:"World!"}`, returning `Hello World!`. Serialized graph `Type`/`Payload` wrappers are unwrapped so list/map text does not include type metadata.
+- Plain text and malformed input are returned unchanged. A null input returns an empty string. This is value extraction, not a JSON-to-JSON conversion or a Minecraft text-component renderer.
+
+The consuming addon owns node IDs, schemas and UI defaults. Gadgets & Gizmos registers `createthrusters:length` (`value:any` -> `length:number`) and `createthrusters:strip_json` (`value:string` -> `value:string`) through the existing graph node/runtime registries. Both are stateless data nodes and require no execution pulse.
+
+## Color picker host appearance
+
+`ColorPickerModal.renderStyled(GuiGraphics, Font, int screenWidth, int screenHeight, Appearance, int mouseX, int mouseY)` renders the reusable picker using host-supplied panel, button and field drawing callbacks. `Appearance` supplies `PanelRenderer`, `ButtonRenderer`, `FieldRenderer`, and the backdrop, title, value, label, border and cursor colors. Callbacks run on the client render thread and receive the final screen coordinates and dimensions.
+
+The styled layout centers the HSV controls, uses a 20-pixel hex field, reserves a gap above the footer, and groups Cancel/Apply buttons at the lower right with the established 62/64-pixel widths. Rendering and mouse hit regions share the same bounds. Live preview, six/eight-digit hex input, HSV dragging, alpha, Enter/Apply and Escape/Cancel semantics are retained.
+
+The existing `render(..., Chrome, ...)` API and its original layout remain available. Passing null appearance to `renderStyled` uses that default renderer. The addon supplies its existing modal panel, option-field and button implementations, so classic textures and V2 theme customization remain host-owned.
+
+## Opt-in view target tracking
+
+The library provides reusable target selection and framing under `com.rieno.gadgetsandgizmos.lib.view`:
+
+- `ViewTargetLock<K>` retains one target identity. `update(origin, range, hits, resolver)` first resolves the current target, then acquires the nearest eligible hit when that target is unavailable or outside range. Distance is measured to the target's nearest bounds surface, allowing large bodies whose centre lies beyond the range. `clear()` releases the transient lock. The caller controls which detected hits and categories are eligible.
+- `ViewTrackingTargets.hits(level, hits, filter, excludedBody)` adapts ray hits on players and blocks belonging to SubLevels into world bounds. `resolve` follows a retained player/body identity using loaded geometry and reapplies the existing ray filter. Ordinary terrain and non-player entities are not tracking targets. A caller can exclude its own body. Player bounds are transformed through their containing body; body bounds use the existing assembly-hull API.
+- `ViewTargetFraming.aim(pivot, target, mount, frame)` resolves a target bearing in a rig's local or global frame. `fieldOfView(pose, bounds, aspect)` fits every bounds corner in the horizontal and vertical axes, including 25% framing space, within the supported 5–120 degree vertical field of view. Targets enclosing the lens or too large to fit use the maximum field of view.
+- `ViewRig.track(angles)` permits full target pitch below the manual hinge limit. Ordinary mouse control limits remain unchanged. `frameTarget(fov)` widens immediately and eases inward until it reaches a stable field of view.
+
+`ViewControlState` adds `autoTracking`, serialized as `AutoTracking`; absent fields and the retained three-argument constructor default to false. `ViewControlInput` adds a tri-state tracking command: `-1` leaves it unchanged, `0` disables it and `1` enables it. Older commands and the retained five-argument constructor preserve the current setting. Invalid tracking values are rejected.
+
+`ViewControlLayout` and `ViewControlPanel` provide a separate reticle toggle in projected overlays and compact tablet controls. The former layout constructor is retained. Control hosts continue sending the existing NBT command envelope; no host-specific packet format is introduced.
+
+The addon Camera consumes these APIs only in Sentry mode with tracking enabled and no direct controller. It acquires from fresh ray samples, retains a target while it remains eligible and within `Max Ray Length`, and restores patrol zoom when released. The graph's `auto_tracking` boolean is labelled `AutoTracking` and defaults to false. An explicit display/tablet choice persists until the graph changes that boolean. Target identities are transient; configuration and tracking overrides survive saves.
+
+Capture hosts call the additive `ViewSource.viewPose(partialTick, aspect)` overload. Its default forwards to the existing pose method, preserving existing providers. Tracking providers can use `ViewTargetFraming.fit` to widen a pose for the actual capture shape. `boundsTag` and `boundsFromTag` synchronize transient bounds and reject absent/non-finite geometry. The Camera sends these bounds only in client updates and uses capture-specific fitting for portrait feeds. Older Camera nodes receive the disabled boolean and its `AutoTracking` label when their graph is read, without replacing an existing value or custom label. The lazy `ViewTargetLock.update` overload resolves candidates only after a retained target becomes invalid.
+
+## Wider tracking acquisition
+
+`ViewAcquisitionCone(origin, forward, range, radius, halfAngle)` is a reusable swept-volume API. It finds the intersection of target bounds with a widening forward radius; an angle of zero gives a cylinder. `point(bounds)` returns a target point inside the sweep and radial range, or null. Large targets can qualify by their nearer edges even when their centre falls outside the cone. Targets fully behind the observer, outside range, or outside the volume are rejected. `bounds()` provides the conservative world envelope for querying loaded bodies.
+
+`ViewTrackingTargets.acquire(level, pose, length, filter, excluded, samples)` combines existing precise ray hits with cone acquisition. The default cone starts at a 1.5-block radius and widens by a 15-degree half-angle. `coneHits` accepts a caller-supplied cone. Players and SubLevels are tested as candidates, then probed against the existing filtered loaded world/SubLevel geometry before becoming tracking targets. The camera's body remains excluded, target eligibility and range remain enforced, and ordinary ray outputs retain their original line casts. Candidate checks are bounded to 32 nearby entries and run only when acquiring; a valid retained lock does not repeat the search.
+
+`ViewRaycast.traceToward` adds a reusable directed query through the same loaded-space traversal. It validates the direction and retains the existing category filter and source exclusion semantics. The camera invokes widened acquisition only on fresh nonempty ray-sampling ticks; its ray rate still gates acquisition and zero rays disable new acquisition.
+
+## Dynamic target selection and an explicit lock
+
+`ViewTargetLock.update` has additive overloads accepting `boolean lockTarget` after the resolver. False selects the closest eligible target from the supplied fresh hits, even when another identity was previously selected. True retains a valid identity and avoids resolving candidates until that identity becomes invalid. Equal-distance hits prefer the current identity. The original overloads continue to retain targets. Callers should use retained updates between sampling ticks and dynamic updates only when supplying fresh detections; an empty dynamic hit set releases the selected identity.
+
+`ViewControlState` adds `lockTarget`, serialized as `LockTarget` and defaulting to false. Its previous constructors remain available. `ViewControlInput` adds a lock command with values -1 (preserve), 0 (unlock), and 1 (lock); invalid values are rejected. Previous constructors and absent fields preserve the existing lock setting. Shared manual-control transitions preserve both tracking options.
+
+`ViewControlLayout.targetLock` supplies a separate button region, with the previous layout constructors retained. `ViewControlPanel` draws an open/closed padlock and sends only the target-lock command when it is clicked. Projected displays and tablet controls consume this same library control surface and their existing command transport.
+
+The addon defaults Camera tracking to dynamic acquisition on every fresh ray-sampling tick. `LockTarget` on the Camera node and the display/tablet padlock retain the current target until it becomes unavailable or out of range. An unlocked Camera selects the nearest fresh ray/cone detection; between samples it follows the retained identity. The graph default and explicit UI override persist independently and old saved nodes gain a false default without replacing an existing value or label.

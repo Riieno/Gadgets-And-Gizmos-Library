@@ -22,6 +22,7 @@ import org.joml.Quaternionf;
 import org.joml.Quaterniond;
 import org.joml.Quaterniondc;
 import org.joml.Vector3d;
+import org.joml.Vector3fc;
 import dev.ryanhcode.sable.companion.math.Pose3d;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexSorting;
@@ -53,6 +54,17 @@ public final class SubLevelClientRenderApi {
 
     ------------------------------------------------------------##-----------------------------------------------------*/
 
+    // Get an interpolated snapshot without changing Sable's shared render pose
+    public static Pose3dc interpolatedPose(ClientSubLevel subLevel, float partialTicks){
+        Pose3d res = new Pose3d(subLevel.lastPose());
+        Pose3dc target = subLevel.logicalPose();
+        res.position().lerp(target.position(), partialTicks);
+        res.orientation().slerp(target.orientation(), partialTicks);
+        res.rotationPoint().lerp(target.rotationPoint(), partialTicks);
+        res.scale().lerp(target.scale(), partialTicks);
+        return res;
+    }
+
     // Run one action with interpolated SubLevel poses
     public static <T> T withPoses(ClientLevel level, float partialTicks, Supplier<T> action) {
         LevelPoseProviderExtension poses = (LevelPoseProviderExtension) level;
@@ -71,6 +83,18 @@ public final class SubLevelClientRenderApi {
     public static Vec3 renderPosition(ClientSubLevel subLevel, float partialTicks) {
         Vector3dc pos = subLevel.renderPose(partialTicks).position();
         return new Vec3(pos.x(), pos.y(), pos.z());
+    }
+
+    // Supply a native camera with a local vehicle reference without riding or spawning an entity
+    public static net.minecraft.world.entity.Entity localCameraAnchor(ClientLevel level, Vec3 pos){
+        var anchor = new net.minecraft.world.entity.Marker(net.minecraft.world.entity.EntityType.MARKER, level);
+        anchor.setPos(pos);
+        return anchor;
+    }
+
+    // Face an anchored projection toward the viewer while keeping its signed scale and world position
+    public static Matrix4f billboardModelView(Matrix4fc modelView, Vector3fc scale){
+        return new Matrix4f().translation(modelView.m30(), modelView.m31(), modelView.m32()).scale(scale);
     }
 
     // Draw model-view transformed geometry with the world's projection and restore render state

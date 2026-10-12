@@ -12,6 +12,8 @@ import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.rieno.gadgetsandgizmos.lib.client.render.SceneRenderTargets;
+import com.rieno.gadgetsandgizmos.lib.client.render.SceneRenderTypes;
 import com.rieno.gadgetsandgizmos.lib.view.ViewPose;
 import com.rieno.gadgetsandgizmos.lib.view.ViewRefreshSchedule;
 import com.rieno.gadgetsandgizmos.lib.view.ViewReference;
@@ -106,7 +108,11 @@ public final class ViewSceneRenderer{
     public static float projectionDistance(){ return PROJECTION_DISTANCE; }
     // Identify renderers whose terrain storage belongs to a secondary scene
     public static boolean ownsRenderer(LevelRenderer renderer){
-        return CAPTURES.values().stream().anyMatch(capture -> capture.renderer == renderer);
+        if(CAPTURES.isEmpty()) return false;
+        for(Capture capture : CAPTURES.values()){
+            if(capture.renderer == renderer) return true;
+        }
+        return false;
     }
     // Retire cached meshes when the player's renderer reloads shaders or resources
     public static void invalidateScenes(LevelRenderer src){
@@ -121,17 +127,32 @@ public final class ViewSceneRenderer{
     }
     // Keep independent terrain meshes current when the main client receives block updates
     public static void updateSection(LevelRenderer src, int x, int y, int z){
-        if(ownsRenderer(src)) return;
-        CAPTURES.values().forEach(capture -> {
+        if(CAPTURES.isEmpty() || ownsRenderer(src)) return;
+        for(Capture capture : CAPTURES.values()){
             if(capture.renderer != null) capture.renderer.setSectionDirty(x, y, z);
-        });
+        }
+    }
+    // Forward a section range only while a secondary scene owns terrain meshes
+    public static void updateSections(LevelRenderer src, int minX, int minY, int minZ,
+                                      int maxX, int maxY, int maxZ){
+        if(CAPTURES.isEmpty() || ownsRenderer(src)) return;
+        for(Capture capture : CAPTURES.values()){
+            if(capture.renderer == null) continue;
+            for(int x = minX; x <= maxX; x++){
+                for(int y = minY; y <= maxY; y++){
+                    for(int z = minZ; z <= maxZ; z++){
+                        capture.renderer.setSectionDirty(x, y, z);
+                    }
+                }
+            }
+        }
     }
     // Notify independent occlusion graphs when another client chunk becomes available
     public static void updateChunk(LevelRenderer src, ChunkPos pos){
-        if(ownsRenderer(src)) return;
-        CAPTURES.values().forEach(capture -> {
+        if(CAPTURES.isEmpty() || ownsRenderer(src)) return;
+        for(Capture capture : CAPTURES.values()){
             if(capture.renderer != null) capture.renderer.onChunkLoaded(pos);
-        });
+        }
     }
     // Resolve a ship's secondary meshes without replacing its main-view render data
     public static SubLevelRenderData subLevelData(ClientSubLevel subLevel, SubLevelRenderData original){
@@ -146,17 +167,19 @@ public final class ViewSceneRenderer{
     }
     // Defer replacement of ship meshes until their owning feed next renders
     public static void invalidateSubLevel(ClientSubLevel subLevel){
-        CAPTURES.values().forEach(capture -> {
+        if(CAPTURES.isEmpty()) return;
+        for(Capture capture : CAPTURES.values()){
             ShipCapture ship = capture.ships.get(subLevel);
             if(ship != null) ship.invalid = true;
-        });
+        }
     }
     // Forward dirty sections while retaining separate ship visibility and buffers
     public static void updateSubLevelSection(SubLevelRenderData src, int x, int y, int z, boolean immediate){
-        CAPTURES.values().forEach(capture -> {
+        if(CAPTURES.isEmpty()) return;
+        for(Capture capture : CAPTURES.values()){
             ShipCapture ship = capture.ships.get(src.getSubLevel());
             if(ship != null && ship.original == src) ship.data.setDirty(x, y, z, immediate);
-        });
+        }
     }
     // Queue a source and return its most recently completed texture
     public static @Nullable ResourceLocation request(ViewReference ref, int width, int height){
@@ -192,7 +215,7 @@ public final class ViewSceneRenderer{
         float h = (float) (capture.target.height * scale);
         stack.pushPose();
         stack.translate((width - w) / 2, (height - h) / 2, 0);
-        drawTexture(texture, w, h, z, stack, buffers);
+        drawTexture(capture.surface, w, h, z, stack, buffers);
         stack.popPose();
         return true;
     }
@@ -201,18 +224,18 @@ public final class ViewSceneRenderer{
                                PoseStack stack, MultiBufferSource buffers){
         ResourceLocation texture = request(ref, width, height);
         if(texture == null) return false;
-        drawTexture(texture, width, height, z, stack, buffers);
+        drawTexture(CAPTURES.get(ref).surface, width, height, z, stack, buffers);
         return true;
     }
     // Share quad geometry while fitted surfaces retain the captured aspect ratio
-    private static void drawTexture(ResourceLocation texture, float width, float height, float z,
+    private static void drawTexture(RenderType surface, float width, float height, float z,
                                     PoseStack stack, MultiBufferSource buffers){
-        var vertices = buffers.getBuffer(RenderType.text(texture));
+        var vertices = buffers.getBuffer(surface);
         Matrix4f matrix = stack.last().pose();
-        vertices.addVertex(matrix, 0, 0, z).setColor(-1).setUv(0, 1).setLight(LightTexture.FULL_BRIGHT);
-        vertices.addVertex(matrix, 0, height, z).setColor(-1).setUv(0, 0).setLight(LightTexture.FULL_BRIGHT);
-        vertices.addVertex(matrix, width, height, z).setColor(-1).setUv(1, 0).setLight(LightTexture.FULL_BRIGHT);
-        vertices.addVertex(matrix, width, 0, z).setColor(-1).setUv(1, 1).setLight(LightTexture.FULL_BRIGHT);
+        vertices.addVertex(matrix, 0, 0, z).setColor(-1).setUv(0, 1);
+        vertices.addVertex(matrix, 0, height, z).setColor(-1).setUv(0, 0);
+        vertices.addVertex(matrix, width, height, z).setColor(-1).setUv(1, 0);
+        vertices.addVertex(matrix, width, 0, z).setColor(-1).setUv(1, 1);
     }
     // Refresh every due feed independently before the player's frame
     @SubscribeEvent
@@ -231,16 +254,19 @@ public final class ViewSceneRenderer{
         if(mc.level == null || mc.player == null || mc.gameMode == null
                 || VeilLevelPerspectiveRenderer.isRenderingPerspective()) return;
         int rate = Math.clamp(minimumRefreshRate.getAsInt(), 1, 60);
+        int idx = 0;
         for(var entry : CAPTURES.entrySet()){
             Capture capture = entry.getValue();
+            long phase = (1_000_000_000L / rate) * idx++ / CAPTURES.size();
             if(frame - capture.requested > 2 || !capture.schedule.ready(System.nanoTime(), rate)) continue;
             ViewSource src = entry.getKey().resolve(mc.level);
-            if(src != null) capture(mc, capture, src, evt);
+            if(src != null) capture(mc, capture, src, evt, phase);
         }
     }
     // Scope renderer, atmosphere and lightmap changes to one secondary scene
-    private static void capture(Minecraft mc, Capture capture, ViewSource src, RenderFrameEvent.Pre evt){
+    private static void capture(Minecraft mc, Capture capture, ViewSource src, RenderFrameEvent.Pre evt, long phase){
         capture.distance = Math.min(CAPTURE_DISTANCE, Math.max(1, mc.options.getEffectiveRenderDistance()) * 16.0F);
+        RenderTarget mainTarget = mc.getMainRenderTarget();
         Runnable restoreEnvironment = ViewSceneEnvironment.save();
         LevelRenderer prevRenderer = mc.levelRenderer;
         Matrix4f prevProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
@@ -249,20 +275,23 @@ public final class ViewSceneRenderer{
         modelView.pushMatrix();
         mc.getProfiler().push("remote_view");
         long started = System.nanoTime();
+        // Use the same interpolation time as Sable's moving terrain, including while paused
+        float partialTick = evt.getPartialTick().getGameTimeDeltaPartialTick(true);
         active = capture;
         Runnable restoreTargets = () -> {};
         try{
-            if(capture.target.width != capture.width || capture.target.height != capture.height){
-                capture.resize();
+            if(capture.target.width != capture.width || capture.target.height != capture.height
+                    || !SceneRenderTargets.hasMatchingDepth(capture.target, mainTarget)){
+                capture.resize(mainTarget);
             }
             capture.lightmap.tick();
-            capture.lightmap.updateLightTexture(evt.getPartialTick().getGameTimeDeltaPartialTick(false));
+            capture.lightmap.updateLightTexture(partialTick);
             capture.lightmap.turnOnLightLayer();
-            src.updateViewEffects(evt.getPartialTick().getGameTimeDeltaPartialTick(false));
-            pose = src.viewPose(evt.getPartialTick().getGameTimeDeltaPartialTick(false));
+            src.updateViewEffects(partialTick);
+            pose = src.viewPose(partialTick, capture.width / (double) capture.height);
             capture.target.bindWrite(true);
             capture.camera.setup(mc.level, mc.player, false, false,
-                    evt.getPartialTick().getGameTimeDeltaPartialTick(false));
+                    partialTick);
             ((ViewCameraAccess) capture.camera).gadgetsngizmos$applyView(pose);
             if(capture.reload){
                 capture.releaseScene();
@@ -317,7 +346,7 @@ public final class ViewSceneRenderer{
                     restoreEnvironment.run();
                 }finally{
                     mc.getProfiler().pop();
-                    capture.schedule.captured(started);
+                    capture.schedule.captured(started, phase);
                 }
             }
         }
@@ -330,8 +359,9 @@ public final class ViewSceneRenderer{
     // Retain one source's world renderer, ship meshes and framebuffer
     private static final class Capture{
         private final RenderBuffers buffers = new RenderBuffers(1);
-        private final TextureTarget target = new TextureTarget(16, 16, true, Minecraft.ON_OSX);
-        private AdvancedFbo framebuffer = framebuffer();
+        private TextureTarget target = SceneRenderTargets.createPreciseLike(
+                Minecraft.getInstance().getMainRenderTarget(), 16, 16, Minecraft.ON_OSX);
+        private AdvancedFbo framebuffer = SceneRenderTargets.wrap(target);
         private final Camera camera = new Camera();
         private final LightTexture lightmap = new LightTexture(Minecraft.getInstance().gameRenderer, Minecraft.getInstance());
         private final ViewRefreshSchedule schedule = new ViewRefreshSchedule();
@@ -340,6 +370,7 @@ public final class ViewSceneRenderer{
         private final Map<ClientSubLevel, ShipCapture> ships = new LinkedHashMap<>();
         private final ResourceLocation texture = ResourceLocation.fromNamespaceAndPath(
                 "gadgetsngizmos", "view/" + nextId++);
+        private final RenderType surface = SceneRenderTypes.opaqueTexture(texture);
         private int width = 16;
         private int height = 16;
         private float distance = CAPTURE_DISTANCE;
@@ -361,17 +392,15 @@ public final class ViewSceneRenderer{
                 public void releaseId(){}
             });
         }
-        // Share the existing attachments with Veil without copying or owning their textures
-        private AdvancedFbo framebuffer(){
-            return AdvancedFbo.withSize(target.width, target.height)
-                    .addColorTextureWrapper(target.getColorTextureId())
-                    .setDepthTextureWrapper(target.getDepthTextureId()).build(true);
-        }
-        // Refresh attachment references only when the shared target grows
-        private void resize(){
+        // Refresh borrowed attachments when dimensions or primary depth settings change
+        private void resize(RenderTarget source){
             framebuffer.free();
-            target.resize(width, height, Minecraft.ON_OSX);
-            framebuffer = framebuffer();
+            if(SceneRenderTargets.hasMatchingDepth(target, source)) target.resize(width, height, Minecraft.ON_OSX);
+            else{
+                target.destroyBuffers();
+                target = SceneRenderTargets.createPreciseLike(source, width, height, Minecraft.ON_OSX);
+            }
+            framebuffer = SceneRenderTargets.wrap(target);
         }
         // Cancel old scene jobs before replacing their renderer or vertex layouts
         private void releaseScene(){

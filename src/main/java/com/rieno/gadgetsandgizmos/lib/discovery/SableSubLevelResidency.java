@@ -10,6 +10,7 @@ package com.rieno.gadgetsandgizmos.lib.discovery;
 
 import com.mojang.serialization.Codec;
 import com.rieno.gadgetsandgizmos.lib.GadgetsNGizmosLibrary;
+import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
 import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.ticket.SubLevelLoadingTicketType;
@@ -18,11 +19,17 @@ import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.ryanhcode.sable.sublevel.plot.LevelPlot;
 import dev.ryanhcode.sable.sublevel.plot.PlotChunkHolder;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import org.joml.Vector3d;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -80,9 +87,12 @@ public final class SableSubLevelResidency {
             if (container == null) {
                 return false;
             }
-            return retain
-                    ? container.addForceLoadTicket(subLevel, ticket, owner)
-                    : container.removeForceLoadTicket(subLevel, ticket, owner);
+            if(retain){
+                // A restored ticket already belongs to this owner even when Sable reports no change
+                container.addForceLoadTicket(subLevel, ticket, owner);
+                return true;
+            }
+            return container.removeForceLoadTicket(subLevel, ticket, owner);
         } catch (RuntimeException | LinkageError ignored) {
             return false;
         }
@@ -136,6 +146,8 @@ public final class SableSubLevelResidency {
         private final String owner;
         // Tracked retained
         private final Map<UUID, ServerSubLevel> retained = new LinkedHashMap<>();
+        private final Map<ServerLevel, MovingChunkResidency.Lease> terrain = new LinkedHashMap<>();
+        private final Map<ServerLevel, Long> terrainTicks = new LinkedHashMap<>();
         // Tracks whether lease is closed
         private boolean closed;
 
@@ -195,8 +207,43 @@ public final class SableSubLevelResidency {
             desired.values().forEach(this::retain);
         }
 
+        // Prepare horizontal terrain while keeping ship residency on Sable's ticket API
+        public void prefetchMovingChunks(){
+            if(closed) return;
+            Map<ServerLevel, List<MovingChunkResidency.Region>> regions = new LinkedHashMap<>();
+            for(ServerSubLevel body : retained.values()){
+                if(body.isRemoved()) continue;
+                ServerLevel level = body.getLevel();
+                if(level == null || Long.valueOf(level.getGameTime()).equals(terrainTicks.get(level))) continue;
+                List<MovingChunkResidency.Region> levelRegions = regions.computeIfAbsent(level, key -> new ArrayList<>());
+                try{
+                    RigidBodyHandle handle = RigidBodyHandle.of(body);
+                    if(handle == null || !handle.isValid()) continue;
+                    Vector3d velocity = handle.getLinearVelocity(new Vector3d());
+                    if(Math.abs(velocity.x) <= 0.05D && Math.abs(velocity.z) <= 0.05D) continue;
+                    var bounds = body.boundingBox();
+                    if(bounds == null) continue;
+                    levelRegions.add(new MovingChunkResidency.Region(
+                            new AABB(bounds.minX(), bounds.minY(), bounds.minZ(), bounds.maxX(), bounds.maxY(), bounds.maxZ()),
+                            new Vec3(velocity.x, velocity.y, velocity.z)));
+                }catch(RuntimeException | LinkageError ignored){
+                    // Sable retains its normal terrain loading while a physics handle is unavailable
+                }
+            }
+            for(var entry : regions.entrySet()){
+                terrain.computeIfAbsent(entry.getKey(), MovingChunkResidency::lease).synchronize(entry.getValue());
+                terrainTicks.put(entry.getKey(), entry.getKey().getGameTime());
+            }
+            for(ServerLevel level : new LinkedHashSet<>(terrain.keySet())){
+                if(regions.containsKey(level) || Long.valueOf(level.getGameTime()).equals(terrainTicks.get(level))) continue;
+                terrain.remove(level).close();
+                terrainTicks.remove(level);
+            }
+        }
+
         // Detach the lease
         public void detach() {
+            releaseTerrain();
             retained.clear();
             closed = true;
         }
@@ -210,6 +257,7 @@ public final class SableSubLevelResidency {
             for (ServerSubLevel subLevel : new LinkedHashSet<>(retained.values())) {
                 release(subLevel);
             }
+            releaseTerrain();
             retained.clear();
             closed = true;
         }
@@ -221,6 +269,13 @@ public final class SableSubLevelResidency {
             }
             invokeTicket(subLevel, RESIDENCY_TICKET, owner, false);
             invokeTicket(subLevel, LEGACY_RESIDENCY_TICKET, owner, false);
+        }
+
+        // Terrain prediction is temporary even when ship tickets survive a server restart
+        private void releaseTerrain(){
+            terrain.values().forEach(MovingChunkResidency.Lease::close);
+            terrain.clear();
+            terrainTicks.clear();
         }
     }
 }

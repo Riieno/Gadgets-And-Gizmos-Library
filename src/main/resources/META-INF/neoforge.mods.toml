@@ -48,13 +48,6 @@ ordering="AFTER"
 side="BOTH"
 
 [[dependencies.${mod_id}]]
-modId="aeroclaims"
-type="optional"
-versionRange="[0.9.0,)"
-ordering="AFTER"
-side="BOTH"
-
-[[dependencies.${mod_id}]]
 modId="aeroworks"
 type="optional"
 versionRange="[1.2.11,)"

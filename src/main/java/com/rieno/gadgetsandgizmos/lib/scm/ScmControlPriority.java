@@ -17,6 +17,13 @@ public final class ScmControlPriority {
         return DIRECT_ROTATION.contains(action);
     }
 
+    // Ground vehicles need yaw while translating and hand it to final alignment only on arrival
+    public static boolean navigationOwnsYaw(boolean groundVehicle, boolean requestedFinalHeading,
+                                            boolean finalApproach, boolean assemblyTranslation){
+        if(groundVehicle) return !requestedFinalHeading || !finalApproach;
+        return !requestedFinalHeading && !assemblyTranslation;
+    }
+
     // Retain optional control requests only on axes that the primary SCM commands leave free
     public static Vec3 remainingForce(Vec3 request, Set<String> primary, Vec3 forward, Vec3 up){
         Vec3 res = request;
@@ -59,7 +66,8 @@ public final class ScmControlPriority {
         return new ScmWrenchSourceRegistry.Wrench(true,
                 withoutSharedCompensation(request.force(), request.compensationForce(), primaryCompensation),
                 request.torque(),
-                withoutSharedCompensation(request.compensationForce(), request.compensationForce(), primaryCompensation), request.rotationActions());
+                withoutSharedCompensation(request.compensationForce(), request.compensationForce(), primaryCompensation),
+                request.rotationActions(), request.translationActions());
     }
 
     private static Vec3 removeAxis(Vec3 val, Vec3 axis){

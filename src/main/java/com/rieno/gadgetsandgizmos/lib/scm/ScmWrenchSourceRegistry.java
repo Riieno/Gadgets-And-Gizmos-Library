@@ -31,6 +31,7 @@ public final class ScmWrenchSourceRegistry{
         Vec3 compensation = Vec3.ZERO;
         boolean active = false;
         Set<String> rotationActions = new java.util.LinkedHashSet<>();
+        Set<String> translationActions = new java.util.LinkedHashSet<>();
         for(Source source : sources){
             Wrench val = Objects.requireNonNull(source.sample(request));
             if(!val.active()) continue;
@@ -39,8 +40,9 @@ public final class ScmWrenchSourceRegistry{
             torque = torque.add(val.torque());
             compensation = compensation.add(val.compensationForce());
             rotationActions.addAll(val.rotationActions());
+            translationActions.addAll(val.translationActions());
         }
-        return new Wrench(active, force, torque, compensation, rotationActions);
+        return new Wrench(active, force, torque, compensation, rotationActions, translationActions);
     }
 
     @FunctionalInterface
@@ -56,7 +58,8 @@ public final class ScmWrenchSourceRegistry{
         }
     }
 
-    public record Wrench(boolean active, Vec3 force, Vec3 torque, Vec3 compensationForce, Set<String> rotationActions){
+    public record Wrench(boolean active, Vec3 force, Vec3 torque, Vec3 compensationForce,
+                         Set<String> rotationActions, Set<String> translationActions){
         public static final Wrench NONE = new Wrench(false, Vec3.ZERO, Vec3.ZERO);
 
         public Wrench(boolean active, Vec3 force, Vec3 torque){ this(active, force, torque, Vec3.ZERO); }
@@ -66,18 +69,25 @@ public final class ScmWrenchSourceRegistry{
             this(active, force, torque, compensationForce, Set.of());
         }
 
+        // Retain source compatibility when no explicit translation axes are claimed
+        public Wrench(boolean active, Vec3 force, Vec3 torque, Vec3 compensationForce, Set<String> rotationActions){
+            this(active, force, torque, compensationForce, rotationActions, Set.of());
+        }
+
         public Wrench{
             finite(force);
             finite(torque);
             finite(compensationForce);
             rotationActions = rotationActions == null ? Set.of() : Set.copyOf(rotationActions);
+            translationActions = translationActions == null ? Set.of() : Set.copyOf(translationActions);
         }
 
         // Move the torque reference between centers in the same coordinate frame
         public Wrench aboutCenter(Vec3 sourceCenter, Vec3 targetCenter){
             finite(sourceCenter);
             finite(targetCenter);
-            return new Wrench(active, force, torque.add(sourceCenter.subtract(targetCenter).cross(force)), compensationForce, rotationActions);
+            return new Wrench(active, force, torque.add(sourceCenter.subtract(targetCenter).cross(force)),
+                    compensationForce, rotationActions, translationActions);
         }
     }
 

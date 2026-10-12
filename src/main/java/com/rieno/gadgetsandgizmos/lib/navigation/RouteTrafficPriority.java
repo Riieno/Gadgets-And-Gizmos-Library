@@ -69,6 +69,17 @@ public final class RouteTrafficPriority {
         return available + EPSILON < required;
     }
 
+    // Begin a physical bypass before right-of-way braking parks both participants
+    public static boolean requestsDetour(Decision decision){
+        return decision != null && decision.conflict()
+                && (decision.yield() || decision.encounter() == Encounter.HEAD_ON);
+    }
+
+    // Keep head-on vertical escapes complementary when lateral passing is unavailable
+    public static boolean prefersUpperPass(UUID subject, UUID other){
+        return subject == null || other == null || compareVehicleIds(subject, other) <= 0;
+    }
+
     // Resolve one pair without transferring route ownership.
     private static Decision resolvePair(
             Participant subject,

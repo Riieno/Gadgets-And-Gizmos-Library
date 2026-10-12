@@ -44,6 +44,11 @@ public final class ViewRig{
         this.pan = clamp(pan, -180, 180);
         this.tilt = clamp(tilt, -135, 135);
     }
+    // Allow target bearings below the manual hinge limit without changing mouse controls
+    public void track(Angles angles){
+        pan = clamp(angles.pan(), -180, 180);
+        tilt = clamp(angles.tilt(), -180, 0);
+    }
 
     // Apply bounded mouse motion to the retained aim
     public void turn(double panDelta, double tiltDelta){
@@ -58,6 +63,11 @@ public final class ViewRig{
     // Set a persisted field of view
     public void setFov(double fov){
         this.fov = clamp(fov, 5, 120);
+    }
+    // Widen immediately for approaching targets and ease into a tighter frame without endless updates
+    public void frameTarget(double fov){
+        double next = clamp(fov, 5, 120);
+        setFov(next >= this.fov || Math.abs(next - this.fov) < .05 ? next : this.fov + (next - this.fov) * .25);
     }
 
     // Read the explicit pan angle

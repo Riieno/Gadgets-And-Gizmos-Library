@@ -4,8 +4,18 @@ import java.util.List;
 
 // Keep the painted controls and pointer regions aligned at any surface size
 public record ViewControlLayout(int stickX, int stickY, int radius, List<Bounds> modes,
-                                Bounds zoom, Bounds flashlight, boolean overlay){
+                                Bounds zoom, Bounds flashlight, Bounds tracking, Bounds targetLock, boolean overlay){
     public ViewControlLayout{ modes = List.copyOf(modes); }
+    // Retain layouts that supplied tracking before a separate lock button existed
+    public ViewControlLayout(int stickX, int stickY, int radius, List<Bounds> modes,
+                             Bounds zoom, Bounds flashlight, Bounds tracking, boolean overlay){
+        this(stickX, stickY, radius, modes, zoom, flashlight, tracking, new Bounds(0, 0, 0, 0), overlay);
+    }
+    // Keep layouts supplied by existing hosts source compatible
+    public ViewControlLayout(int stickX, int stickY, int radius, List<Bounds> modes,
+                             Bounds zoom, Bounds flashlight, boolean overlay){
+        this(stickX, stickY, radius, modes, zoom, flashlight, new Bounds(0, 0, 0, 0), overlay);
+    }
 
     // Fit compact controls into the tablet's reserved bottom strip
     public static ViewControlLayout compact(int x, int y, int width, int height){
@@ -18,7 +28,9 @@ public record ViewControlLayout(int stickX, int stickY, int radius, List<Bounds>
                 new Bounds(left + 4 + idx * modeWidth, bottom - 68, modeWidth - 2, 17)).toList();
         return new ViewControlLayout(center, bottom - 25, 18, modes,
                 new Bounds(left + 7, bottom - 25, center - 28 - left - 7, 13),
-                new Bounds(center + 28, bottom - 34, right - 7 - center - 28, 22), false);
+                new Bounds(center + 28, bottom - 34, Math.max(1, right - 61 - center - 28), 22),
+                new Bounds(right - 55, bottom - 34, 22, 22),
+                new Bounds(right - 29, bottom - 34, 22, 22), false);
     }
     // Float the stick, mode buttons and vertical zoom over an unobstructed feed
     public static ViewControlLayout overlay(int x, int y, int width, int height){
@@ -35,12 +47,16 @@ public record ViewControlLayout(int stickX, int stickY, int radius, List<Bounds>
                 new Bounds(modeLeft + idx * (modeWidth + gap), modeTop, modeWidth, modeHeight)).toList();
         int flashSize = Math.max(16, (int) Math.round(size * .05));
         int zoomWidth = Math.max(6, (int) Math.round(width * .018));
+        int iconLeft = x + Math.max(5, (int) Math.round(width * .018));
+        int iconTop = stickY - radius - flashSize - Math.max(4, (int) Math.round(height * .008));
+        int iconStep = flashSize + Math.max(4, flashSize / 4);
         return new ViewControlLayout(stickX, stickY, radius, modes,
                 new Bounds(x + (int) Math.round(width * .95) - zoomWidth / 2,
                         y + (int) Math.round(height * .78), zoomWidth,
                         Math.max(24, (int) Math.round(height * .20))),
-                new Bounds(x + Math.max(5, (int) Math.round(width * .018)),
-                        stickY - radius - flashSize - Math.max(4, (int) Math.round(height * .008)), flashSize, flashSize), true);
+                new Bounds(iconLeft, iconTop, flashSize, flashSize),
+                new Bounds(iconLeft + iconStep, iconTop, flashSize, flashSize),
+                new Bounds(iconLeft + iconStep * 2, iconTop, flashSize, flashSize), true);
     }
     public record Bounds(int x, int y, int width, int height){
         public boolean contains(double x, double y){

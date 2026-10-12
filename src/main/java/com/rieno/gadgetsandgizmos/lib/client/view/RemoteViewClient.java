@@ -9,6 +9,7 @@ package com.rieno.gadgetsandgizmos.lib.client.view;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.rieno.gadgetsandgizmos.lib.view.RemoteViewPayload;
+import com.rieno.gadgetsandgizmos.lib.client.render.SubLevelClientRenderApi;
 import com.rieno.gadgetsandgizmos.lib.view.RemoteViewStatePayload;
 import com.rieno.gadgetsandgizmos.lib.view.ViewPose;
 import com.rieno.gadgetsandgizmos.lib.view.ViewReference;
@@ -61,7 +62,7 @@ public final class RemoteViewClient{
     public static void bootstrap(){
         RemoteViewStatePayload.registerClientHandler(RemoteViewClient::handle);
         ViewTransforms.registerClientPoses((body, tick) -> body instanceof ClientSubLevel client
-                ? client.renderPose(tick) : body.logicalPose());
+                ? SubLevelClientRenderApi.interpolatedPose(client, tick) : body.logicalPose());
     }
     // Apply server acknowledgement and reset held player controls
     private static void handle(RemoteViewStatePayload msg){

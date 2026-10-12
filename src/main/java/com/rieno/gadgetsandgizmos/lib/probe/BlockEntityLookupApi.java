@@ -13,6 +13,7 @@ import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -147,6 +148,14 @@ public final class BlockEntityLookupApi {
                     : level.getBlockEntity(pos);
         }
         return SubLevelBlockEntityCollector.getBlockEntity(SableLevelApi.subLevel(level, subLevelId), pos);
+    }
+
+    // Find the loaded support behind a face without loading either chunk
+    public static @Nullable BlockEntity findLoadedBehindFace(@Nullable Level level,
+            @Nullable UUID subLevelId, @Nullable BlockPos pos, @Nullable Direction face){
+        if(pos == null || face == null) return null;
+        BlockEntity res = findLoadedExact(level, subLevelId, pos.relative(face.getOpposite()));
+        return res == null || res.isRemoved() ? null : res;
     }
 
     // Find one typed block entity inside a SubLevel

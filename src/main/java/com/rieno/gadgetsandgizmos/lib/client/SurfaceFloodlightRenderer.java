@@ -17,6 +17,7 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.rieno.gadgetsandgizmos.lib.client.view.ViewSceneRenderer;
+import com.rieno.gadgetsandgizmos.lib.client.render.DepthTextureSnapshot;
 import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
 import com.rieno.gadgetsandgizmos.lib.physics.SurfaceFloodlight;
 import dev.ryanhcode.sable.sublevel.ClientSubLevel;
@@ -42,7 +43,6 @@ import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL14;
 import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
-import org.lwjgl.opengl.GL12;
 import org.lwjgl.system.MemoryStack;
 import java.io.IOException;
 
@@ -298,33 +298,17 @@ public final class SurfaceFloodlightRenderer{
         }
         if(width <= 0 || height <= 0) return null;
         int prevActive = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
-        int prevRead = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
         GlStateManager._activeTexture(GL13.GL_TEXTURE1);
-        int prevBinding = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
         try{
             if(DEPTHS.size() >= 16 && !DEPTHS.containsKey(attachment)){
                 DEPTHS.values().forEach(SceneDepth::close);
                 DEPTHS.clear();
             }
             SceneDepth depth = DEPTHS.computeIfAbsent(attachment, key -> new SceneDepth());
-            GlStateManager._bindTexture(depth.texture);
-            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER,
-                    GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING));
-            if(depth.width != width || depth.height != height){
-                GL11.glCopyTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_DEPTH_COMPONENT32F, x, y, width, height, 0);
-                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
-                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
-                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
-                GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
-            }else{
-                GL11.glCopyTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, x, y, width, height);
-            }
-            depth.width = width; depth.height = height;
+            depth.texture = depth.snapshot.capture(x, y, width, height);
             depth.frame = frame; depth.opaque = opaque;
             return depth;
         }finally{
-            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
-            GlStateManager._bindTexture(prevBinding);
             GlStateManager._activeTexture(prevActive);
         }
     }
@@ -368,11 +352,11 @@ public final class SurfaceFloodlightRenderer{
                         net.minecraft.client.resources.model.BakedModel model,List<LitVertex> vertices){}
     private record Scene(Level level, Vec3 camera, Matrix4f view, Matrix4f projection, float partialTick){}
     private static final class SceneDepth{
-        private final int texture = GlStateManager._genTexture();
-        private int width, height;
+        private final DepthTextureSnapshot snapshot = new DepthTextureSnapshot();
+        private int texture;
         private long frame;
         private boolean opaque;
         // Release each scene's private depth copy with its world
-        private void close(){ GlStateManager._deleteTexture(texture); }
+        private void close(){ snapshot.close(); }
     }
 }

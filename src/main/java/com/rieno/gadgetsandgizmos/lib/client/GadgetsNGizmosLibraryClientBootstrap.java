@@ -9,6 +9,7 @@ package com.rieno.gadgetsandgizmos.lib.client;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.rieno.gadgetsandgizmos.lib.client.render.AreaHighlightRenderTypes;
+import com.rieno.gadgetsandgizmos.lib.client.render.SceneRenderTypes;
 import com.rieno.gadgetsandgizmos.lib.client.render.SoftParticleRenderTypes;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.RegisterShadersEvent;
@@ -32,6 +33,11 @@ public final class GadgetsNGizmosLibraryClientBootstrap {
         com.rieno.gadgetsandgizmos.lib.client.view.RemoteViewClient.bootstrap();
         modEventBus.addListener((RegisterShadersEvent evt) -> {
             com.rieno.gadgetsandgizmos.lib.client.view.ViewSceneRenderer.clear();
+            try{
+                SceneRenderTypes.registerShader(evt);
+            }catch(java.io.IOException err){
+                throw new RuntimeException("Failed to register scene texture shader", err);
+            }
             try{
                 SurfaceFloodlightRenderer.registerShader(evt);
             }catch(java.io.IOException err){

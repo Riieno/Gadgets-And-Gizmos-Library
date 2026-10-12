@@ -86,10 +86,12 @@ public final class ViewControlPanel{
         int knob = zoomLeft + (int) ((120 - state.fov()) / 115 * Math.max(1, zoomRight - zoomLeft));
         graphics.fill(knob - 2, bottom - 25, knob + 3, bottom - 12, 0xFFB9DFD9);
         int flashLeft = center + radius + 10;
-        graphics.fill(flashLeft, bottom - 34, right - 7, bottom - 12,
+        graphics.fill(flashLeft, bottom - 34, layout.flashlight().x() + layout.flashlight().width(), bottom - 12,
                 state.flashlight() ? 0xFF829445 : 0xFF304758);
-        graphics.drawString(font, font.plainSubstrByWidth("Flashlight", Math.max(1, right - flashLeft - 11)),
+        graphics.drawString(font, font.plainSubstrByWidth("Flashlight", Math.max(1, layout.flashlight().width() - 8)),
                 flashLeft + 4, bottom - 27, 0xFFF0F6FA, false);
+        trackingIcon(graphics, layout.tracking(), state.autoTracking());
+        targetLockIcon(graphics, layout.targetLock(), state.lockTarget());
         tick();
     }
     // Render floating controls without covering the scene with a panel background
@@ -129,6 +131,8 @@ public final class ViewControlPanel{
         for(int row = -half - 1; row <= half + 1; row++){
             graphics.fill(iconX + length * 2 / 3, iconY + row, iconX + length - Math.abs(row) / 2, iconY + row + 1, 0xFFF0F6FA);
         }
+        trackingIcon(graphics, layout.tracking(), state.autoTracking());
+        targetLockIcon(graphics, layout.targetLock(), state.lockTarget());
         tick();
     }
     // Apply a held stick at the game tick rate rather than the frame rate
@@ -162,6 +166,14 @@ public final class ViewControlPanel{
         }
         if(layout.flashlight().contains(x, y)){
             sender.accept(new ViewControlInput(0, 0, -1, "", state.flashlight() ? 0 : 1));
+            return true;
+        }
+        if(layout.tracking().contains(x, y)){
+            sender.accept(new ViewControlInput(0, 0, -1, "", -1, state.autoTracking() ? 0 : 1));
+            return true;
+        }
+        if(layout.targetLock().contains(x, y)){
+            sender.accept(new ViewControlInput(0, 0, -1, "", -1, -1, state.lockTarget() ? 0 : 1));
             return true;
         }
         return false;
@@ -208,6 +220,46 @@ public final class ViewControlPanel{
             int half = (int) Math.sqrt(radius * radius - row * row);
             graphics.fill(x - half, y + row, x + half + 1, y + row + 1, color);
         }
+    }
+    // Draw a targeting reticle whose background shows whether acquisition is enabled
+    private static void trackingIcon(Canvas graphics, ViewControlLayout.Bounds bounds, boolean enabled){
+        if(bounds.width() <= 0 || bounds.height() <= 0) return;
+        rounded(graphics, bounds, bounds.width() / 4, enabled ? 0xFF77B5AC : 0xFF747877);
+        int inset = Math.max(3, bounds.width() / 5);
+        int left = bounds.x() + inset;
+        int right = bounds.x() + bounds.width() - inset;
+        int top = bounds.y() + inset;
+        int bottom = bounds.y() + bounds.height() - inset;
+        int arm = Math.max(2, (right - left) / 3);
+        int line = Math.max(1, bounds.width() / 16);
+        int color = 0xFFF0F6FA;
+        for(int x : new int[]{left, right - line}){
+            graphics.fill(x, top, x + line, top + arm, color);
+            graphics.fill(x, bottom - arm, x + line, bottom, color);
+        }
+        for(int y : new int[]{top, bottom - line}){
+            graphics.fill(left, y, left + arm, y + line, color);
+            graphics.fill(right - arm, y, right, y + line, color);
+        }
+        circle(graphics, bounds.centerX(), bounds.centerY(), Math.max(1, bounds.width() / 12), color);
+    }
+    // Show a closed padlock while dynamic target acquisition is disabled
+    private static void targetLockIcon(Canvas graphics, ViewControlLayout.Bounds bounds, boolean locked){
+        if(bounds.width() <= 0 || bounds.height() <= 0) return;
+        rounded(graphics, bounds, bounds.width() / 4, locked ? 0xFF77B5AC : 0xFF747877);
+        int line = Math.max(1, bounds.width() / 12);
+        int half = Math.max(3, bounds.width() / 4);
+        int center = bounds.centerX();
+        int middle = bounds.centerY();
+        int top = middle - half;
+        int color = 0xFFF0F6FA;
+        graphics.fill(center - half, middle, center + half + 1, middle + half, color);
+        int shift = locked ? 0 : half;
+        graphics.fill(center - half + line + shift, top, center + half - line + shift, top + line, color);
+        graphics.fill(center - half + line + shift, top, center - half + line * 2 + shift, middle, color);
+        graphics.fill(center + half - line * 2 + shift, top, center + half - line + shift, middle, color);
+        graphics.fill(center, middle + line, center + line, middle + half - line,
+                locked ? 0xFF77B5AC : 0xFF747877);
     }
     private static void rounded(Canvas graphics, ViewControlLayout.Bounds bounds, int radius, int color){
         for(int row = 0; row < bounds.height(); row++){

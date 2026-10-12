@@ -20,4 +20,15 @@ public final class CompoundTagCopies{
         }
         return res;
     }
+
+    // Replace an authoritative field group, including fields absent from its current snapshot
+    public static CompoundTag copyReplacing(CompoundTag src, CompoundTag replacements, Set<String> keys){
+        CompoundTag res = copyExcept(src, keys);
+        if(replacements == null || keys == null) return res;
+        for(String key : keys){
+            Tag val = replacements.get(key);
+            if(val != null) res.put(key, val.copy());
+        }
+        return res;
+    }
 }

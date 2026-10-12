@@ -71,6 +71,15 @@ public final class ViewRaycast{
         return trace(level, pose, length, new Filter(Set.of("blocks", "sub_levels"), true),
                 excluded, sample, count, false);
     }
+    // Confirm a candidate direction against the same filtered world and SubLevel geometry
+    public static Result traceToward(Level level, Vec3 start, Vec3 target, double length, Filter filter,
+                                     @Nullable ViewReference excluded){
+        Vec3 dir = target.subtract(start);
+        if(!Double.isFinite(dir.lengthSqr()) || dir.lengthSqr() < 1.0E-12) return Result.miss(start, 0);
+        double range = Double.isFinite(length) ? Math.clamp(length, 0, MAX_LENGTH) : 0;
+        Vec3 end = start.add(dir.normalize().scale(range));
+        return traceSegment(level, start, end, range, filter, excluded, true);
+    }
     // Share loaded terrain traversal between sensing and surface projection
     private static Result trace(Level level, ViewPose pose, double length, Filter filter,
                                 @Nullable ViewReference excluded, int sample, int count, boolean entities){
@@ -78,6 +87,11 @@ public final class ViewRaycast{
         Vec3 dir = sampleDirection(pose, sample, Math.clamp(count, 1, MAX_RAYS));
         Vec3 start = pose.position();
         Vec3 end = start.add(dir.scale(range));
+        return traceSegment(level, start, end, range, filter, excluded, entities);
+    }
+    // Share the loaded-space walk without changing ordinary lens sample directions
+    private static Result traceSegment(Level level, Vec3 start, Vec3 end, double range, Filter filter,
+                                       @Nullable ViewReference excluded, boolean entities){
         Result best = Result.miss(end, range);
         if(range == 0 || level == null) return best;
         best = traceSpace(level, null, start, end, filter, excluded, best, entities);

@@ -41,12 +41,8 @@ public abstract class ViewSceneSodiumWorldRendererMixin{
     private void updateViewSections(int minX, int minY, int minZ, int maxX, int maxY, int maxZ,
                                     boolean immediate, CallbackInfo ci){
         if(gadgetsngizmos$chunks != null) return;
-        var renderer = Minecraft.getInstance().levelRenderer;
-        for(int x = minX; x <= maxX; x++){
-            for(int y = minY; y <= maxY; y++){
-                for(int z = minZ; z <= maxZ; z++) ViewSceneRenderer.updateSection(renderer, x, y, z);
-            }
-        }
+        ViewSceneRenderer.updateSections(Minecraft.getInstance().levelRenderer,
+                minX, minY, minZ, maxX, maxY, maxZ);
     }
     // Release references when Sodium disposes this scene's terrain manager
     @Inject(method = "unloadLevel", at = @At("TAIL"), require = 0, remap = false)
