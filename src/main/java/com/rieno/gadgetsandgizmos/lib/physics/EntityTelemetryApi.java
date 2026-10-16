@@ -23,9 +23,14 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 // Read server-side wearer telemetry independently of items and controller blocks
 public final class EntityTelemetryApi {
+    private static final long MAX_SAMPLE_GAP_TICKS = 5L;
+    private static final Map<UUID, MotionSample> MOTION_SAMPLES = new ConcurrentHashMap<>();
+
     private EntityTelemetryApi(){
     }
 
@@ -75,8 +80,9 @@ public final class EntityTelemetryApi {
         var feet = Sable.HELPER.getFeetPos(wearer, 0.0F);
         Vec3 pos = new Vec3(feet.x(), feet.y(), feet.z());
         Vec3 eye = wearer.getEyePosition();
-        Vec3 velocity = wearer.getDeltaMovement().scale(20.0D);
-        boolean sameDimension = wearer.level().dimension().location().toString().equals(dimension);
+        String wearerDim = wearer.level().dimension().location().toString();
+        Vec3 velocity = sampleVelocity(wearer, pos, wearerDim);
+        boolean sameDimension = wearerDim.equals(dimension);
         values.put("same_dimension", GraphValue.bool(sameDimension));
         values.put("position", vector(pos));
         values.put("eye_position", vector(eye));
@@ -107,7 +113,7 @@ public final class EntityTelemetryApi {
         if(wearer instanceof Player player){
             values.put("food", GraphValue.number(player.getFoodData().getFoodLevel()));
             values.put("saturation", GraphValue.number(player.getFoodData().getSaturationLevel()));
-            values.put("flying", GraphValue.bool(player.getAbilities().flying));
+            values.put("flying", GraphValue.bool(player.getAbilities().flying || player.isFallFlying()));
             values.put("creative", GraphValue.bool(player.isCreative()));
             values.put("spectator", GraphValue.bool(player.isSpectator()));
         }
@@ -139,6 +145,34 @@ public final class EntityTelemetryApi {
         return Map.copyOf(values);
     }
 
+    // Sample world velocity from server-side position deltas
+    private static Vec3 sampleVelocity(LivingEntity wearer, Vec3 pos, String dimension){
+        long tick = wearer.level().getGameTime();
+        MotionSample prev = MOTION_SAMPLES.get(wearer.getUUID());
+        Vec3 res = resolveVelocity(wearer, pos, dimension, tick, prev);
+        if(prev == null || prev.tick() != tick){
+            MOTION_SAMPLES.put(wearer.getUUID(), new MotionSample(pos, res, tick, dimension));
+        }
+        return res;
+    }
+
+    // Calculate per-second velocity from the previous tick sample
+    private static Vec3 resolveVelocity(LivingEntity wearer, Vec3 pos, String dimension, long tick,
+                                        @Nullable MotionSample prev){
+        if(prev == null || !prev.dimension().equals(dimension)) return fallbackVelocity(wearer);
+        long dt = tick - prev.tick();
+        if(dt <= 0L) return prev.velocity();
+        if(dt <= MAX_SAMPLE_GAP_TICKS) return pos.subtract(prev.pos()).scale(20.0D / (double) dt);
+        return fallbackVelocity(wearer);
+    }
+
+    // Fall back to entity delta movement without resting gravity noise
+    private static Vec3 fallbackVelocity(LivingEntity wearer){
+        Vec3 vel = wearer.getDeltaMovement();
+        if(wearer.onGround() && vel.x == 0.0D && vel.z == 0.0D && vel.y < 0.0D) return Vec3.ZERO;
+        return vel.scale(20.0D);
+    }
+
     // Encode a world vector for any graph consumer
     public static GraphValue vector(Vec3 pos){
         return GraphValue.map(Map.of("x", GraphValue.number(pos.x), "y", GraphValue.number(pos.y),
@@ -149,5 +183,9 @@ public final class EntityTelemetryApi {
     public static GraphValue angles(TrackingGeometry.Angles angles){
         return GraphValue.map(Map.of("yaw", GraphValue.number(angles.yaw()),
                 "pitch", GraphValue.number(angles.pitch())));
+    }
+
+    // Store the previous server-side motion sample for an entity
+    private record MotionSample(Vec3 pos, Vec3 velocity, long tick, String dimension){
     }
 }
