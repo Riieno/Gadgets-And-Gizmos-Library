@@ -103,7 +103,7 @@ public abstract class KineticBlockEntityPreciseAngleOutputMixin implements Preci
         ct$directionalPreciseAngleOutputGraph.apply(
                 level,
                 outputTarget,
-                KineticAngleHelper.normalizeDegrees(angleDegrees),
+                angleDegrees,
                 new HashSet<>(),
                 target -> target == self,
                 ct$syncPreciseAngleTarget);

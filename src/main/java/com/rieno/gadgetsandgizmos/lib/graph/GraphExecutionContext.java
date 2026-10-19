@@ -29,6 +29,9 @@ public interface GraphExecutionContext {
         return false;
     }
 
+    // Identify the executing node within this host's graph
+    default String nodeId(){ return ""; }
+
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================

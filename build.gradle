@@ -185,6 +185,8 @@ def validateMixinConfig = tasks.register('validateMixinConfig') {
 
 dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+    testRuntimeOnly fileTree(libsDir) { include 'veil-neoforge-*.jar' }
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
     compileOnly localJars
     compileOnly 'mezz.jei:jei-1.21.1-neoforge-api:19.27.0.340'

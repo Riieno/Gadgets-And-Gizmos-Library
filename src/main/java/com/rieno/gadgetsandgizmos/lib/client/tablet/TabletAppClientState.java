@@ -1,6 +1,11 @@
 package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
 public interface TabletAppClientState{
+    // Persist only editable values, without retaining screens or live world objects
+    default net.minecraft.nbt.CompoundTag saveDraft(){ return new net.minecraft.nbt.CompoundTag(); }
+
+    // Restore this app's editable values when its tablet is reopened
+    default void loadDraft(net.minecraft.nbt.CompoundTag draft){}
     // Create the state for one screen, never global
     // TabletAppClientScale createScreenSize();
 

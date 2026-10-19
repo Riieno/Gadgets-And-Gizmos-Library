@@ -32,6 +32,39 @@ public final class RotationMath {
 
     ------------------------------------------------------------##-----------------------------------------------------*/
 
+    // Read a horizontal heading from +Z toward +X, with no heading needed directly above or below
+    public static double horizontalHeadingDegrees(Vector3 origin, Vector3 target){
+        if(origin == null || target == null || !origin.isFinite() || !target.isFinite()){
+            throw new IllegalArgumentException("Coordinates must be finite");
+        }
+        double x = target.x() - origin.x(), z = target.z() - origin.z();
+        if(!Double.isFinite(x) || !Double.isFinite(z)){
+            x = target.x() * 0.5D - origin.x() * 0.5D;
+            z = target.z() * 0.5D - origin.z() * 0.5D;
+        }
+        if(x == 0.0D && z == 0.0D) return 0.0D;
+        double degrees = Math.toDegrees(Math.atan2(x, z));
+        if(degrees < 0.0D) degrees += 360.0D;
+        return degrees == 0.0D || degrees >= 360.0D ? 0.0D : degrees;
+    }
+
+    // Rotate +Z toward the target using the shortest arc from the origin
+    public static Quaternion rotationFromCoordinates(Vector3 origin, Vector3 target){
+        if(origin == null || target == null || !origin.isFinite() || !target.isFinite()){
+            throw new IllegalArgumentException("Coordinates must be finite");
+        }
+        Vector3 direction = target.subtract(origin);
+        if(!direction.isFinite()){
+            direction = target.scale(0.5D).subtract(origin.scale(0.5D));
+        }
+        double scale = Math.max(Math.max(Math.abs(direction.x()), Math.abs(direction.y())), Math.abs(direction.z()));
+        if(scale == 0.0D) throw new IllegalArgumentException("Origin and target must be distinct");
+        double x = direction.x() / scale, y = direction.y() / scale, z = direction.z() / scale;
+        double across = Math.hypot(x, y);
+        if(across == 0.0D) return z > 0.0D ? Quaternion.IDENTITY : new Quaternion(0, 1, 0, 0);
+        return Quaternion.fromAxisAngle(new Vector3(-y / across, x / across, 0), Math.atan2(across, z));
+    }
+
     // Get the euler zxz to quaternion
     public static Quaternion eulerZxzToQuaternion(Vector3 radians) {
         double alpha = radians.x() * 0.5D;

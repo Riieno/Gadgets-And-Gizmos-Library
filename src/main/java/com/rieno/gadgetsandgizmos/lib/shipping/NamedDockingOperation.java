@@ -16,6 +16,8 @@ public final class NamedDockingOperation<T>{
         Optional<T> resolve(String name);
         boolean valid(T target);
         Reservation reserve(T target, boolean committed);
+        // Keep an outstanding request moving toward a safe holding position
+        default boolean waitForReservation(T target){ return true; }
         boolean navigate(T target);
         boolean approachReached(T target);
         boolean dock(T target);
@@ -55,14 +57,15 @@ public final class NamedDockingOperation<T>{
         if(!host.valid(target)){ fail(); return; }
         boolean committed = phase == Phase.DOCKING || phase == Phase.COMPLETE;
         Reservation reservation = host.reserve(target, committed);
-        if(reservation == Reservation.INVALID || committed && reservation != Reservation.GRANTED){ fail(); return; }
+        if(reservation == Reservation.INVALID){ fail(); return; }
         if(phase == Phase.COMPLETE){
-            if(!host.locked(target)) fail();
+            if(reservation != Reservation.GRANTED || !host.locked(target)) fail();
             return;
         }
         if(reservation == Reservation.WAITING){
             if(phase != Phase.WAITING) host.stopMovement();
             phase = Phase.WAITING;
+            if(!host.waitForReservation(target)) fail();
             return;
         }
         if(host.locked(target)){

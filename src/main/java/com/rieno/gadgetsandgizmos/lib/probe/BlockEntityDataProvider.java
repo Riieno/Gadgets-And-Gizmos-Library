@@ -29,6 +29,11 @@ public interface BlockEntityDataProvider {
     // Get the writable data ports
     Map<String, String> graphWritableData();
 
+    // Describe inputs which depend on a selected mode or another input value
+    default Map<String, com.rieno.gadgetsandgizmos.lib.graph.GraphInputVisibility.Condition> graphWritableInputConditions(){
+        return Map.of();
+    }
+
     // Get the writable data options
     default Map<String, List<String>> graphWritableOptions() {
         return Map.of();
@@ -66,8 +71,18 @@ public interface BlockEntityDataProvider {
             return false;
         }
         Map<String, String> writable = graphWritableData();
+        var conditions = graphWritableInputConditions();
+        var selected = com.rieno.gadgetsandgizmos.lib.graph.GraphInputVisibility.filterValues(values, conditions);
+        if(selected.isEmpty() && !conditions.isEmpty()) return true;
+        java.util.Set<String> selectors = new java.util.LinkedHashSet<>();
+        conditions.values().forEach(condition -> selectors.add(condition.selector()));
+        Map<String, GraphValue> ordered = new java.util.LinkedHashMap<>();
+        selectors.forEach(port -> {
+            if(selected.containsKey(port)) ordered.put(port, selected.get(port));
+        });
+        ordered.putAll(selected);
         boolean changed = false;
-        for (Map.Entry<String, GraphValue> entry : values.entrySet()) {
+        for (Map.Entry<String, GraphValue> entry : ordered.entrySet()) {
             String field = entry.getKey();
             GraphValue value = entry.getValue();
             if (field != null && value != null && writable.containsKey(field)) {

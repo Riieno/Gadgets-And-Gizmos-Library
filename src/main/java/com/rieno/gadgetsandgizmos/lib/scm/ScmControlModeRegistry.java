@@ -52,6 +52,13 @@ public final class ScmControlModeRegistry {
         MODES.put(Objects.requireNonNull(resolved.id(), "mode.id"), resolved);
     }
 
+    // Add or remove a builtin mode controlled by the host's feature configuration
+    static synchronized void setBuiltin(ResourceLocation id, @Nullable ScmControlMode mode) {
+        if (id == null || !ScmBuiltinControlModes.isBuiltin(id)) return;
+        if (mode == null) MODES.remove(id);
+        else MODES.put(id, mode);
+    }
+
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================
@@ -82,6 +89,11 @@ public final class ScmControlModeRegistry {
     // Get the serialized ids
     public static synchronized List<String> serializedIds() {
         return MODES.keySet().stream().map(ScmControlModeRegistry::serialize).toList();
+    }
+
+    // Get the display name for a serialized mode
+    public static synchronized String displayName(@Nullable String id) {
+        return resolve(id).displayName();
     }
 
     // Get the serialize

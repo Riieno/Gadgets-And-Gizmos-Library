@@ -9,6 +9,8 @@ package com.rieno.gadgetsandgizmos.lib.namedevents;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.rieno.gadgetsandgizmos.lib.graph.GraphValue;
+import com.rieno.gadgetsandgizmos.lib.interaction.InteractionOrigin;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -21,8 +23,14 @@ public record NamedEvent(
         String name,
         GraphValue data,
         int maximumDistance,
-        Set<String> excludedTransports
+        Set<String> excludedTransports,
+        @Nullable InteractionOrigin origin
 ) {
+    // Preserve callers of the original event constructor while carrying active backend ownership
+    public NamedEvent(UUID id, NamedEventSource source, String name, GraphValue data, int maximumDistance, Set<String> excludedTransports){
+        this(id, source, name, data, maximumDistance, excludedTransports,
+                com.rieno.gadgetsandgizmos.lib.interaction.InteractionContext.current());
+    }
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================
@@ -67,6 +75,6 @@ public record NamedEvent(
         if (transportId != null && !transportId.isBlank()) {
             exclusions.add(transportId.strip());
         }
-        return new NamedEvent(id, source, name, data, maximumDistance, exclusions);
+        return new NamedEvent(id, source, name, data, maximumDistance, exclusions, origin);
     }
 }

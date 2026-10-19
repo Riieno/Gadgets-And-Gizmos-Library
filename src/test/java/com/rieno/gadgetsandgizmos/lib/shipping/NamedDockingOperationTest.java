@@ -72,7 +72,9 @@ class NamedDockingOperationTest{
         host.reservation = NamedDockingOperation.Reservation.WAITING;
         op.tick(8);
         assertFalse(op.complete());
-        assertFalse(op.pending());
+        assertTrue(op.pending());
+        assertEquals(NamedDockingOperation.Phase.WAITING, op.phase());
+        assertTrue(host.holds > 0);
     }
 
     @Test void missingMovementAndLostCompletedConnectionsNeverReportSuccess(){
@@ -136,13 +138,36 @@ class NamedDockingOperationTest{
         assertTrue(host.disconnected);
     }
 
+    @Test void waitingRequestsKeepHoldingAndResumeDockingAfterAReservationReturns(){
+        Host host = new Host();
+        var op = new NamedDockingOperation<>(host, 600);
+        op.start("Cargo Dock");
+        op.tick(0);
+        op.tick(1);
+        assertEquals(2, host.holds);
+        host.reservation = NamedDockingOperation.Reservation.GRANTED;
+        host.arrived = true;
+        op.tick(2);
+        assertEquals(NamedDockingOperation.Phase.DOCKING, op.phase());
+        host.reservation = NamedDockingOperation.Reservation.WAITING;
+        op.tick(3);
+        assertEquals(NamedDockingOperation.Phase.WAITING, op.phase());
+        assertEquals(0, host.releases);
+        assertEquals(3, host.holds);
+        host.reservation = NamedDockingOperation.Reservation.GRANTED;
+        host.arrived = false;
+        op.tick(4);
+        assertEquals(NamedDockingOperation.Phase.NAVIGATING, op.phase());
+    }
+
     private static final class Host implements NamedDockingOperation.Host<String>{
         private NamedDockingOperation.Reservation reservation = NamedDockingOperation.Reservation.WAITING;
         private boolean valid = true, arrived, locked, committed, disconnected, moveAccepted = true;
-        private int navigation, stops, releases;
+        private int navigation, stops, releases, holds;
         public Optional<String> resolve(String name){ return name.equals("Cargo Dock") ? Optional.of(name) : Optional.empty(); }
         public boolean valid(String target){ return valid; }
         public NamedDockingOperation.Reservation reserve(String target, boolean committed){ this.committed = committed; return reservation; }
+        public boolean waitForReservation(String target){ holds++; return true; }
         public boolean navigate(String target){ navigation++; return moveAccepted; }
         public boolean approachReached(String target){ return arrived; }
         public boolean dock(String target){ return true; }

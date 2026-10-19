@@ -26,4 +26,9 @@ public interface VirtualKineticHostBlock {
     default boolean ct$canExposeVirtualKinetics(LevelReader level, BlockPos pos, BlockState state) {
         return true;
     }
+
+    // Check if a state change can retain the virtual kinetic networks
+    default boolean ct$areVirtualKineticStatesEquivalent(BlockState prev, BlockState next) {
+        return false;
+    }
 }

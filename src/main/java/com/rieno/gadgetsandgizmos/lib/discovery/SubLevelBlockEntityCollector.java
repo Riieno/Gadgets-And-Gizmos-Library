@@ -18,11 +18,13 @@ import dev.ryanhcode.sable.sublevel.tracking_points.SubLevelTrackingPointSavedDa
 import dev.ryanhcode.sable.sublevel.tracking_points.TrackingPoint;
 import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.TicketType;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import org.jetbrains.annotations.Nullable;
 
@@ -32,6 +34,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 // Read loaded block entities from Sable plots without forcing their chunks to load
 public final class SubLevelBlockEntityCollector {
@@ -45,6 +48,13 @@ public final class SubLevelBlockEntityCollector {
 
     private static final TicketType<UUID> SUB_LEVEL_LOAD_TICKET = TicketType.create(
             "gadgetsngizmos:sable_sublevel_load", Comparator.comparing(UUID::toString), 40);
+
+    /** A loaded, non-air block in one Sable body. */
+    public record LoadedBlock(BlockPos position, BlockState state) {
+        public LoadedBlock {
+            position = position == null ? BlockPos.ZERO : position.immutable();
+        }
+    }
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -196,6 +206,44 @@ public final class SubLevelBlockEntityCollector {
         return new ArrayList<>(container.getAllSubLevels());
     }
 
+    /**
+     * Resolve the containing server dimension from Sable's live container or
+     * persistent tracking-point index without loading the SubLevel or any of
+     * its chunks.
+     */
+    public static @Nullable ServerLevel findContainingServerLevel(
+            @Nullable MinecraftServer server,
+            @Nullable UUID subLevelId
+    ) {
+        if (server == null || subLevelId == null) {
+            return null;
+        }
+        for (ServerLevel level : server.getAllLevels()) {
+            if (findSubLevel(level, subLevelId) != null
+                    || hasPersistedSubLevel(level, subLevelId)) {
+                return level;
+            }
+        }
+        return null;
+    }
+
+    // Check Sable's durable tracking-point index without requesting a chunk ticket.
+    private static boolean hasPersistedSubLevel(ServerLevel level, UUID subLevelId) {
+        try {
+            SubLevelTrackingPointSavedData trackingData =
+                    SubLevelTrackingPointSavedData.getOrLoad(level);
+            for (Map.Entry<UUID, TrackingPoint> entry : trackingData.getAllTrackingPoints()) {
+                TrackingPoint trackingPoint = entry.getValue();
+                if (trackingPoint != null && trackingPoint.inSubLevel()
+                        && subLevelId.equals(trackingPoint.subLevelID())) {
+                    return true;
+                }
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+        }
+        return false;
+    }
+
     // Get the container
     private static @Nullable SubLevelContainer getContainer(@Nullable Level level) {
         if (level == null) {
@@ -259,6 +307,21 @@ public final class SubLevelBlockEntityCollector {
         return findActorBlockEntity(plot, pos);
     }
 
+    // Promote pending configuration only inside an already loaded plot chunk
+    public static @Nullable BlockEntity getOrCreateBlockEntity(SubLevel body, BlockPos pos){
+        if(body == null || body.isRemoved() || pos == null) return null;
+        ServerLevel level = SableLevelApi.serverLevel(body);
+        if(level == null || !level.getServer().isSameThread())
+            throw new IllegalStateException("Block entity creation requires the server game thread");
+        BlockPos point = pos.immutable();
+        BlockEntity be = getBlockEntity(body, point);
+        if(be != null && !be.isRemoved()) return be;
+        LevelPlot plot = body.getPlot();
+        PlotChunkHolder holder = plot.getChunkHolder(plot.toLocal(new ChunkPos(point)));
+        LevelChunk chunk = holder == null ? null : holder.getChunk();
+        return chunk == null ? null : chunk.getBlockEntity(point, LevelChunk.EntityCreationType.IMMEDIATE);
+    }
+
     // Get the block entities
     public static List<BlockEntity> getBlockEntities(@Nullable Object subLevel) {
         Map<BlockPos, BlockEntity> blockEntities = new LinkedHashMap<>();
@@ -283,6 +346,53 @@ public final class SubLevelBlockEntityCollector {
         }
 
         return new ArrayList<>(blockEntities.values());
+    }
+
+    // Read only the requested block entity type without collecting unrelated plot contents
+    public static <T extends BlockEntity> List<T> getBlockEntities(@Nullable Object subLevel, Class<T> type){
+        return collectMatchingBlockEntities(subLevel, type, val -> true);
+    }
+
+    // Filter loaded entities before allocating the position map while retaining actor precedence
+    public static List<BlockEntity> getBlockEntities(@Nullable Object subLevel, Predicate<BlockEntity> filter){
+        return collectMatchingBlockEntities(subLevel, BlockEntity.class, filter);
+    }
+
+    private static <T extends BlockEntity> List<T> collectMatchingBlockEntities(
+            @Nullable Object subLevel, Class<T> type, Predicate<T> filter){
+        if(type == null || filter == null || !(subLevel instanceof SubLevel body)
+                || !isUsableSubLevel(body, null)) return List.of();
+        Map<BlockPos, T> matches = new LinkedHashMap<>();
+        try{
+            LevelPlot plot = body.getPlot();
+            for(Object actor : plot.getBlockEntityActors()){
+                if(!type.isInstance(actor)) continue;
+                T blockEntity = type.cast(actor);
+                if(filter.test(blockEntity)) matches.putIfAbsent(blockEntity.getBlockPos().immutable(), blockEntity);
+            }
+            for(PlotChunkHolder holder : plot.getLoadedChunks()){
+                LevelChunk chunk = holder.getChunk();
+                if(chunk == null) continue;
+                for(BlockEntity blockEntity : chunk.getBlockEntities().values()){
+                    if(!type.isInstance(blockEntity)) continue;
+                    BlockPos pos = blockEntity.getBlockPos();
+                    if(matches.containsKey(pos) || hasActorBlockEntity(plot, pos)) continue;
+                    T match = type.cast(blockEntity);
+                    if(filter.test(match)) matches.put(pos.immutable(), match);
+                }
+            }
+        }catch(RuntimeException | LinkageError ignored){
+        }
+        return new ArrayList<>(matches.values());
+    }
+
+    // An actor keeps its position even when it does not match the requested filter
+    private static boolean hasActorBlockEntity(LevelPlot plot, BlockPos pos){
+        if(plot instanceof SubLevelActorLookup lookup) return lookup.gadgetsngizmos$actorBlockEntity(pos) != null;
+        for(Object actor : plot.getBlockEntityActors()){
+            if(actor instanceof BlockEntity blockEntity && pos.equals(blockEntity.getBlockPos())) return true;
+        }
+        return false;
     }
 
     // Find one typed block entity across levels that are already loaded
@@ -311,8 +421,41 @@ public final class SubLevelBlockEntityCollector {
         return null;
     }
 
+    /**
+     * Read a bounded snapshot of the non-air blocks already loaded for a Sable
+     * body. This never creates chunk tickets and is suitable for previews sent
+     * to a client that is not currently tracking the craft itself.
+     */
+    public static List<LoadedBlock> getLoadedBlocks(@Nullable Object subLevel, int maximumBlocks) {
+        if (!(subLevel instanceof SubLevel sableSubLevel) || !isUsableSubLevel(sableSubLevel, null)) {
+            return List.of();
+        }
+        int limit = Math.max(1, maximumBlocks);
+        List<LoadedBlock> blocks = new ArrayList<>();
+        try {
+            for (PlotChunkHolder holder : sableSubLevel.getPlot().getLoadedChunks()) {
+                if (blocks.size() >= limit) break;
+                LevelChunk chunk = holder.getChunk();
+                if (chunk == null || chunk.isEmpty()) continue;
+                chunk.findBlocks(state -> !state.isAir(), (position, state) -> {
+                    if (blocks.size() < limit) {
+                        blocks.add(new LoadedBlock(position, state));
+                    }
+                });
+            }
+        } catch (RuntimeException | LinkageError ignored) {
+            // A body may be replaced while its chunk snapshot is being read.
+        }
+        blocks.sort(Comparator.comparing(LoadedBlock::position));
+        return List.copyOf(blocks);
+    }
+
     // Find the actor block entity
     private static @Nullable BlockEntity findActorBlockEntity(LevelPlot plot, BlockPos pos) {
+        if(plot instanceof SubLevelActorLookup lookup){
+            BlockEntity blockEntity = lookup.gadgetsngizmos$actorBlockEntity(pos);
+            if(blockEntity == null || isMatchingBlockEntity(blockEntity, pos)) return blockEntity;
+        }
         for (Object actor : plot.getBlockEntityActors()) {
             if (actor instanceof BlockEntity blockEntity && isMatchingBlockEntity(blockEntity, pos)) {
                 return blockEntity;

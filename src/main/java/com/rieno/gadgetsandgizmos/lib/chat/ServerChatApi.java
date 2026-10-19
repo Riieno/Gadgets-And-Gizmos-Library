@@ -99,6 +99,8 @@ public final class ServerChatApi{
     // Send only to this source's sublevel occupants or its centered three-by-three world chunks
     public static boolean sendNearby(BlockEntity source, String text, boolean allowed){
         if(!allowed || source == null || source.isRemoved() || text == null || text.isBlank()) return false;
+        BlockEntity host = com.rieno.gadgetsandgizmos.lib.physics.HostedBlockEntities.host(source);
+        if(host != null) source = host;
         if(source.getLevel() == null || source.getLevel().isClientSide) return false;
         var level = SableLevelApi.serverLevel(source.getLevel());
         if(level == null || level.getServer() == null) return false;

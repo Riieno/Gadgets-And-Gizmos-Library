@@ -55,6 +55,29 @@ public final class ControllerDiscoveryService {
 
     ------------------------------------------------------------##-----------------------------------------------------*/
 
+    // Resolve exact display names in caller order, including aliases supplied as separate candidates
+    public static @Nullable ControllerDiscoveryNode firstNamed(Iterable<ControllerDiscoveryNode> targets, String name){
+        if(targets == null || name == null || name.isBlank()) return null;
+        String requested = name.strip();
+        for(ControllerDiscoveryNode target : targets){
+            if(target != null && requested.equalsIgnoreCase(target.label().strip())) return target;
+        }
+        return null;
+    }
+
+    // Return distinct named bindings in caller order; labels and aliases are exact, ignoring case
+    public static List<ControllerDiscoveryNode> allNamed(Iterable<ControllerDiscoveryNode> targets, String name){
+        if(targets == null || name == null || name.isBlank()) return List.of();
+        String requested = name.strip();
+        Map<String, ControllerDiscoveryNode> matches = new LinkedHashMap<>();
+        for(ControllerDiscoveryNode target : targets){
+            if(target != null && requested.equalsIgnoreCase(target.label().strip())){
+                matches.putIfAbsent(target.nodeId(), target);
+            }
+        }
+        return List.copyOf(matches.values());
+    }
+
     // Scan the block entities
     public static List<ControllerDiscoveryNode> scanBlockEntities(Iterable<BlockEntity> blockEntities,
                                                                   @Nullable UUID subLevelId,

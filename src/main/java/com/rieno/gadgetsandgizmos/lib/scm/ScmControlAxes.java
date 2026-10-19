@@ -1,0 +1,179 @@
+package com.rieno.gadgetsandgizmos.lib.scm;
+
+import net.minecraft.util.Mth;
+import net.minecraft.world.phys.Vec3;
+
+/** Convert physical control vectors to authored directional controls. */
+public final class ScmControlAxes {
+    private static final double MAX_GROUND_STEERING_ANGLE = Math.toRadians(30.0D);
+    private static final double GROUND_STEERING_YAW_RATE_SECONDS = 0.35D;
+
+    private ScmControlAxes(){}
+
+    // Find the shortest leveling rotation, including a fully inverted craft
+    public static Vec3 uprightError(Vec3 up, Vec3 desiredUp, Vec3 forward){
+        if(!finite(up) || !finite(desiredUp) || up.lengthSqr() <= 1.0E-12D || desiredUp.lengthSqr() <= 1.0E-12D) return Vec3.ZERO;
+        Vec3 current = up.normalize();
+        Vec3 target = desiredUp.normalize();
+        Vec3 axis = current.cross(target);
+        double angle = Math.acos(Mth.clamp(current.dot(target), -1.0D, 1.0D));
+        if(angle <= 1.0E-12D) return Vec3.ZERO;
+        if(axis.lengthSqr() <= 1.0E-12D){
+            axis = finite(forward) ? forward.subtract(current.scale(forward.dot(current))) : Vec3.ZERO;
+            if(axis.lengthSqr() <= 1.0E-12D){
+                Vec3 ref = Math.abs(current.y) < 0.9D ? new Vec3(0, 1, 0) : new Vec3(1, 0, 0);
+                axis = current.cross(ref);
+            }
+        }
+        return axis.normalize().scale(angle);
+    }
+
+    /** Positive rotation about up turns forward towards left, not right. */
+    public static double yawRightDemand(Vec3 torque, Vec3 up, boolean reverseSteering){
+        double right = -projection(torque, up);
+        return reverseSteering ? -right : right;
+    }
+
+    /**
+     * Convert physical yaw to Offroad's signed WheelMount input. Negative selects its
+     * left signal and positive selects its right signal; reverse travel inverts steering once.
+     */
+    public static double wheelSteeringDemand(Vec3 torque, Vec3 up, boolean reverseSteering){
+        return -yawRightDemand(torque, up, reverseSteering);
+    }
+
+    /**
+     * Convert the current heading error directly into a ground steering input.
+     * The two-argument form preserves the scalar API for callers which do not
+     * have measured yaw-rate feedback.
+     */
+    public static double groundSteeringDemand(
+            double headingError,
+            double steeringFeedForward
+    ){
+        return groundSteeringDemand(headingError, 0.0D, steeringFeedForward);
+    }
+
+    /** Combine heading, yaw-rate feedback and route curvature into one analogue steering demand. */
+    public static double groundSteeringDemand(
+            double headingError,
+            double yawRate,
+            double steeringFeedForward
+    ){
+        double error = Double.isFinite(headingError) ? headingError : 0.0D;
+        double rate = Double.isFinite(yawRate) ? yawRate : 0.0D;
+        double feedForward = Double.isFinite(steeringFeedForward)
+                ? steeringFeedForward : 0.0D;
+        return Mth.clamp(error / MAX_GROUND_STEERING_ANGLE + feedForward
+                        - rate * GROUND_STEERING_YAW_RATE_SECONDS,
+                -1.0D, 1.0D);
+    }
+
+    // Track lookahead curvature while damping the difference from its expected turn rate
+    public static double curvatureSteeringDemand(double curvature, double forwardSpeed,
+                                                  double yawRate, double steeringFeedForward){
+        double curve = Double.isFinite(curvature) ? curvature : 0.0D;
+        double speed = Double.isFinite(forwardSpeed) ? forwardSpeed : 0.0D;
+        double rate = Double.isFinite(yawRate) ? yawRate : 0.0D;
+        double steering = Double.isFinite(steeringFeedForward) ? steeringFeedForward : 0.0D;
+        return Mth.clamp(steering - (rate - speed * curve)
+                        * GROUND_STEERING_YAW_RATE_SECONDS,
+                -1.0D, 1.0D);
+    }
+
+    // Recover heading before relying on curvature tracking alone
+    public static double routeSteeringDemand(double headingError, double curvature, double forwardSpeed,
+                                             double yawRate, double steeringFeedForward){
+        double error = Double.isFinite(headingError) ? headingError : 0.0D;
+        double tracking = Mth.clamp(curvatureSteeringDemand(curvature, forwardSpeed, yawRate, steeringFeedForward)
+                + error / MAX_GROUND_STEERING_ANGLE * 0.25D, -1.0D, 1.0D);
+        double recovery = groundSteeringDemand(error, yawRate, steeringFeedForward);
+        double blend = Mth.clamp((Math.abs(error) - Math.toRadians(8.0D))
+                / Math.toRadians(37.0D), 0.0D, 1.0D);
+        return Mth.lerp(blend, tracking, recovery);
+    }
+
+    // Leave room for a steering vehicle to turn while reducing its recovery speed
+    public static double groundRecoverySpeedLimit(double headingError, double requestedSpeed,
+                                                  double turningRadius, double lateralAcceleration){
+        double requested = Double.isFinite(requestedSpeed) ? Math.max(0.0D, requestedSpeed) : 0.0D;
+        double error = Double.isFinite(headingError) ? Math.abs(headingError) : 0.0D;
+        double blend = Mth.clamp((error - Math.toRadians(30.0D)) / Math.toRadians(60.0D), 0.0D, 1.0D);
+        if(blend <= 0.0D) return requested;
+        double radius = Double.isFinite(turningRadius) ? Math.max(0.25D, turningRadius) : 0.25D;
+        double acceleration = Double.isFinite(lateralAcceleration) ? Math.max(0.0D, lateralAcceleration) : 0.0D;
+        double recovery = Math.min(requested, Math.max(0.5D, Math.sqrt(radius * acceleration) * 0.5D));
+        return Mth.lerp(blend, requested, recovery);
+    }
+
+    // Bound one steering update so a route target cannot swing wheels across full lock in one tick
+    public static double slewSteering(double previous, double requested, double maximumChange){
+        double prev = Double.isFinite(previous) ? Mth.clamp(previous, -1.0D, 1.0D) : 0.0D;
+        double next = Double.isFinite(requested) ? Mth.clamp(requested, -1.0D, 1.0D) : 0.0D;
+        double step = Double.isFinite(maximumChange) ? Math.max(0.0D, maximumChange) : 0.0D;
+        return Mth.clamp(next, prev - step, prev + step);
+    }
+
+    // Quantize a position input symmetrically and preserve the neutral steering deadband
+    public static int steeringSignal(double demand, int maximumSignal){
+        int maximum = Math.max(0, maximumSignal);
+        double val = Double.isFinite(demand) ? Mth.clamp(demand, -1.0D, 1.0D) : 0.0D;
+        int signal = (int) Math.round(Math.abs(val) * maximum);
+        return val < 0.0D ? -signal : signal;
+    }
+
+    /** Construct physical torque for a signed right-turn request (negative means left). */
+    public static Vec3 yawTorque(Vec3 up, double rightDemand){
+        if(!finite(up) || !Double.isFinite(rightDemand)) return Vec3.ZERO;
+        return up.normalize().scale(-rightDemand);
+    }
+
+    /**
+     * Project force onto forward. A selected travel gear permits propulsion only in that
+     * direction; opposing force is braking, not a request to energize the selected gear.
+     * Zero travel direction leaves reversible force actuators free to brake in either direction.
+     */
+    public static double longitudinalDrive(Vec3 force, Vec3 forward, double travelDirection){
+        double demand = projection(force, forward);
+        if(Double.isFinite(travelDirection) && Math.abs(travelDirection) > 1.0E-5D
+                && demand * travelDirection <= 0.0D) return 0.0D;
+        return Mth.clamp(demand, -1.0D, 1.0D);
+    }
+
+    // Preserve lift support for hovering and climbing without reversing an authored descent
+    public static double liftSelector(Vec3 correction, Vec3 physicalForce, Vec3 up, boolean regulatedSpeed){
+        if(!regulatedSpeed) return Mth.clamp(projection(correction, up), -1.0D, 1.0D);
+        double lift = projection(physicalForce, up);
+        return Math.abs(lift) <= 1.0E-5D ? 0.0D : Math.signum(lift);
+    }
+
+    // Preserve lift support for hovering and climbing without reversing an authored descent
+    public static Vec3 withLiftSupport(Vec3 force, Vec3 gravityHold, Vec3 up){
+        if(!finite(force)) force = Vec3.ZERO;
+        if(!finite(up) || up.lengthSqr() <= 1.0E-12D) return force;
+        Vec3 axis = up.normalize();
+        double lift = projection(force, axis);
+        if(lift < -1.0E-5D) return force;
+        double support = Math.max(0.0D, projection(gravityHold, axis));
+        return force.add(axis.scale(Math.max(lift, support) - lift));
+    }
+
+    // Keep holding propulsion reachable while a descent reduces its thrust
+    public static java.util.Set<String> withSupportActions(java.util.Set<String> actions, Vec3 support, Vec3 up){
+        var res = new java.util.LinkedHashSet<>(actions);
+        double lift = projection(support, up);
+        if(lift > 1.0E-5D) res.add("ship_ascend");
+        else if(lift < -1.0E-5D) res.add("ship_descend");
+        return java.util.Set.copyOf(res);
+    }
+
+    private static double projection(Vec3 vector, Vec3 axis){
+        if(!finite(vector) || !finite(axis)) return 0.0D;
+        double result = vector.dot(axis.normalize());
+        return Double.isFinite(result) ? result : 0.0D;
+    }
+
+    private static boolean finite(Vec3 value){
+        return value != null && Double.isFinite(value.x) && Double.isFinite(value.y) && Double.isFinite(value.z);
+    }
+}

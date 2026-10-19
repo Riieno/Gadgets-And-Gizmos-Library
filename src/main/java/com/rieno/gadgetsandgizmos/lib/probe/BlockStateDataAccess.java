@@ -8,11 +8,15 @@ package com.rieno.gadgetsandgizmos.lib.probe;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.discovery.SubLevelBlockEntityCollector;
+import com.rieno.gadgetsandgizmos.lib.control.BlockStateControlReceiver;
 import com.rieno.gadgetsandgizmos.lib.graph.GraphValue;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
@@ -25,13 +29,27 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 // Expose block state properties as reusable typed data ports
 public final class BlockStateDataAccess {
     public static final String PORT_PREFIX = "state_";
+    private static final Map<Block, Set<String>> WRITABLE_PROPERTIES = new ConcurrentHashMap<>();
+
+    static {
+        registerWritableProperty(Blocks.REDSTONE_WIRE, "power");
+    }
 
     // Initialize the block state data access
     private BlockStateDataAccess() {
+    }
+
+    // Allow an owning mod to expose one block state property for graph writes
+    public static void registerWritableProperty(Block block, String property) {
+        if (block == null || property == null || property.isBlank()) return;
+        WRITABLE_PROPERTIES.computeIfAbsent(block, ignored -> ConcurrentHashMap.newKeySet())
+                .add(property.strip());
     }
 
     // Get the readable or writable state data
@@ -41,7 +59,7 @@ public final class BlockStateDataAccess {
         }
         Map<String, String> ports = new LinkedHashMap<>();
         for (Property<?> property : state.getProperties()) {
-            if (!writable || isWritable(property)) {
+            if (!writable || isWritable(state, property)) {
                 ports.put(PORT_PREFIX + property.getName(), graphType(state, property));
             }
         }
@@ -55,7 +73,7 @@ public final class BlockStateDataAccess {
         }
         Map<String, List<String>> options = new LinkedHashMap<>();
         for (Property<?> property : state.getProperties()) {
-            if (writable && !isWritable(property)) {
+            if (writable && !isWritable(state, property)) {
                 continue;
             }
             List<String> values = new ArrayList<>();
@@ -81,15 +99,15 @@ public final class BlockStateDataAccess {
 
     // Write a complete state data update
     public static boolean write(Level level, BlockPos pos, Map<String, GraphValue> values) {
-        if (level == null || pos == null || values == null || values.isEmpty()
-                || !level.isLoaded(pos)) {
+        if (level == null || level.isClientSide || pos == null || values == null || values.isEmpty()
+                || !SubLevelBlockEntityCollector.isTargetLoaded(level, null, pos)) {
             return false;
         }
         BlockState current = level.getBlockState(pos);
         BlockState updated = current;
         for (Map.Entry<String, GraphValue> entry : values.entrySet()) {
             Property<?> property = findProperty(updated, entry.getKey());
-            if (property == null || !isWritable(property) || entry.getValue() == null) {
+            if (property == null || !isWritable(updated, property) || entry.getValue() == null) {
                 continue;
             }
             BlockState candidate = withValue(updated, property, entry.getValue());
@@ -97,7 +115,10 @@ public final class BlockStateDataAccess {
                 updated = candidate;
             }
         }
-        if (updated.equals(current) || !level.setBlock(pos, updated, 3)) {
+        if(updated.equals(current)) return false;
+        if(level.getBlockEntity(pos) instanceof BlockStateControlReceiver receiver)
+            return receiver.applyControlledBlockState(updated);
+        if (!level.setBlock(pos, updated, 3)) {
             return false;
         }
         level.updateNeighborsAt(pos, updated.getBlock());
@@ -122,8 +143,10 @@ public final class BlockStateDataAccess {
     }
 
     // Check if a state property can be changed through data access
-    private static boolean isWritable(Property<?> property) {
-        return property != null && !"waterlogged".equals(property.getName());
+    private static boolean isWritable(BlockState state, Property<?> property) {
+        return state != null && property != null && !"waterlogged".equals(property.getName())
+                && WRITABLE_PROPERTIES.getOrDefault(state.getBlock(), Set.of())
+                .contains(property.getName());
     }
 
     // Get the graph type for one state property

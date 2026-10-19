@@ -4,6 +4,7 @@ import com.rieno.gadgetsandgizmos.lib.control.math.Matrix3;
 import com.rieno.gadgetsandgizmos.lib.control.math.Quaternion;
 import com.rieno.gadgetsandgizmos.lib.control.math.Vector3;
 import com.rieno.gadgetsandgizmos.lib.graph.GraphValue;
+import com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -39,13 +40,14 @@ public final class MathGraphValues{
     }
 
     public static GraphValue vector(Vector3 val){
-        return GraphValue.map(Map.of("x", number(val.x()), "y", number(val.y()), "z", number(val.z())));
+        return GraphValue.map(GraphPortOrder.entries(Map.entry("x", number(val.x())),
+                Map.entry("y", number(val.y())), Map.entry("z", number(val.z()))));
     }
 
     // Preserve raw components for algebra; normalization belongs to rotation operations
     public static GraphValue quaternion(Quaternion val){
-        return GraphValue.map(Map.of("x", number(val.x()), "y", number(val.y()),
-                "z", number(val.z()), "w", number(val.w())));
+        return GraphValue.map(GraphPortOrder.entries(Map.entry("x", number(val.x())), Map.entry("y", number(val.y())),
+                Map.entry("z", number(val.z())), Map.entry("w", number(val.w()))));
     }
 
     public static GraphValue matrix(Matrix3 val){
@@ -78,6 +80,12 @@ public final class MathGraphValues{
                 component(val, "pitch", component(val, "y", 0)), component(val, "yaw", component(val, "z", 0)));
     }
 
+    // Convert one angle without wrapping or clamping its signed value
+    public static GraphValue convertAngle(double angle, boolean toRadians){
+        number(angle);
+        return number(toRadians ? Math.toRadians(angle) : Math.toDegrees(angle));
+    }
+
     public static GraphValue convertAngles(GraphValue val, boolean toRadians){
         if(val == null || !(val.value() instanceof Map<?, ?> map)) return GraphValue.map(Map.of());
         Map<String, Object> res = new LinkedHashMap<>();
@@ -97,8 +105,8 @@ public final class MathGraphValues{
     }
 
     private static GraphValue angles(Vector3 val, String x, String y, String z){
-        return GraphValue.map(Map.of("x", number(val.x()), "y", number(val.y()), "z", number(val.z()),
-                x, number(val.x()), y, number(val.y()), z, number(val.z())));
+        return GraphValue.map(GraphPortOrder.entries(Map.entry("x", number(val.x())), Map.entry("y", number(val.y())),
+                Map.entry("z", number(val.z())), Map.entry(x, number(val.x())), Map.entry(y, number(val.y())), Map.entry(z, number(val.z()))));
     }
 
     private static double numeric(Object raw){
@@ -110,14 +118,14 @@ public final class MathGraphValues{
 
     private static Object convert(Object raw, boolean toRadians){
         if(raw instanceof GraphValue val){
-            if("number".equals(val.type())) return number(toRadians ? Math.toRadians(val.asNumber()) : Math.toDegrees(val.asNumber()));
+            if("number".equals(val.type())) return convertAngle(val.asNumber(), toRadians);
             if("map".equals(val.type())) return convertAngles(val, toRadians);
             if("list".equals(val.type()) && val.value() instanceof List<?> list){
                 return GraphValue.list(list.stream().map(entry -> convert(entry, toRadians)).toList());
             }
             return val;
         }
-        if(raw instanceof Number num) return number(toRadians ? Math.toRadians(num.doubleValue()) : Math.toDegrees(num.doubleValue()));
+        if(raw instanceof Number num) return convertAngle(num.doubleValue(), toRadians);
         if(raw instanceof Map<?, ?> map) return convertAngles(GraphValue.map(map), toRadians);
         if(raw instanceof List<?> list) return GraphValue.list(list.stream().map(entry -> convert(entry, toRadians)).toList());
         return raw;

@@ -26,6 +26,10 @@ public final class GraphHostServices {
             ResourceLocation.fromNamespaceAndPath(GadgetsNGizmosLibrary.MOD_ID, "block_entity"),
             BlockEntity.class);
 
+    public static final GraphServiceKey<GraphNodeOutputs> NODE_OUTPUTS = new GraphServiceKey<>(
+            ResourceLocation.fromNamespaceAndPath(GadgetsNGizmosLibrary.MOD_ID, "node_outputs"),
+            GraphNodeOutputs.class);
+
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================

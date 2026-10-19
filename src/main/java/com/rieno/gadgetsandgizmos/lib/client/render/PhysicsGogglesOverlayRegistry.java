@@ -91,6 +91,7 @@ public final class PhysicsGogglesOverlayRegistry {
 
     // Render every registered overlay
     public static void render(Context ctx) {
+        if(ClientViewOwnership.isReserved()) return;
         Map<ResourceLocation, Renderer> renderers;
         synchronized (PhysicsGogglesOverlayRegistry.class) {
             renderers = Map.copyOf(RENDERERS);

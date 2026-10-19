@@ -106,6 +106,22 @@ public final class ControllerDiscoveryNode {
         return blockPos == null ? null : blockPos.immutable();
     }
 
+    // Keep the link identity while resolving its supported block
+    public ControllerDiscoveryNode withBlockTarget(String blockId, String label, BlockPos blockPos) {
+        return new ControllerDiscoveryNode(nodeId, kind, groupId, blockId, label, subLevelId, blockPos);
+    }
+
+    // Keep discovery and generated port IDs while a block changes coordinate frames
+    public ControllerDiscoveryNode withLocation(@Nullable UUID subLevelId, BlockPos pos){
+        return new ControllerDiscoveryNode(nodeId, kind, groupId, blockId, label, subLevelId, pos);
+    }
+
+    // Compare physical block identity independently of labels, node ids and input/output roles
+    public boolean hasSameBlockTarget(@Nullable ControllerDiscoveryNode other){
+        return other != null && blockPos != null && other.blockPos != null
+                && blockPos.equals(other.blockPos) && Objects.equals(subLevelId, other.subLevelId);
+    }
+
     // Check if this is valid
     public boolean isValid() {
         return !nodeId.isEmpty();

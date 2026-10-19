@@ -19,6 +19,7 @@ public sealed interface GraphMutation permits GraphMutation.AddNode,
         GraphMutation.SetNodeData, GraphMutation.RemoveNodeData,
         GraphMutation.AddEdge, GraphMutation.RemoveEdge,
         GraphMutation.AddFunction, GraphMutation.RenameFunction, GraphMutation.RemoveFunction,
+        GraphMutation.SetScmActionFunction, GraphMutation.CreateScmActionFunction,
         GraphMutation.SetVariable, GraphMutation.RemoveVariable {
     // A blank function id targets the root graph
     record AddNode(String functionId, String temporaryId, String type, String label, String alias,
@@ -67,6 +68,17 @@ public sealed interface GraphMutation permits GraphMutation.AddNode,
     }
 
     record RemoveFunction(String functionId) implements GraphMutation {
+    }
+
+    // Bind a public SCM action node to a graph function. An empty function id
+    // restores the built-in SCM action implementation.
+    record SetScmActionFunction(String actionType, String functionId) implements GraphMutation {
+    }
+
+    // Create a signature-mirrored SCM action function whose default body calls the
+    // built-in action. Players can then edit the body without losing a safe default.
+    record CreateScmActionFunction(String temporaryId, String actionType,
+                                   String name) implements GraphMutation {
     }
 
     record SetVariable(String name, GraphValue value) implements GraphMutation {

@@ -1,4 +1,22 @@
 {
   "gadgetsngizmos.propeller.pull_when_clockwise": "Pull air when clockwise",
-  "gadgetsngizmos.propeller.push_when_clockwise": "Push air when clockwise"
+  "gadgetsngizmos.propeller.push_when_clockwise": "Push air when clockwise",
+  "key.categories.gadgetsngizmos.camera": "Camera Controls",
+  "key.gadgetsngizmos.camera.exit": "Exit camera control",
+  "key.gadgetsngizmos.camera.flashlight": "Toggle camera flashlight",
+  "key.gadgetsngizmos.camera.raycast": "Fire camera raycast",
+  "key.gadgetsngizmos.camera.frame": "Toggle camera frame",
+  "key.gadgetsngizmos.camera.grid": "Toggle camera grid",
+  "gadgetsngizmos.camera.unbound": "Unbound (Controls)",
+  "gadgetsngizmos.camera.hint.exit": "%s: Exit",
+  "gadgetsngizmos.camera.hint.flashlight": "%s: Flashlight",
+  "gadgetsngizmos.camera.hint.raycast": "%s: Raycast",
+  "gadgetsngizmos.camera.hint.frame": "%s: Frame",
+  "gadgetsngizmos.camera.hint.grid": "%s: Grid",
+  "gadgetsngizmos.camera.live": "LIVE",
+  "gadgetsngizmos.camera.ray.hit": "Hit: %s m (%s)",
+  "gadgetsngizmos.camera.ray.miss": "No hit within %s m",
+  "gadgetsngizmos.camera.take_control": "Take control of camera",
+  "key.gadgetsngizmos.camera.interact": "Interact with hit",
+  "gadgetsngizmos.camera.hint.interact": "%s: Interact with hit"
 }

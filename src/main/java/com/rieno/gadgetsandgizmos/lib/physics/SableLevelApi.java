@@ -71,7 +71,9 @@ public final class SableLevelApi {
 
     // Get the sublevel containing one block entity
     public static @Nullable SubLevel containing(@Nullable BlockEntity blockEntity) {
-        return blockEntity == null ? null : Sable.HELPER.getContaining(blockEntity);
+        if(blockEntity == null) return null;
+        BlockEntity host = HostedBlockEntities.host(blockEntity);
+        return Sable.HELPER.getContaining(host == null ? blockEntity : host);
     }
 
     // Get the sublevel containing one entity
@@ -111,6 +113,12 @@ public final class SableLevelApi {
     // Get the containing sublevel ID
     public static @Nullable UUID containingId(@Nullable BlockEntity blockEntity) {
         SubLevel subLevel = containing(blockEntity);
+        return subLevel == null ? null : subLevel.getUniqueId();
+    }
+
+    // Get the sublevel ID containing one precise position
+    public static @Nullable UUID containingId(@Nullable Level level, @Nullable BlockPos pos){
+        SubLevel subLevel = containing(level, pos);
         return subLevel == null ? null : subLevel.getUniqueId();
     }
 

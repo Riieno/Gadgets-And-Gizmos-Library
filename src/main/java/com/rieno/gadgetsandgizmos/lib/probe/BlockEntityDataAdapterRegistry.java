@@ -48,6 +48,22 @@ public final class BlockEntityDataAdapterRegistry {
         return dataPorts(target, false);
     }
 
+    // Check whether a provider or primary adapter supplies a dedicated control schema
+    public static boolean hasPrimaryWritableData(BlockEntity target){
+        if(target == null) return false;
+        if(target instanceof BlockEntityDataProvider provider
+                && provider.graphWritableData().entrySet().stream().anyMatch(entry ->
+                !BlockEntityDataAccessPolicy.isItemContentMutation(entry.getKey(), entry.getValue()))) return true;
+        for(BlockEntityDataAdapter<BlockEntity> adapter : findAdapters(target)){
+            if(adapter.isSupplemental()) continue;
+            for(BlockEntityDataPort port : adapter.ports(target)){
+                if(port.access().canWrite()
+                        && !BlockEntityDataAccessPolicy.isItemContentMutation(port.id(), port.type())) return true;
+            }
+        }
+        return false;
+    }
+
     // Get explicitly grouped readable data ports
     public static Map<String, Map<String, String>> readableDataPortGroups(BlockEntity target) {
         return dataPortGroups(target, true);

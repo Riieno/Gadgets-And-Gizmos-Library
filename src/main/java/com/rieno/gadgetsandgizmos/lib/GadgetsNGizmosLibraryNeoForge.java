@@ -8,8 +8,16 @@ package com.rieno.gadgetsandgizmos.lib;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.access.ProtectionBypass;
 import com.rieno.gadgetsandgizmos.lib.config.GadgetsNGizmosLibraryConfigs;
 import com.rieno.gadgetsandgizmos.lib.discovery.SableSubLevelResidency;
+import com.rieno.gadgetsandgizmos.lib.worker.WorkerRecipeCatalog;
+import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.TagsUpdatedEvent;
+import net.neoforged.neoforge.event.server.ServerStartedEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
+import net.neoforged.neoforge.event.entity.player.PlayerEvent;
+import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
@@ -30,5 +38,30 @@ public final class GadgetsNGizmosLibraryNeoForge {
         GadgetsNGizmosLibraryConfigs.register(modContainer);
         SableSubLevelResidency.bootstrap();
         com.rieno.gadgetsandgizmos.lib.item.TimedItemTransformations.register();
+        NeoForge.EVENT_BUS.addListener(GadgetsNGizmosLibraryNeoForge::onTagsUpdated);
+        NeoForge.EVENT_BUS.addListener(GadgetsNGizmosLibraryNeoForge::onServerStarted);
+        NeoForge.EVENT_BUS.addListener(GadgetsNGizmosLibraryNeoForge::onServerStopped);
+        NeoForge.EVENT_BUS.addListener(GadgetsNGizmosLibraryNeoForge::onPlayerLoggedOut);
+    }
+
+    // Drop resolved tag members whenever datapacks update them
+    private static void onTagsUpdated(TagsUpdatedEvent evt){
+        WorkerRecipeCatalog.invalidate();
+    }
+
+    // Warm the worker recipe graph across ticks after recipes and tags finish loading
+    private static void onServerStarted(ServerStartedEvent evt){
+        WorkerRecipeCatalog.prepareLookup(evt.getServer().overworld());
+    }
+
+    // Do not retain recipe managers from stopped worlds
+    private static void onServerStopped(ServerStoppedEvent evt){
+        WorkerRecipeCatalog.invalidate();
+        ProtectionBypass.clear(evt.getServer());
+    }
+
+    // Reconnecting players must enable the bypass again
+    private static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent evt){
+        if(evt.getEntity() instanceof ServerPlayer player) ProtectionBypass.clear(player);
     }
 }

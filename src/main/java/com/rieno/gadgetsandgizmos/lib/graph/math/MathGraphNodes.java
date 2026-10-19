@@ -38,10 +38,15 @@ public final class MathGraphNodes{
         if(namespace == null || !namespace.matches("[a-z0-9_.-]+")) throw new IllegalArgumentException("A mod namespace is required");
         List<Node> res = new ArrayList<>();
         add(res, namespace, "pi", Map.of(), ports("value:number"), "Return pi (3.141592653589793), the circle constant.");
+        add(res, namespace, "percentage", ports("a:number", "b:number"), ports("value:number"),
+                "Return A divided by B times 100. For example, A = 50 and B = 200 returns 25. Zero B or an unrepresentable result returns 0 with Valid = false.");
         add(res, namespace, "vector_scale", ports("vector:map", "scalar:number"), ports("value:map"), "Multiply every vector component by a number.");
         add(res, namespace, "vector_normalize", ports("vector:map"), ports("value:map"), "Return a unit vector, or zero for a zero vector.");
         add(res, namespace, "vector_dot", ports("a:map", "b:map"), ports("value:number"), "Return the vector dot product.");
         add(res, namespace, "vector_cross", ports("a:map", "b:map"), ports("value:map"), "Return the right-handed vector cross product.");
+        add(res, namespace, "angle_from_coords", ports("origin:map", "target:map"),
+                ports("euler:map", "quaternion:map", "tait_bryan:map", "axis:map", "angle:number", "degrees:number"),
+                "Degrees is the horizontal X/Z heading from Origin to Target in 0 to 360 degrees: 0 south (+Z), 90 east (+X), 180 north (-Z), 270 west (-X). Height is ignored; no horizontal displacement returns Degrees = 0. Euler (ZXZ), Quaternion (XYZW), Tait-Bryan (XYZ), Axis and Angle (radians) describe the shortest 3D rotation from +Z. Coincident or invalid coordinates set valid to false.");
         add(res, namespace, "matrix_create", ports("row_x:map", "row_y:map", "row_z:map"), ports("matrix:map"), "Create a row-major 3x3 matrix from three row vectors.");
         add(res, namespace, "matrix_diagonal", ports("diagonal:map"), ports("matrix:map"), "Create a diagonal matrix from an XYZ vector.");
         add(res, namespace, "matrix_identity", Map.of(), ports("matrix:map"), "Return the identity linear transform.");
@@ -78,8 +83,8 @@ public final class MathGraphNodes{
         add(res, namespace, "quaternion_from_axis_angle", ports("axis:map", "angle:number"), ports("quaternion:map"), "Create a rotation from an axis and an angle in radians.");
         add(res, namespace, "quaternion_to_axis_angle", ports("quaternion:map"), ports("axis:map", "angle:number"), "Return a unit axis and shortest rotation angle in radians.");
         add(res, namespace, "quaternion_slerp", ports("a:map", "b:map", "amount:number"), ports("quaternion:map"), "Interpolate normalized rotations along the shortest arc.");
-        add(res, namespace, "degrees_to_radians", ports("angles:map"), ports("angles:map"), "Convert numeric map fields from degrees to radians, preserving keys and nested maps.");
-        add(res, namespace, "radians_to_degrees", ports("angles:map"), ports("angles:map"), "Convert numeric map fields from radians to degrees, preserving keys and nested maps.");
+        add(res, namespace, "degrees_to_radians", ports("angle:number", "angles:map"), ports("angle:number", "angles:map"), "Convert an Angle number from degrees to radians. The separate Angles map ports convert numeric fields, preserving keys and nested maps.");
+        add(res, namespace, "radians_to_degrees", ports("angle:number", "angles:map"), ports("angle:number", "angles:map"), "Convert an Angle number from radians to degrees. The separate Angles map ports convert numeric fields, preserving keys and nested maps.");
         for(String id : List.of("linear_predict", "linear_integrator", "rigid_body_predict", "rigid_body_integrator")){
             boolean rigid = id.startsWith("rigid"), stateful = id.endsWith("integrator");
             Map<String, String> inputs = new LinkedHashMap<>(ports("position:map", "velocity:map", "acceleration:map", "jerk:map", "delta_time:number"));
@@ -134,7 +139,7 @@ public final class MathGraphNodes{
             try{
                 Map<String, GraphValue> res = new LinkedHashMap<>(evaluate(op, ctx, in));
                 res.put("valid", GraphValue.bool(true));
-                return Map.copyOf(res);
+                return com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder.copy(res);
             }catch(IllegalArgumentException err){
                 Map<String, GraphValue> res = new LinkedHashMap<>();
                 schema.forEach((key, type) -> {
@@ -142,16 +147,25 @@ public final class MathGraphNodes{
                             : type.equals("boolean") ? GraphValue.bool(false) : GraphValue.number(0));
                 });
                 res.put("valid", GraphValue.bool(false));
-                return Map.copyOf(res);
+                return com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder.copy(res);
             }
         };
-        String title = java.util.Arrays.stream(op.split("_")).map(word -> Character.toUpperCase(word.charAt(0)) + word.substring(1))
+        String title = op.equals("angle_from_coords") ? "Angle from Coords" : java.util.Arrays.stream(op.split("_")).map(word -> Character.toUpperCase(word.charAt(0)) + word.substring(1))
                 .collect(java.util.stream.Collectors.joining(" "));
         return new Node(new GraphNodeDefinition(id, "math", inputs, schema, stateful), executor, defaults, title, summary);
     }
 
     private static Map<String, GraphValue> defaults(String op){
         Map<String, GraphValue> res = new LinkedHashMap<>();
+        if(op.equals("percentage")){
+            res.put("a", GraphValue.number(0));
+            res.put("b", GraphValue.number(100));
+        }
+        if(op.equals("angle_from_coords")){
+            res.put("origin", MathGraphValues.vector(Vector3.ZERO));
+            res.put("target", MathGraphValues.vector(new Vector3(0, 0, 1)));
+        }
+        if(op.equals("degrees_to_radians") || op.equals("radians_to_degrees")) res.put("angle", GraphValue.number(0));
         for(String key : List.of("quaternion", "orientation")) res.put(key, MathGraphValues.quaternion(Quaternion.IDENTITY));
         if(op.startsWith("quaternion")){ res.put("a", res.get("quaternion")); res.put("b", res.get("quaternion")); }
         res.put("w", GraphValue.number(1));
@@ -165,16 +179,22 @@ public final class MathGraphNodes{
         res.put("row_x", MathGraphValues.vector(new Vector3(1, 0, 0)));
         res.put("row_y", MathGraphValues.vector(new Vector3(0, 1, 0)));
         res.put("row_z", MathGraphValues.vector(new Vector3(0, 0, 1)));
-        return Map.copyOf(res);
+        return com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder.copy(res);
     }
 
     private static Map<String, GraphValue> evaluate(String op, GraphExecutionContext ctx, Map<String, GraphValue> in){
         return switch(op){
             case "pi" -> out("value", MathGraphValues.number(Math.PI));
+            case "percentage" -> {
+                double total = n(in, "b");
+                if(total == 0) throw new IllegalArgumentException("Percentage requires a nonzero B");
+                yield out("value", MathGraphValues.number(n(in, "a") / total * 100));
+            }
             case "vector_scale" -> out("value", MathGraphValues.vector(v(in, "vector").scale(n(in, "scalar"))));
             case "vector_normalize" -> out("value", MathGraphValues.vector(v(in, "vector").normalized()));
             case "vector_dot" -> out("value", MathGraphValues.number(v(in, "a").dot(v(in, "b"))));
             case "vector_cross" -> out("value", MathGraphValues.vector(v(in, "a").cross(v(in, "b"))));
+            case "angle_from_coords" -> coordinateRotation(v(in, "origin"), v(in, "target"));
             case "matrix_create" -> out("matrix", MathGraphValues.matrix(Matrix3.fromRows(v(in, "row_x"), v(in, "row_y"), v(in, "row_z"))));
             case "matrix_diagonal" -> out("matrix", MathGraphValues.matrix(Matrix3.diagonal(v(in, "diagonal"))));
             case "matrix_identity" -> out("matrix", MathGraphValues.matrix(Matrix3.IDENTITY));
@@ -211,7 +231,9 @@ public final class MathGraphNodes{
                 yield Map.of("axis", MathGraphValues.vector(val.axis()), "angle", MathGraphValues.number(val.radians()));
             }
             case "quaternion_slerp" -> out("quaternion", MathGraphValues.quaternion(q(in, "a").slerp(q(in, "b"), n(in, "amount"))));
-            case "degrees_to_radians", "radians_to_degrees" -> out("angles", MathGraphValues.convertAngles(in.get("angles"), op.equals("degrees_to_radians")));
+            case "degrees_to_radians", "radians_to_degrees" -> Map.of(
+                    "angle", MathGraphValues.convertAngle(n(in, "angle"), op.equals("degrees_to_radians")),
+                    "angles", MathGraphValues.convertAngles(in.get("angles"), op.equals("degrees_to_radians")));
             case "linear_predict", "linear_integrator", "rigid_body_predict", "rigid_body_integrator" -> motion(op, ctx, in);
             case "quaternion_to_euler", "tait_bryan_to_euler" -> angleOutputs("euler", RotationMath.quaternionToEulerZxz(op.startsWith("quaternion")
                     ? q(in, "quaternion") : RotationMath.taitBryanXyzToQuaternion(MathGraphValues.taitBryan(in.get("tait_bryan")))));
@@ -257,7 +279,20 @@ public final class MathGraphNodes{
             res.put("acceleration", MathGraphValues.vector(val.acceleration()));
         }
         if(stateful && advance) ctx.state("motion", GraphValue.map(res));
-        return Map.copyOf(res);
+        return com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder.copy(res);
+    }
+
+    private static Map<String, GraphValue> coordinateRotation(Vector3 origin, Vector3 target){
+        Quaternion rotation = RotationMath.rotationFromCoordinates(origin, target);
+        Quaternion.AxisAngle axisAngle = rotation.axisAngle();
+        Map<String, GraphValue> outputs = new LinkedHashMap<>();
+        outputs.put("euler", MathGraphValues.euler(RotationMath.quaternionToEulerZxz(rotation)));
+        outputs.put("quaternion", MathGraphValues.quaternion(rotation));
+        outputs.put("tait_bryan", MathGraphValues.taitBryan(RotationMath.quaternionToTaitBryanXyz(rotation)));
+        outputs.put("axis", MathGraphValues.vector(axisAngle.axis()));
+        outputs.put("angle", MathGraphValues.number(axisAngle.radians()));
+        outputs.put("degrees", MathGraphValues.number(RotationMath.horizontalHeadingDegrees(origin, target)));
+        return outputs;
     }
 
     private static Map<String, GraphValue> angleOutputs(String output, Vector3 val){
@@ -283,6 +318,6 @@ public final class MathGraphNodes{
             int split = entry.indexOf(':');
             res.put(entry.substring(0, split), entry.substring(split + 1));
         }
-        return Map.copyOf(res);
+        return com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder.copy(res);
     }
 }

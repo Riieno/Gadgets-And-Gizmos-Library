@@ -9,6 +9,7 @@ package com.rieno.gadgetsandgizmos.lib.control;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
 import org.jetbrains.annotations.Nullable;
 
@@ -41,6 +42,8 @@ public final class ControllerDirectTargetReference {
     private final @Nullable UUID subLevelId;
     // Block position
     private final @Nullable BlockPos blockPos;
+    // Selected block face before native transfers
+    private final @Nullable Direction face;
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -59,6 +62,12 @@ public final class ControllerDirectTargetReference {
     // Initialize the controller direct target reference
     public ControllerDirectTargetReference(String targetId, String targetTypeId, String groupId, String label,
                                            String compatModeId, @Nullable UUID subLevelId, @Nullable BlockPos blockPos) {
+        this(targetId, targetTypeId, groupId, label, compatModeId, subLevelId, blockPos, null);
+    }
+
+    // Initialize a target while retaining its optional selected face
+    private ControllerDirectTargetReference(String targetId, String targetTypeId, String groupId, String label,
+            String compatModeId, @Nullable UUID subLevelId, @Nullable BlockPos blockPos, @Nullable Direction face){
         this.targetId = normalize(targetId);
         this.targetTypeId = normalize(targetTypeId);
         this.groupId = normalize(groupId);
@@ -66,6 +75,7 @@ public final class ControllerDirectTargetReference {
         this.compatModeId = normalize(compatModeId);
         this.subLevelId = subLevelId;
         this.blockPos = blockPos == null ? null : blockPos.immutable();
+        this.face = face;
     }
 
     /*--------------------------------------------------------##---------------------------------------------------------
@@ -111,6 +121,21 @@ public final class ControllerDirectTargetReference {
         return blockPos == null ? null : blockPos.immutable();
     }
 
+    // Get the saved block face selection
+    public @Nullable Direction face(){ return face; }
+
+    // Keep binding identity and face selection when its block changes coordinate frames
+    public ControllerDirectTargetReference withLocation(@Nullable UUID subLevelId, BlockPos pos){
+        return new ControllerDirectTargetReference(targetId, targetTypeId, groupId, label,
+                compatModeId, subLevelId, pos, face);
+    }
+
+    // Copy the binding with an optional block face
+    public ControllerDirectTargetReference withFace(@Nullable Direction face){
+        return new ControllerDirectTargetReference(targetId, targetTypeId, groupId, label,
+                compatModeId, subLevelId, blockPos, face);
+    }
+
     // Check if this is bound
     public boolean isBound() {
         return !targetId.isEmpty();
@@ -140,6 +165,7 @@ public final class ControllerDirectTargetReference {
         if (blockPos != null) {
             tag.putLong("BlockPos", blockPos.asLong());
         }
+        if(face != null) tag.putString("Face", face.getSerializedName());
         return tag;
     }
 
@@ -161,7 +187,7 @@ public final class ControllerDirectTargetReference {
                 tag.getString("Label"),
                 tag.getString("CompatModeId"),
                 subLevelId,
-                blockPos);
+                blockPos).withFace(Direction.byName(tag.getString("Face")));
     }
 
     // Copy the controller direct target reference with the compat mode
@@ -177,7 +203,8 @@ public final class ControllerDirectTargetReference {
                 label,
                 normalized,
                 subLevelId,
-                blockPos);
+                blockPos,
+                face);
     }
 
     // Compare this controller direct target reference with another object
@@ -195,13 +222,14 @@ public final class ControllerDirectTargetReference {
                 && label.equals(reference.label)
                 && compatModeId.equals(reference.compatModeId)
                 && Objects.equals(subLevelId, reference.subLevelId)
-                && Objects.equals(blockPos, reference.blockPos);
+                && Objects.equals(blockPos, reference.blockPos)
+                && face == reference.face;
     }
 
     // Generate the controller direct target reference hash
     @Override
     public int hashCode() {
-        return Objects.hash(targetId, targetTypeId, groupId, label, compatModeId, subLevelId, blockPos);
+        return Objects.hash(targetId, targetTypeId, groupId, label, compatModeId, subLevelId, blockPos, face);
     }
 
     // Normalize the controller direct target reference
