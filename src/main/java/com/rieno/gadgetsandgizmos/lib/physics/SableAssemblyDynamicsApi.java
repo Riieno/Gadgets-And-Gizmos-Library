@@ -517,7 +517,7 @@ public final class SableAssemblyDynamicsApi {
         }
 
         // Add the tensor
-        private Tensor add(Tensor other) {
+        public Tensor add(Tensor other) {
             return new Tensor(m00 + other.m00, m01 + other.m01, m02 + other.m02,
                     m10 + other.m10, m11 + other.m11, m12 + other.m12,
                     m20 + other.m20, m21 + other.m21, m22 + other.m22);

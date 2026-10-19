@@ -28,7 +28,7 @@ public final class ObstacleDetourPlanner{
 
     private static final double EPSILON = 1.0E-6D;
     private static final Vec3 UP = new Vec3(0.0D, 1.0D, 0.0D);
-    private static final double[] OFFSET_SCALES = {1.0D, 1.5D, 2.0D, 3.0D, 4.0D, 6.0D, 8.0D};
+    private static final double[] OFFSET_SCALES = {0.125D, 0.25D, 0.5D, 0.75D, 1.0D, 1.5D, 2.0D, 3.0D, 4.0D, 6.0D, 8.0D};
 
     private ObstacleDetourPlanner(){}
 

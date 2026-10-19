@@ -9,4 +9,7 @@ public interface PropellerForceGeometry{
 
     // Get the current thrust axis before applying the propeller's signed thrust
     Vec3 propellerForceDirection();
+
+    // Report full-speed capacity without changing the shaft speed; NaN retains legacy discovery.
+    default double maximumPropellerThrust(){ return Double.NaN; }
 }

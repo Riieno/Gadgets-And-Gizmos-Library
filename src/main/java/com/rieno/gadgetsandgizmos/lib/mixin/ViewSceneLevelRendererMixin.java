@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.mixin;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexBuffer;
@@ -24,7 +25,6 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.ViewArea;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.client.renderer.culling.Frustum;
-import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
@@ -115,11 +115,11 @@ public abstract class ViewSceneLevelRendererMixin implements ViewSceneAccess{
         if(level != null) ViewSceneRenderer.invalidateScenes((LevelRenderer) (Object) this);
     }
     // Let the fog background fill the lower sky instead of drawing the underground void plane
-    @Redirect(method = "renderSky", at = @At(value = "INVOKE",
+    @ModifyExpressionValue(method = "renderSky", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/player/LocalPlayer;getEyePosition(F)Lnet/minecraft/world/phys/Vec3;"))
-    private Vec3 captureHorizonPosition(LocalPlayer player, float partialTick){
+    private Vec3 captureHorizonPosition(Vec3 original){
         var lens = ViewSceneRenderer.capturePose();
-        if(lens == null) return player.getEyePosition(partialTick);
+        if(lens == null) return original;
         return new Vec3(lens.position().x,
                 Math.max(lens.position().y, level.getLevelData().getHorizonHeight(level) + 1), lens.position().z);
     }

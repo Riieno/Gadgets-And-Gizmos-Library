@@ -50,6 +50,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -158,6 +159,8 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
     private final List<BlockEntityPreviewDecorator> decorators;
     private final List<PreviewBlock> blocks = new ArrayList<>();
     private final Map<BlockKey, SnapshotBlock> fallbackBlocks = new LinkedHashMap<>();
+    // Reuse detached body orientations for rendering and ray picking
+    private final Map<UUID, Quaternionf> fallbackOrientations = new HashMap<>();
     private final Set<BlockKey> fullyOccludedBlocks = new HashSet<>();
     private Predicate<PreviewBlock> visibility = ignored -> true;
     // In wireframe mode callers may nominate blocks which should stay as
@@ -214,6 +217,16 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         }
     }
 
+    // Include child bodies even when the caller only has the root identity
+    public void setConnectedBodies(UUID rootSubLevelId, Collection<UUID> subLevelIds){
+        Set<UUID> ids = new LinkedHashSet<>();
+        if(rootSubLevelId != null) ids.add(rootSubLevelId);
+        if(subLevelIds != null) subLevelIds.stream().filter(Objects::nonNull).forEach(ids::add);
+        ids.addAll(com.rieno.gadgetsandgizmos.lib.physics.SubLevelConnectionApi.connectedBodyIds(
+                Minecraft.getInstance().level, ids));
+        setBodies(rootSubLevelId, ids);
+    }
+
     /**
      * Supply a detached server-side scene for use when the live source body is
      * outside the client's tracking range. A live client scene remains
@@ -231,6 +244,8 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         if (fallbackBlocks.equals(normalized)) return;
         fallbackBlocks.clear();
         fallbackBlocks.putAll(normalized);
+        fallbackOrientations.clear();
+        normalized.values().forEach(block -> fallbackOrientations.putIfAbsent(block.subLevelId(), block.orientation()));
         contentsDirty = true;
         cameraNeedsFit = true;
         targetDirty = true;
@@ -392,7 +407,7 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         target = null;
         blocks.clear();
         blockIndex.clear();
-        blocks.forEach(block -> blockIndex.put(new BlockKey(block.subLevelId(), block.position()), block));
+        fallbackOrientations.clear();
         visibleBlockCache = null;
         fullyOccludedBlocks.clear();
         contentsDirty = true;
@@ -636,11 +651,19 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
                                   Collection<Highlight> highlights, PoseStack pose,
                                   MultiBufferSource.BufferSource buffers) {
         if (highlights == null || highlights.isEmpty()) return;
-        RenderType planeType = RenderType.entityTranslucentEmissive(HIGHLIGHT_PLANE_TEXTURE, true);
-        VertexConsumer planes = buffers.getBuffer(planeType);
-        VertexConsumer lines = buffers.getBuffer(RenderType.lines());
+        // Finish face fills before requesting the shared outline buffer
+        renderHighlightPass(level, root, partialTick, highlights, pose, buffers, true);
+        renderHighlightPass(level, root, partialTick, highlights, pose, buffers, false);
+    }
+
+    private void renderHighlightPass(ClientLevel level, ClientSubLevel root, float partialTick,
+                                     Collection<Highlight> highlights, PoseStack pose,
+                                     MultiBufferSource.BufferSource buffers, boolean facePlanes){
+        RenderType type = facePlanes ? RenderType.entityTranslucentEmissive(HIGHLIGHT_PLANE_TEXTURE, true) : RenderType.lines();
+        VertexConsumer vertices = buffers.getBuffer(type);
         for (Highlight highlight : highlights) {
             if (highlight == null || highlight.subLevelId() == null || !isVisible(highlight.subLevelId(), highlight.position())) continue;
+            if(facePlanes && highlight.face() == null) continue;
             PreviewBlock block = previewBlock(highlight.subLevelId(), highlight.position());
             if (block == null) continue;
             Vector3f position = rootPosition(level, root, block.subLevelId(), block.position(), partialTick);
@@ -652,18 +675,18 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
             pose.mulPose(orientation);
             pose.translate(-0.5F, -0.5F, -0.5F);
             int color = highlight.color();
-            if (highlight.face() != null) {
-                renderFaceHighlightPlane(pose, planes, highlight.face(), color);
+            if(facePlanes){
+                renderFaceHighlightPlane(pose, vertices, highlight.face(), color);
+            }else{
+                LevelRenderer.renderLineBox(pose, vertices, highlight.face() == null
+                                ? new AABB(-0.018D, -0.018D, -0.018D, 1.018D, 1.018D, 1.018D)
+                                : faceOutline(highlight.face()),
+                        ((color >> 16) & 0xFF) / 255.0F, ((color >> 8) & 0xFF) / 255.0F,
+                        (color & 0xFF) / 255.0F, 1.0F);
             }
-            LevelRenderer.renderLineBox(pose, lines, highlight.face() == null
-                            ? new AABB(-0.018D, -0.018D, -0.018D, 1.018D, 1.018D, 1.018D)
-                            : faceOutline(highlight.face()),
-                    ((color >> 16) & 0xFF) / 255.0F, ((color >> 8) & 0xFF) / 255.0F,
-                    (color & 0xFF) / 255.0F, 1.0F);
             pose.popPose();
         }
-        buffers.endBatch(planeType);
-        buffers.endBatch(RenderType.lines());
+        buffers.endBatch(type);
     }
 
     // Draw the translucent selected-face plane
@@ -1010,7 +1033,11 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
             return !Double.isFinite(point.x) || !Double.isFinite(point.y) || !Double.isFinite(point.z)
                     ? null : new Vector3f((float) point.x, (float) point.y, (float) point.z);
         }
-        return rootPosition(level, root, sourceId, Vec3.atLowerCornerOf(position), partialTick);
+        ClientSubLevel source = resolve(level, sourceId);
+        if(root == null || source == null || source.isRemoved()) return null;
+        Vec3 origin = com.rieno.gadgetsandgizmos.lib.physics.SableTransformApi.relativeBlockOrigin(
+                source.renderPose(partialTick), root.renderPose(partialTick), root.getPlot().getCenterBlock(), position);
+        return new Vector3f((float)origin.x, (float)origin.y, (float)origin.z);
     }
 
     private Vector3f rootPosition(ClientLevel level, ClientSubLevel root, UUID sourceId,
@@ -1030,7 +1057,7 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
     }
 
     private Quaternionf rootOrientation(ClientLevel level, ClientSubLevel root, UUID sourceId, float partialTick) {
-        if (usingFallbackScene) return new Quaternionf();
+        if(usingFallbackScene) return new Quaternionf(fallbackOrientations.getOrDefault(sourceId, new Quaternionf()));
         if (root == null) return null;
         ClientSubLevel source = resolve(level, sourceId);
         if (source == null || source.isRemoved()) return null;

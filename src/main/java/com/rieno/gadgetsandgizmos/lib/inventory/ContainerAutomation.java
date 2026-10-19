@@ -8,7 +8,6 @@ package com.rieno.gadgetsandgizmos.lib.inventory;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
-import com.simibubi.create.content.logistics.filter.FilterItemStack;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -21,13 +20,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-// Persist one container's access, Create filter and replenishment settings
+// Persist container ownership and desired stock settings
 public final class ContainerAutomation{
     private UUID owner;
-    private boolean locked;
-    private boolean push;
-    private boolean pull;
-    private ItemStack filter = ItemStack.EMPTY;
     private UUID controllerSubLevelId;
     private BlockPos controllerPos;
     private final List<StockTarget> targets = new ArrayList<>();
@@ -47,23 +42,20 @@ public final class ContainerAutomation{
     }
 
     public UUID owner(){ return owner; }
-    public boolean locked(){ return locked; }
-    public boolean push(){ return push; }
-    public boolean pull(){ return pull; }
-    public ItemStack filter(){ return filter.copy(); }
+    @Deprecated public boolean locked(){ return false; }
+    @Deprecated public boolean push(){ return false; }
+    @Deprecated public boolean pull(){ return false; }
+    @Deprecated public ItemStack filter(){ return ItemStack.EMPTY; }
     public List<StockTarget> targets(){ return List.copyOf(targets); }
     public UUID controllerSubLevelId(){ return controllerSubLevelId; }
     public BlockPos controllerPos(){ return controllerPos; }
     public void setController(UUID subLevelId, BlockPos pos){ controllerSubLevelId = subLevelId; controllerPos = pos == null ? null : pos.immutable(); }
-    public void setLocked(boolean val){ locked = val; }
-    public void setPush(boolean val){ push = val; }
-    public void setPull(boolean val){ pull = val; }
-    public void setFilter(ItemStack stack){ filter = stack == null ? ItemStack.EMPTY : stack.copyWithCount(1); }
-
-    // Apply Create's complete item, list and attribute filter matching
-    public boolean accepts(Level level, ItemStack stack){
-        return filter.isEmpty() || FilterItemStack.of(filter).test(level, stack);
-    }
+    // Ignore retired container controls while retaining their public signatures
+    @Deprecated public void setLocked(boolean val){}
+    @Deprecated public void setPush(boolean val){}
+    @Deprecated public void setPull(boolean val){}
+    @Deprecated public void setFilter(ItemStack stack){}
+    @Deprecated public boolean accepts(Level level, ItemStack stack){ return true; }
 
     // Replace an exact stock target without exceeding the bounded target list
     public boolean setTarget(ItemStack item, int amount, String task){
@@ -79,10 +71,6 @@ public final class ContainerAutomation{
     public CompoundTag toTag(HolderLookup.Provider provider){
         CompoundTag tag = new CompoundTag();
         if(owner != null) tag.putUUID("Owner", owner);
-        tag.putBoolean("Locked", locked);
-        tag.putBoolean("Push", push);
-        tag.putBoolean("Pull", pull);
-        if(!filter.isEmpty()) tag.put("Filter", filter.save(provider));
         if(controllerPos != null){
             tag.putLong("ControllerPos", controllerPos.asLong());
             if(controllerSubLevelId != null) tag.putUUID("ControllerSubLevel", controllerSubLevelId);
@@ -103,10 +91,6 @@ public final class ContainerAutomation{
     public static ContainerAutomation fromTag(CompoundTag tag, HolderLookup.Provider provider){
         ContainerAutomation res = new ContainerAutomation();
         if(tag.hasUUID("Owner")) res.owner = tag.getUUID("Owner");
-        res.locked = tag.getBoolean("Locked");
-        res.push = tag.getBoolean("Push");
-        res.pull = tag.getBoolean("Pull");
-        res.filter = ItemStack.parseOptional(provider, tag.getCompound("Filter"));
         if(tag.contains("ControllerPos")) res.controllerPos = BlockPos.of(tag.getLong("ControllerPos"));
         if(tag.hasUUID("ControllerSubLevel")) res.controllerSubLevelId = tag.getUUID("ControllerSubLevel");
         ListTag rows = tag.getList("Stock", Tag.TAG_COMPOUND);

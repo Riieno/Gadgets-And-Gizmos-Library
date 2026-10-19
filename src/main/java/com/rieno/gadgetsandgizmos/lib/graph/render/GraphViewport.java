@@ -43,6 +43,12 @@ public record GraphViewport(double originX, double originY, double panX, double 
         return (screenY - originY - panY) / zoom;
     }
 
+    // Center a graph point using the viewport's screen-pixel pan coordinates
+    public GraphViewport centerOn(double graphX, double graphY, double canvasWidth, double canvasHeight){
+        return new GraphViewport(originX, originY, canvasWidth / 2 - graphX * zoom,
+                canvasHeight / 2 - graphY * zoom, zoom);
+    }
+
     // Convert a visible screen distance to graph coordinates
     public double graphDistance(double screenPixels) {
         return screenPixels / zoom;

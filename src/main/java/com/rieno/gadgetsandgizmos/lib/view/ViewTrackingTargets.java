@@ -5,7 +5,7 @@ import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
 import com.rieno.gadgetsandgizmos.lib.physics.SableTransformApi;
 import com.rieno.gadgetsandgizmos.lib.probe.LoadedTerrainAccess;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.Comparator;
 
-// Resolve player and SubLevel ray hits into live world bounds without loading missing targets
+// Resolve entity and SubLevel ray hits into live world bounds without loading missing targets
 public final class ViewTrackingTargets{
     public static final double ACQUISITION_RADIUS = 1.5;
     public static final double ACQUISITION_HALF_ANGLE = 15;
@@ -34,7 +34,7 @@ public final class ViewTrackingTargets{
         return List.copyOf(targets);
     }
 
-    // Test loaded player and body bounds before confirming an actual filtered geometric hit
+    // Test loaded entity and body bounds before confirming an actual filtered geometric hit
     public static List<ViewTargetLock.Target<Reference>> coneHits(Level level, ViewAcquisitionCone cone,
             ViewRaycast.Filter filter, @Nullable ViewReference excluded){
         if(level == null || level.isClientSide || cone.range() <= 0) return List.of();
@@ -42,8 +42,14 @@ public final class ViewTrackingTargets{
         if(root == null) return List.of();
         UUID excludedBody = excluded == null ? null : excluded.subLevelId();
         List<Candidate> candidates = new ArrayList<>();
-        for(Player player : root.players()){
+        for(var player : root.players()){
             var target = resolve(root, new Reference(player.getUUID(), null, null), filter, excludedBody);
+            if(target != null) addCandidate(candidates, cone, target);
+        }
+        for(Entity entity : root.getEntities((Entity)null, cone.bounds(),
+                candidate -> !(candidate instanceof net.minecraft.world.entity.player.Player)
+                        && candidate.isAlive() && candidate.isPickable() && !candidate.isSpectator())){
+            var target = resolve(root, new Reference(entity.getUUID(), null, null), filter, excludedBody);
             if(target != null) addCandidate(candidates, cone, target);
         }
         for(var body : SableTransformApi.intersecting(root, cone.bounds())){
@@ -124,12 +130,13 @@ public final class ViewTrackingTargets{
         var root = SableLevelApi.serverLevel(level);
         if(root == null) return null;
         if(ref.playerId() != null){
-            Player player = root.getPlayerByUUID(ref.playerId());
-            if(player == null || !player.isAlive() || player.isSpectator() || !player.isPickable()) return null;
-            var owner = SableLevelApi.containing(player);
-            var carried = owner == null ? SableLevelApi.tracking(player) : owner;
-            if(!filter.accepts(player, carried == null ? null : carried.getUniqueId())) return null;
-            AABB local = player.getBoundingBox();
+            Entity entity = root.getEntity(ref.playerId());
+            if(entity == null) entity = root.getPlayerByUUID(ref.playerId());
+            if(entity == null || !entity.isAlive() || entity.isSpectator() || !entity.isPickable()) return null;
+            var owner = SableLevelApi.containing(entity);
+            var carried = owner == null ? SableLevelApi.tracking(entity) : owner;
+            if(!filter.accepts(entity, carried == null ? null : carried.getUniqueId())) return null;
+            AABB local = entity.getBoundingBox();
             AABB world = null;
             for(int idx = 0; idx < 8; idx++){
                 var point = SableTransformApi.toWorldPosition(owner, new net.minecraft.world.phys.Vec3(
@@ -151,7 +158,7 @@ public final class ViewTrackingTargets{
         return bounds.isEmpty() ? null : new ViewTargetLock.Target<>(ref, bounds.getFirst());
     }
 
-    // Identify a player or a block hit on a body without retaining either implementation
+    // The playerId accessor retains compatibility and identifies any entity UUID
     public record Reference(@Nullable UUID playerId, @Nullable UUID bodyId, @Nullable BlockPos blockPos){
         public Reference{ if(blockPos != null) blockPos = blockPos.immutable(); }
     }

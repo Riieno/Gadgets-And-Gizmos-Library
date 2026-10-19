@@ -42,6 +42,7 @@ public final class ContainerAutomationRuntime{
             if(Math.floorMod(entry.getKey().pos().asLong(), 20) != Math.floorMod(level.getGameTime(), 20)) continue;
             var key = entry.getKey();
             var config = entry.getValue();
+            if(config.targets().isEmpty()) continue;
             BlockEntity target = BlockEntityLookupApi.findLoadedExact(level, key.subLevelId(), key.pos());
             if(target == null) continue;
             var owner = level.getServer().getPlayerList().getPlayer(config.owner());
@@ -63,13 +64,10 @@ public final class ContainerAutomationRuntime{
                 var pos = key.pos().relative(side);
                 if(!target.getLevel().isLoaded(pos) || !WorldAccessPolicy.canAccessLocal(owner, level, key.subLevelId(), pos)) continue;
                 IItemHandler handler = target.getLevel().getCapability(Capabilities.ItemHandler.BLOCK, pos, side.getOpposite());
-                if(handler != null && handler != inventory) adjacent.add(handler);
+                if(handler != null && handler != inventory
+                        && !ContainerStorageIdentity.position(target.getLevel(), pos).equals(key.pos())) adjacent.add(handler);
             }
             int budget = Math.max(1, Math.min(1024, transferLimit.getAsInt()));
-            if(config.pull()) for(IItemHandler source : adjacent){
-                budget -= ItemTransfers.move(source, inventory, stack -> config.accepts(target.getLevel(), stack), budget, recovery);
-                if(budget <= 0) break;
-            }
             List<Map.Entry<ContainerAutomation.StockTarget, Long>> shortages = new ArrayList<>();
             for(var stock : config.targets()){
                 long deficit = stock.deficit(ItemTransfers.count(inventory, stock.item()), 0);
@@ -88,20 +86,6 @@ public final class ContainerAutomationRuntime{
                         && WorldAccessPolicy.canAccessLocal(owner, level, config.controllerSubLevelId(), config.controllerPos()) ? val
                         : NearbyWorkerOrchestrators.find(level, target, key.subLevelId(), owner, 32);
                 if(workers != null) for(var shortage : shortages) replenish(level, key, workers, shortage.getKey(), shortage.getValue());
-            }
-            if(config.push() && budget > 0){
-                for(int idx = 0; idx < inventory.getSlots() && budget > 0; idx++){
-                    ItemStack item = inventory.getStackInSlot(idx).copyWithCount(1);
-                    if(item.isEmpty() || !config.accepts(target.getLevel(), item)) continue;
-                    long keep = config.targets().stream().filter(stock -> ItemStack.isSameItemSameComponents(stock.item(), item)).mapToLong(ContainerAutomation.StockTarget::amount).max().orElse(0);
-                    long excess = Math.max(0, ItemTransfers.count(inventory, item) - keep);
-                    for(IItemHandler destination : adjacent){
-                        int moved = ItemTransfers.move(inventory, destination, stack -> ItemStack.isSameItemSameComponents(stack, item), (int) Math.min(excess, budget), recovery);
-                        budget -= moved;
-                        excess -= moved;
-                        if(excess == 0 || budget == 0) break;
-                    }
-                }
             }
         }
     }

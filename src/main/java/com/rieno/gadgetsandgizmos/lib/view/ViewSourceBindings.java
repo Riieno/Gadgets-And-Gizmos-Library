@@ -63,6 +63,10 @@ public record ViewSourceBindings(List<Entry> entries){
             name = name == null ? "" : name.strip().substring(0, Math.min(64, name.strip().length()));
         }
         // Distinguish sources with equal local positions in different worlds
-        public String key(){ return source.dimension() + ";" + source.subLevelId() + ";" + source.blockPos().asLong(); }
+        public String key(){
+            return source.entityId() == null
+                    ? source.dimension() + ";" + source.subLevelId() + ";" + source.blockPos().asLong()
+                    : source.dimension() + ";entity;" + source.entityId();
+        }
     }
 }

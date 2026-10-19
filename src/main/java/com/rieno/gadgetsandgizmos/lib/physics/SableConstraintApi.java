@@ -10,11 +10,18 @@ package com.rieno.gadgetsandgizmos.lib.physics;
 
 import dev.ryanhcode.sable.api.physics.constraint.PhysicsConstraintHandle;
 import dev.ryanhcode.sable.api.physics.constraint.GenericConstraintHandle;
+import dev.ryanhcode.sable.api.physics.PhysicsPipeline;
+import dev.ryanhcode.sable.api.physics.PhysicsPipelineBody;
+import dev.ryanhcode.sable.api.physics.constraint.ConstraintJointAxis;
+import dev.ryanhcode.sable.api.physics.constraint.GenericConstraintConfiguration;
+import dev.ryanhcode.sable.api.physics.constraint.RotaryConstraintConfiguration;
+import dev.ryanhcode.sable.api.physics.constraint.RotaryConstraintHandle;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import net.minecraft.server.level.ServerLevel;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Quaterniond;
 import org.joml.Quaterniondc;
+import org.joml.Vector3d;
 import org.joml.Vector3dc;
 
 import java.lang.reflect.Method;
@@ -95,6 +102,46 @@ public final class SableConstraintApi {
     public static Object fixedConfiguration(Vector3dc posA, Vector3dc posB, Quaterniondc orientation)
             throws ReflectiveOperationException {
         return anchoredConfiguration("FixedConstraintConfiguration", "fixed", posA, posB, orientation);
+    }
+
+    // Lock every axis through Sable's solver while keeping both attachment frames adjustable
+    public static @Nullable GenericConstraintHandle fixedFrameConstraint(PhysicsPipeline pipeline,
+            @Nullable PhysicsPipelineBody bodyA, @Nullable PhysicsPipelineBody bodyB,
+            Vector3dc posA, Vector3dc posB, Quaterniondc orientation){
+        if(bodyA == bodyB) return null;
+        GenericConstraintHandle handle = pipeline.addConstraint(bodyA, bodyB,
+                new GenericConstraintConfiguration(new Vector3d(posA), new Vector3d(posB),
+                        new Quaterniond(orientation).normalize(), new Quaterniond(), Set.of(ConstraintJointAxis.ALL)));
+        if(handle != null) handle.setContactsEnabled(false);
+        return handle;
+    }
+
+    // Attach a solver-driven hinge using anchors and axes in each body's local frame
+    public static @Nullable RotaryConstraintHandle rotaryConstraint(PhysicsPipeline pipeline,
+            @Nullable PhysicsPipelineBody bodyA, @Nullable PhysicsPipelineBody bodyB,
+            Vector3dc posA, Vector3dc posB, Vector3dc axisA, Vector3dc axisB){
+        if(bodyA == bodyB) return null;
+        RotaryConstraintHandle handle = pipeline.addConstraint(bodyA, bodyB,
+                new RotaryConstraintConfiguration(new Vector3d(posA), new Vector3d(posB),
+                        new Vector3d(axisA).normalize(), new Vector3d(axisB).normalize()));
+        if(handle != null) handle.setContactsEnabled(false);
+        return handle;
+    }
+
+    // Scale a rotary servo by the bodies' local inertia without moving either body's pose
+    public static void setRotaryServo(RotaryConstraintHandle handle,
+            @Nullable ServerSubLevel bodyA, @Nullable ServerSubLevel bodyB,
+            Vector3dc axisA, Vector3dc axisB, double targetRadians, double stiffness, double damping){
+        Vector3d temp = new Vector3d();
+        double inertiaA = bodyA == null ? Double.MAX_VALUE
+                : bodyA.getMassTracker().getInertiaTensor().transform(axisA, temp).dot(axisA);
+        double inertiaB = bodyB == null ? Double.MAX_VALUE
+                : bodyB.getMassTracker().getInertiaTensor().transform(axisB, temp).dot(axisB);
+        double inertia = Math.max(10.0D, bodyA != null && bodyB != null
+                ? Math.max(inertiaA, inertiaB) : Math.min(inertiaA, inertiaB));
+        handle.setMotor(RotaryConstraintHandle.DEFAULT_AXIS, targetRadians,
+                stiffness * inertia, damping * inertia, false, 0.0D);
+        handle.setContactsEnabled(false);
     }
 
     // Create a native fixed attachment with exact locked frames after every physics substep

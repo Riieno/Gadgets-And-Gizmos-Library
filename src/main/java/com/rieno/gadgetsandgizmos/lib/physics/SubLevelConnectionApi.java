@@ -10,6 +10,7 @@ package com.rieno.gadgetsandgizmos.lib.physics;
 
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.api.block.BlockEntitySubLevelActor;
+import dev.ryanhcode.sable.api.SubLevelHelper;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.world.level.Level;
@@ -17,6 +18,8 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -89,6 +92,22 @@ public final class SubLevelConnectionApi {
             }
         }
         return List.copyOf(dependencies);
+    }
+
+    // Expand loaded assembly roots through native actor connections on either logical side
+    public static List<UUID> connectedBodyIds(@Nullable Level level, Collection<UUID> roots){
+        if(level == null || roots == null) return List.of();
+        Set<UUID> ids = new LinkedHashSet<>();
+        for(UUID id : roots){
+            if(ids.contains(id)) continue;
+            SubLevel root = resolve(level, id);
+            if(root == null || root.isRemoved()) continue;
+            ids.add(id);
+            for(SubLevel body : SubLevelHelper.getConnectedChain(root)){
+                if(body != null && !body.isRemoved() && body.getLevel() == root.getLevel()) ids.add(body.getUniqueId());
+            }
+        }
+        return ids.stream().sorted(java.util.Comparator.comparing(UUID::toString)).toList();
     }
 
     // Add every live dependency once

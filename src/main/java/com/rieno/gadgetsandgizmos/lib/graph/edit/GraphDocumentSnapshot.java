@@ -39,6 +39,15 @@ public record GraphDocumentSnapshot(
         variables = Map.copyOf(variables == null ? Map.of() : variables);
     }
 
+    // Preserve snapshots from hosts without SCM action functions
+    public GraphDocumentSnapshot(int version, int revision, String templateId,
+            double viewportX, double viewportY, double viewportZoom,
+            List<Node> nodes, List<Edge> edges, List<FunctionGraph> functions,
+            Map<String, GraphValue> variables){
+        this(version, revision, templateId, viewportX, viewportY, viewportZoom,
+                nodes, edges, functions, Map.of(), variables);
+    }
+
     // Publish one immutable node
     public record Node(String id, String type, String label, String alias,
                        double x, double y,
@@ -50,8 +59,8 @@ public record GraphDocumentSnapshot(
             type = type == null ? "" : type;
             label = label == null ? "" : label;
             alias = GraphNodeAlias.normalize(alias);
-            inputs = Map.copyOf(inputs == null ? Map.of() : inputs);
-            outputs = Map.copyOf(outputs == null ? Map.of() : outputs);
+            inputs = com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder.copy(inputs == null ? Map.of() : inputs);
+            outputs = com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder.copy(outputs == null ? Map.of() : outputs);
             data = data == null
                     ? new GraphDataValue.CompoundValue(Map.of()) : data;
         }

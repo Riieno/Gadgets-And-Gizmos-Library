@@ -18,7 +18,7 @@ public final class ItemTransfers{
 
     // Recover items if a destination changes its acceptance after simulation
     public static int move(IItemHandler source, IItemHandler target, Predicate<ItemStack> filter, int limit, Consumer<ItemStack> recovery){
-        if(source == null || target == null || ContainerAccessRegistry.sameStorage(source, target) || limit <= 0) return 0;
+        if(source == null || target == null || source == target || limit <= 0) return 0;
         int moved = 0;
         for(int idx = 0; idx < source.getSlots() && moved < limit; idx++){
             ItemStack offered = source.extractItem(idx, limit - moved, true);

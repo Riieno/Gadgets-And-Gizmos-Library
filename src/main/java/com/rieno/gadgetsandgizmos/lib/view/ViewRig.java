@@ -39,14 +39,14 @@ public final class ViewRig{
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
-    // Clamp explicit pan and tilt without wrapping their endpoint values
+    // Wrap the stand freely while retaining the camera hinge limits
     public void aim(double pan, double tilt){
-        this.pan = clamp(pan, -180, 180);
+        this.pan = wrapPan(pan);
         this.tilt = clamp(tilt, -135, 135);
     }
     // Allow target bearings below the manual hinge limit without changing mouse controls
     public void track(Angles angles){
-        pan = clamp(angles.pan(), -180, 180);
+        pan = wrapPan(angles.pan());
         tilt = clamp(angles.tilt(), -180, 0);
     }
 
@@ -77,11 +77,19 @@ public final class ViewRig{
     // Read the current field of view
     public double fov(){ return fov; }
 
+    // Snapshot the manually controlled joints and lens
+    public State state(){ return new State(pan, tilt, fov); }
+    public void restore(State state){
+        aim(state.pan(), state.tilt());
+        setFov(state.fov());
+    }
+    public record State(double pan, double tilt, double fov){}
+
     // Resolve one patrol sample without accumulating tick drift
     public static Angles angles(Mode mode, double time, double pan, double tilt){
         return switch(mode){
             case LOCKED -> new Angles(0, 0);
-            case MANUAL -> new Angles(clamp(pan, -180, 180), clamp(tilt, -135, 135));
+            case MANUAL -> new Angles(wrapPan(pan), clamp(tilt, -135, 135));
             case SENTRY -> new Angles(180.0D * Math.sin(time * Math.PI / 240.0D),
                     -90.0D + 45.0D * Math.sin(time * Math.PI / 173.0D));
         };
@@ -119,6 +127,12 @@ public final class ViewRig{
     // Reject non-finite control values before they reach transforms
     private static double clamp(double val, double min, double max){
         return Double.isFinite(val) ? Math.clamp(val, min, max) : Math.clamp(0.0D, min, max);
+    }
+    // Keep repeated revolutions precise without imposing a horizontal stop
+    public static double wrapPan(double angle){
+        if(!Double.isFinite(angle)) return 0;
+        double wrapped = angle % 360;
+        return wrapped > 180 ? wrapped - 360 : wrapped < -180 ? wrapped + 360 : wrapped;
     }
 
     // Carry one finite pan and tilt sample

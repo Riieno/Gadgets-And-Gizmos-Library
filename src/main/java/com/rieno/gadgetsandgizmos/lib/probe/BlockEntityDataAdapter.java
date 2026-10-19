@@ -18,6 +18,11 @@ public interface BlockEntityDataAdapter<T extends BlockEntity> {
     // Get the adapted block entity type
     Class<T> targetType();
 
+    // Supplemental settings keep the target's existing direct controls available
+    default boolean isSupplemental(){
+        return false;
+    }
+
     // Check if this adapter supports the target instance
     default boolean supports(T target) {
         return target != null;

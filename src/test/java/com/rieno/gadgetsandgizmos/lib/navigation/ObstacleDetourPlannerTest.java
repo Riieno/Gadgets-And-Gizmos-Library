@@ -91,19 +91,22 @@ class ObstacleDetourPlannerTest{
         assertTrue(queued.waypoints().getFirst().y > 0.0D);
     }
 
+    // Close the selected horizontal or vertical pass before requesting its replacement
     @Test void rechecksTheSceneWhenANewObstacleClosesTheChosenPass(){
         Vec3 rejoin = new Vec3(0, 0, 12);
         List<AABB> initial = List.of(new AABB(-3, -2, 1, 3, 2, 8));
         var first = plan(Vec3.ZERO, rejoin, 2, 8, true, true, initial);
         assertFalse(first.isEmpty());
-        double x = first.getFirst().x;
-        List<AABB> changed = List.of(initial.getFirst(), new AABB(x - 0.5D, -2, 3, x + 0.5D, 2, 7));
+        Vec3 pass = first.getFirst();
+        List<AABB> changed = List.of(initial.getFirst(),
+                new AABB(pass.x - 0.5D, pass.y - 0.5D, 3, pass.x + 0.5D, pass.y + 0.5D, 7));
         var replacement = plan(Vec3.ZERO, rejoin, 2, 8, true, true, changed);
         assertFalse(replacement.isEmpty());
         assertNotEquals(first, replacement);
         assertClear(Vec3.ZERO, replacement, changed);
     }
 
+    // Keep opposing ships on complementary sides of either a horizontal or vertical pass
     @Test void opposingStoppedShipsPassWithoutCollidingOrWaitingForEachOther(){
         Vec3 first = new Vec3(0, 0, -8);
         Vec3 second = new Vec3(0, 0, 8);
@@ -113,7 +116,8 @@ class ObstacleDetourPlannerTest{
         var secondPlan = plan(second, secondGoal, 2, 6, true, false, List.of(body(first)));
         assertFalse(firstPlan.isEmpty());
         assertFalse(secondPlan.isEmpty());
-        assertTrue(firstPlan.getFirst().x * secondPlan.getFirst().x < 0.0D);
+        assertTrue(firstPlan.getFirst().x * secondPlan.getFirst().x < 0.0D
+                || firstPlan.getFirst().y * secondPlan.getFirst().y < 0.0D);
         int firstIdx = 0;
         int secondIdx = 0;
         for(int tick = 0; tick < 800 && (firstIdx < firstPlan.size() || secondIdx < secondPlan.size()); tick++){

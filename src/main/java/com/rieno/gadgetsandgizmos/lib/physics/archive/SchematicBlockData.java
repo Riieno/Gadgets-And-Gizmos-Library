@@ -18,16 +18,22 @@ final class SchematicBlockData{
 
     // Create a detached block entity for requirement and safe NBT callbacks
     static BlockEntity create(ServerLevel level, BlockPos pos, BlockState state, CompoundTag data){
+        return create(level, pos, state, data, false);
+    }
+
+    // Material-only previews can omit programs without changing safe export or placement data
+    static BlockEntity create(ServerLevel level, BlockPos pos, BlockState state, CompoundTag data, boolean materials){
         if(!(state.getBlock() instanceof EntityBlock block)) return null;
         BlockEntity be = block.newBlockEntity(pos, state);
         if(be == null) return null;
         // Mark detached Create entities before loading configuration so callbacks can skip world changes
         if(be instanceof SmartBlockEntity smart) smart.markVirtual();
         be.setLevel(level);
+        if(materials && be instanceof SchematicMaterialData preview) data = preview.schematicMaterialData(data);
         var prev = SubLevelSchematicSerializationContext.getCurrentContext();
         try{
             SubLevelSchematicSerializationContext.setCurrentContext(null);
-            be.loadWithComponents(ItemStackNbtSanitizer.withoutUnavailableItems(data), level.registryAccess());
+            be.loadWithComponents(ItemStackNbtSanitizer.withoutUnavailableItems(SchematicLinkData.detached(be, data)), level.registryAccess());
         }finally{ SubLevelSchematicSerializationContext.setCurrentContext(prev); }
         return be;
     }

@@ -50,6 +50,13 @@ public final class SubLevelSchematicBuild implements AutoCloseable{
     private final SableSubLevelResidency.Lease lease = SableSubLevelResidency.lease("schematic-build:" + UUID.randomUUID());
     private final SubLevelSchematicSerializationContext ctx = new SubLevelSchematicSerializationContext(SubLevelSchematicSerializationContext.Type.PLACE, null);
     // Track the bounded server tick progression and completion state
+    private static final java.util.Map<net.minecraft.server.MinecraftServer,
+            com.rieno.gadgetsandgizmos.lib.navigation.TickWorkBudget> BUDGETS = new java.util.WeakHashMap<>();
+    private final List<SubLevelArchivePlacement.Validation> validations = new ArrayList<>();
+    private int validated;
+    private boolean prepared;
+    private int restored;
+    private int installedJoints;
     private int placed;
     private boolean complete;
     private boolean closed;
@@ -69,6 +76,17 @@ public final class SubLevelSchematicBuild implements AutoCloseable{
 
     // Divide construction into independent spatial sections while retaining one placement transaction
     public SubLevelSchematicBuild(ServerPlayer player, SubLevelSchematic schematic, Vec3 target, Quaterniondc rotation, int maximumSections){
+        this(player, schematic, target, rotation, maximumSections, false);
+    }
+
+    // Defer destination scans and native allocation to the shared server tick allowance
+    public static SubLevelSchematicBuild prepare(ServerPlayer player, SubLevelSchematic schematic, Vec3 target,
+                                                  Quaterniondc rotation, int maximumSections){
+        return new SubLevelSchematicBuild(player, schematic, target, rotation, maximumSections, true);
+    }
+
+    private SubLevelSchematicBuild(ServerPlayer player, SubLevelSchematic schematic, Vec3 target,
+                                   Quaterniondc rotation, int maximumSections, boolean deferred){
         this.player = player; this.level = player.serverLevel(); this.schematic = schematic; this.target = target;
         checkThread();
         if(schematic.bodies().isEmpty() || target == null || !Double.isFinite(target.x + target.y + target.z)
@@ -81,11 +99,30 @@ public final class SubLevelSchematicBuild implements AutoCloseable{
         for(var body : schematic.bodies()){
             AABB local = new AABB(0, 0, 0, body.size().getX(), body.size().getY(), body.size().getZ());
             Quaterniond orientation = new Quaterniond(turn).mul(body.orientation());
-            SubLevelArchivePlacement.validate(player, level, SubLevelArchiveTransform.bounds(local, Vec3.ZERO, worldCorner(body), orientation));
+            validations.add(new SubLevelArchivePlacement.Validation(player, level,
+                    SubLevelArchiveTransform.bounds(local, Vec3.ZERO, worldCorner(body), orientation)));
+        }
+        if(!deferred) while(!prepare(() -> true)){}
+
+    }
+
+    /*--------------------------------------------------------##---------------------------------------------------------
+
+    =======================================================================================================================
+                                                        FUNCTIONS
+    =======================================================================================================================
+
+    ------------------------------------------------------------##-----------------------------------------------------*/
+
+    private boolean prepare(java.util.function.BooleanSupplier available){
+        while(validated < validations.size()){
+            if(!validations.get(validated).advance(available)) return false;
+            validated++;
         }
         try{
             var container = SubLevelContainer.getContainer(level);
-            for(var body : schematic.bodies()){
+            while(bodies.size() < schematic.bodies().size() && available.getAsBoolean()){
+                var body = schematic.bodies().get(bodies.size());
                 var next = (ServerSubLevel) container.allocateNewSubLevel(new Pose3d());
                 bodies.add(next);
                 BlockPos center = next.getPlot().getCenterBlock();
@@ -105,19 +142,14 @@ public final class SubLevelSchematicBuild implements AutoCloseable{
                 ctx.getMappings().put(body.id(), new SubLevelSchematicSerializationContext.SchematicMapping(
                         null, null, next.getUniqueId(), pos -> ((BlockPos)pos).offset(center)));
             }
+            if(bodies.size() < schematic.bodies().size()) return false;
             ctx.setSetupTransform(pos -> (BlockPos)pos);
             ctx.setPlaceTransform(pos -> BlockPos.containing(transform(((BlockPos)pos).getCenter(), target, turn)));
+            prepared = true;
             holdPoses();
+            return true;
         }catch(RuntimeException err){ close(); throw err; }
     }
-
-    /*--------------------------------------------------------##---------------------------------------------------------
-
-    =======================================================================================================================
-                                                        FUNCTIONS
-    =======================================================================================================================
-
-    ------------------------------------------------------------##-----------------------------------------------------*/
 
     // Place a bounded batch in deterministic bottom-to-top order
     public List<Vec3> tick(int maximumBlocks){
@@ -137,10 +169,13 @@ public final class SubLevelSchematicBuild implements AutoCloseable{
         List<List<Vec3>> points = new ArrayList<>();
         for(int idx = 0; idx < sections.size(); idx++) points.add(new ArrayList<>());
         var prev = SubLevelSchematicSerializationContext.getCurrentContext();
-        try{
+        var budget = BUDGETS.computeIfAbsent(level.getServer(), ignored ->
+                new com.rieno.gadgetsandgizmos.lib.navigation.TickWorkBudget(4_000_000, 2_000_000));
+        try(var slice = budget.claim(level.getServer().getTickCount())){
+            if(!prepared && !prepare(slice::available)) return sectionProgress();
             SubLevelSchematicSerializationContext.setCurrentContext(ctx);
-            int end = Math.min(placements.size(), placed + maximumBlocks);
-            while(placed < end){
+            int end = placed + Math.min(placements.size() - placed, Math.min(maximumBlocks, 256));
+            while(placed < end && slice.available()){
                 int section = nextSection();
                 Placement placement = sections.get(section).get(sectionPlaced[section]);
                 if(!level.hasChunkAt(BlockPos.containing(placement.worldPos()))
@@ -166,14 +201,31 @@ public final class SubLevelSchematicBuild implements AutoCloseable{
             }
             holdPoses();
             if(placed == placements.size()){
+                while(restored < placements.size() && slice.available()){
+                    Placement placement = placements.get(restored);
+                    ServerSubLevel body = bodies.get(placement.bodyIdx());
+                    SchematicConnectionData.restore(level, body.getPlot().getCenterBlock().offset(placement.block().pos()),
+                            placement.block().data(), ctx, target, turn);
+                    restored++;
+                }
+                if(restored < placements.size()) return progress(points);
                 for(ServerSubLevel body : bodies) if(body.getSelfMassTracker().isInvalid())
                     throw new IllegalArgumentException("A completed schematic body has no physical mass");
-                SubLevelSchematicJoints.install(level, schematic, bodies);
+                while(installedJoints < schematic.joints().size() && slice.available()){
+                    SubLevelSchematicJoints.install(level, new SubLevelSchematic(schematic.bodies(),
+                            List.of(schematic.joints().get(installedJoints))), bodies);
+                    installedJoints++;
+                }
+                if(installedJoints < schematic.joints().size()) return progress(points);
                 complete = true;
                 bodies.forEach(SubLevelConstructionState::release);
                 lease.close();
             }
         }finally{ SubLevelSchematicSerializationContext.setCurrentContext(prev); }
+        return progress(points);
+    }
+
+    private List<SectionProgress> progress(List<List<Vec3>> points){
         List<SectionProgress> res = new ArrayList<>();
         for(int idx = 0; idx < sections.size(); idx++) res.add(sectionProgress(idx, points.get(idx)));
         return List.copyOf(res);

@@ -33,7 +33,7 @@ public final class SubLevelCameraFrameRegistry{
 
     // Resolve a finite frame while leaving the provider's retained quaternion untouched
     public static Quaterniond orientation(Entity camera, float partialTick){
-        if(camera == null) return null;
+        if(camera == null || ClientViewOwnership.isReserved()) return null;
         for(Provider provider : snapshot){
             Quaterniondc val = provider.orientation(camera, partialTick);
             if(val == null) continue;

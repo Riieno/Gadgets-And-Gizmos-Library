@@ -42,9 +42,12 @@ public abstract class RemoteViewGameRendererMixin{
     private void hideHand(Camera camera, float partialTick, Matrix4f matrix, CallbackInfo ci){
         if(RemoteViewClient.isActive()) ci.cancel();
     }
-    // Preserve the body interaction target while the remote view is active
+    // Native projected controls must pick from the lens rather than the player's body
     @Inject(method = "pick(F)V", at = @At("HEAD"), cancellable = true)
     private void suppressPick(float partialTick, CallbackInfo ci){
-        if(RemoteViewClient.isActive()) ci.cancel();
+        if(RemoteViewClient.isActive()){
+            com.rieno.gadgetsandgizmos.lib.client.view.ViewInteractionClient.updateHit(partialTick);
+            ci.cancel();
+        }
     }
 }

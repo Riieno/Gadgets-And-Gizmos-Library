@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.client.view;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.config.ViewfinderConfig;
 import com.rieno.gadgetsandgizmos.lib.view.ViewControlInput;
 import com.rieno.gadgetsandgizmos.lib.view.ViewControlState;
 import com.rieno.gadgetsandgizmos.lib.view.ViewRig;
@@ -28,6 +29,9 @@ public final class ViewControlPanel{
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     private Consumer<ViewControlInput> sender = input -> {};
+    private Runnable takeControlAction;
+    private Runnable interactAction;
+    private final long viewStarted = net.minecraft.Util.getMillis();
     private ViewControlState state = new ViewControlState(ViewRig.Mode.LOCKED, 70, false);
     private int left;
     private int right;
@@ -47,6 +51,11 @@ public final class ViewControlPanel{
     =======================================================================================================================
 
     ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Let the host authorize first-person takeover from the floating icon row
+    public void setTakeControlAction(Runnable action){ takeControlAction = action; }
+    // Let the host route a hit interaction through its own authenticated source selection
+    public void setInteractAction(Runnable action){ interactAction = action; }
 
     // Draw controls at the bottom middle of the host's live view
     public void render(GuiGraphics graphics, Font font, int x, int y, int width, int height,
@@ -92,19 +101,34 @@ public final class ViewControlPanel{
                 flashLeft + 4, bottom - 27, 0xFFF0F6FA, false);
         trackingIcon(graphics, layout.tracking(), state.autoTracking());
         targetLockIcon(graphics, layout.targetLock(), state.lockTarget());
+        if(takeControlAction != null) takeControlIcon(graphics, layout.takeControl());
         tick();
     }
     // Render floating controls without covering the scene with a panel background
     public void renderOverlay(Canvas graphics, Font font, int x, int y, int width, int height,
                               ViewControlState state, Consumer<ViewControlInput> sender){
+        var layout = ViewControlLayout.overlay(x, y, width, height);
+        ViewfinderOverlay.render(graphics, font, x, y, width, height, ViewfinderConfig.FRAME.get(), ViewfinderConfig.GRID.get(),
+                state.fov(), net.minecraft.Util.getMillis() - viewStarted, 0,
+                layout.flashlight().x() + layout.flashlight().width() - x + 4, layout.radius() * 2 + 12);
+        renderControls(graphics, font, width, height, layout, state, sender);
+    }
+    public void renderChin(Canvas graphics, Font font, int x, int y, int width, int height,
+                           ViewControlState state, Consumer<ViewControlInput> sender){
+        graphics.fill(x, y, x + width, y + height, 0xF0152433);
+        renderControls(graphics, font, width, height, ViewControlLayout.chin(x, y, width, height), state, sender);
+    }
+    private void renderControls(Canvas graphics, Font font, int width, int height, ViewControlLayout layout,
+                                ViewControlState state, Consumer<ViewControlInput> sender){
         this.state = state;
         this.sender = sender;
-        layout = ViewControlLayout.overlay(x, y, width, height);
+        this.layout = layout;
         center = layout.stickX();
         bottom = layout.stickY() + 25;
         radius = layout.radius();
         circle(graphics, center, layout.stickY(), radius, 0xFF747877);
-        circle(graphics, center + (int) (stickX * radius), layout.stickY() + (int) (stickY * radius),
+        Canvas foreground = graphics.layer(1);
+        circle(foreground, center + (int) (stickX * radius), layout.stickY() + (int) (stickY * radius),
                 Math.max(4, radius * 3 / 10), 0xFFCED0CE);
         for(ViewRig.Mode mode : ViewRig.Mode.values()){
             var bounds = layout.modes().get(mode.ordinal());
@@ -115,24 +139,33 @@ public final class ViewControlPanel{
         }
         var zoom = layout.zoom();
         graphics.fill(zoom.x(), zoom.y(), zoom.x() + zoom.width(), zoom.y() + zoom.height(), 0xFF607482);
-        int knob = zoom.y() + (int) ((state.fov() - 5) / 115 * zoom.height());
-        int halfWidth = Math.max(zoom.width(), width / 50);
-        int halfHeight = Math.max(2, Math.min(width, height) / 160);
-        graphics.fill(zoom.centerX() - halfWidth, knob - halfHeight,
-                zoom.centerX() + halfWidth, knob + halfHeight, 0xFFB9DFD9);
+        if(zoom.width() > zoom.height()){
+            int knob = zoom.x() + (int) ((120 - state.fov()) / 115 * zoom.width());
+            foreground.fill(knob - 2, zoom.y() - 3, knob + 3, zoom.y() + zoom.height() + 3, 0xFFB9DFD9);
+        }else{
+            int knob = zoom.y() + (int) ((state.fov() - 5) / 115 * zoom.height());
+            int halfWidth = Math.max(zoom.width(), width / 50);
+            int halfHeight = Math.max(2, Math.min(width, height) / 160);
+            foreground.fill(zoom.centerX() - halfWidth, knob - halfHeight,
+                    zoom.centerX() + halfWidth, knob + halfHeight, 0xFFB9DFD9);
+        }
         var flash = layout.flashlight();
         rounded(graphics, flash, flash.width() / 4, state.flashlight() ? 0xFF77B5AC : 0xFF747877);
         int iconX = flash.x() + flash.width() / 5;
         int iconY = flash.centerY();
         int length = Math.max(5, flash.width() * 3 / 5);
         int half = Math.max(2, flash.height() / 10);
-        graphics.fill(iconX, iconY - half, iconX + length * 2 / 3, iconY + half, 0xFFF0F6FA);
-        graphics.fill(iconX - 1, iconY - half - 1, iconX + 2, iconY + half + 1, 0xFFF0F6FA);
+        foreground.fill(iconX, iconY - half, iconX + length * 2 / 3, iconY + half, 0xFFF0F6FA);
+        foreground.fill(iconX - 1, iconY - half - 1, iconX + 2, iconY + half + 1, 0xFFF0F6FA);
         for(int row = -half - 1; row <= half + 1; row++){
-            graphics.fill(iconX + length * 2 / 3, iconY + row, iconX + length - Math.abs(row) / 2, iconY + row + 1, 0xFFF0F6FA);
+            foreground.fill(iconX + length * 2 / 3, iconY + row, iconX + length - Math.abs(row) / 2, iconY + row + 1, 0xFFF0F6FA);
         }
         trackingIcon(graphics, layout.tracking(), state.autoTracking());
         targetLockIcon(graphics, layout.targetLock(), state.lockTarget());
+        if(takeControlAction != null) takeControlIcon(graphics, layout.takeControl());
+        viewfinderIcon(graphics, layout.frame(), false, ViewfinderConfig.FRAME.get());
+        viewfinderIcon(graphics, layout.grid(), true, ViewfinderConfig.GRID.get());
+        if(interactAction != null) interactIcon(graphics, layout.interact());
         tick();
     }
     // Apply a held stick at the game tick rate rather than the frame rate
@@ -145,6 +178,18 @@ public final class ViewControlPanel{
     // Accept clicks from either a GUI or a projected world surface
     public boolean mouseClicked(double x, double y, int button){
         if(button != 0 && button != 1 || layout == null) return false;
+        if(takeControlAction != null && layout.takeControl().contains(x, y)){
+            mouseReleased();
+            takeControlAction.run();
+            return true;
+        }
+        if(layout.frame().contains(x, y)){ ViewfinderConfig.toggleFrame(); return true; }
+        if(layout.grid().contains(x, y)){ ViewfinderConfig.toggleGrid(); return true; }
+        if(interactAction != null && layout.interact().contains(x, y)){
+            mouseReleased();
+            interactAction.run();
+            return true;
+        }
         for(int idx = 0; idx < layout.modes().size(); idx++){
             if(layout.modes().get(idx).contains(x, y)){
                 sender.accept(new ViewControlInput(0, 0, -1, ViewRig.Mode.values()[idx].name(), -1));
@@ -157,9 +202,8 @@ public final class ViewControlPanel{
             return true;
         }
         var zoom = layout.zoom();
-        if(layout.overlay() ? x >= zoom.x() - zoom.width() && x <= zoom.x() + zoom.width() * 2
-                && y >= zoom.y() - 5 && y <= zoom.y() + zoom.height() + 5
-                : x >= left && x < center - radius - 7 && y >= bottom - 49 && y <= bottom){
+        if(x >= zoom.x() - 4 && x <= zoom.x() + zoom.width() + 4
+                && y >= zoom.y() - 5 && y <= zoom.y() + zoom.height() + 5){
             dragging = "zoom";
             drag(x, y);
             return true;
@@ -210,7 +254,7 @@ public final class ViewControlPanel{
             stickY = dy / length;
         }else{
             var zoom = layout.zoom();
-            double fraction = layout.overlay() ? 1 - Math.clamp((y - zoom.y()) / Math.max(1, zoom.height()), 0, 1)
+            double fraction = zoom.height() > zoom.width() ? 1 - Math.clamp((y - zoom.y()) / Math.max(1, zoom.height()), 0, 1)
                     : Math.clamp((x - zoom.x()) / Math.max(1, zoom.width()), 0, 1);
             sender.accept(new ViewControlInput(0, 0, 120 - fraction * 115, "", -1));
         }
@@ -225,6 +269,7 @@ public final class ViewControlPanel{
     private static void trackingIcon(Canvas graphics, ViewControlLayout.Bounds bounds, boolean enabled){
         if(bounds.width() <= 0 || bounds.height() <= 0) return;
         rounded(graphics, bounds, bounds.width() / 4, enabled ? 0xFF77B5AC : 0xFF747877);
+        graphics = graphics.layer(1);
         int inset = Math.max(3, bounds.width() / 5);
         int left = bounds.x() + inset;
         int right = bounds.x() + bounds.width() - inset;
@@ -247,6 +292,7 @@ public final class ViewControlPanel{
     private static void targetLockIcon(Canvas graphics, ViewControlLayout.Bounds bounds, boolean locked){
         if(bounds.width() <= 0 || bounds.height() <= 0) return;
         rounded(graphics, bounds, bounds.width() / 4, locked ? 0xFF77B5AC : 0xFF747877);
+        graphics = graphics.layer(1);
         int line = Math.max(1, bounds.width() / 12);
         int half = Math.max(3, bounds.width() / 4);
         int center = bounds.centerX();
@@ -258,8 +304,52 @@ public final class ViewControlPanel{
         graphics.fill(center - half + line + shift, top, center + half - line + shift, top + line, color);
         graphics.fill(center - half + line + shift, top, center - half + line * 2 + shift, middle, color);
         graphics.fill(center + half - line * 2 + shift, top, center + half - line + shift, middle, color);
-        graphics.fill(center, middle + line, center + line, middle + half - line,
+        graphics.layer(1).fill(center, middle + line, center + line, middle + half - line,
                 locked ? 0xFF77B5AC : 0xFF747877);
+    }
+    // Draw a lens inside viewfinder brackets to distinguish takeover from target tracking
+    private static void takeControlIcon(Canvas graphics, ViewControlLayout.Bounds bounds){
+        if(bounds.width() <= 0 || bounds.height() <= 0) return;
+        rounded(graphics, bounds, bounds.width() / 4, 0xFF747877);
+        graphics = graphics.layer(1);
+        int inset = Math.max(3, bounds.width() / 5);
+        int left = bounds.x() + inset, right = bounds.x() + bounds.width() - inset;
+        int top = bounds.y() + inset, bottom = bounds.y() + bounds.height() - inset;
+        int line = Math.max(1, bounds.width() / 12), length = Math.max(3, (right - left) / 3);
+        for(int x : new int[]{left, right - line}) for(int y : new int[]{top, bottom - line}){
+            graphics.fill(x == left ? x : right - length, y, x == left ? left + length : right, y + line, 0xFFF0F6FA);
+            graphics.fill(x, y == top ? y : bottom - length, x + line, y == top ? top + length : bottom, 0xFFF0F6FA);
+        }
+        circle(graphics, bounds.centerX(), bounds.centerY(), Math.max(2, bounds.width() / 8), 0xFFF0F6FA);
+    }
+    private static void viewfinderIcon(Canvas graphics, ViewControlLayout.Bounds bounds, boolean grid, boolean active){
+        if(bounds.width() <= 0 || bounds.height() <= 0) return;
+        rounded(graphics, bounds, bounds.width() / 4, active ? 0xFF77B5AC : 0xFF747877);
+        graphics = graphics.layer(1);
+        int pad = Math.max(3, bounds.width() / 5), line = Math.max(1, bounds.width() / 12);
+        int left = bounds.x() + pad, right = bounds.x() + bounds.width() - pad;
+        int top = bounds.y() + pad, bottom = bounds.y() + bounds.height() - pad;
+        if(grid){
+            for(int idx = 1; idx < 3; idx++){
+                int x = left + (right - left) * idx / 3, y = top + (bottom - top) * idx / 3;
+                graphics.fill(x, top, x + line, bottom, 0xFFF0F6FA);
+                graphics.fill(left, y, right, y + line, 0xFFF0F6FA);
+            }
+        }else{
+            int length = Math.max(3, (right - left) / 3);
+            for(int x : new int[]{left, right - line}) for(int y : new int[]{top, bottom - line}){
+                graphics.fill(x == left ? x : right - length, y, x == left ? left + length : right, y + line, 0xFFF0F6FA);
+                graphics.fill(x, y == top ? y : bottom - length, x + line, y == top ? top + length : bottom, 0xFFF0F6FA);
+            }
+        }
+    }
+    private static void interactIcon(Canvas graphics, ViewControlLayout.Bounds bounds){
+        rounded(graphics, bounds, bounds.width() / 4, 0xFF747877);
+        graphics = graphics.layer(1);
+        int x = bounds.x() + bounds.width() / 4, y = bounds.y() + bounds.height() / 4;
+        int size = Math.max(6, bounds.width() / 2), line = Math.max(1, bounds.width() / 12);
+        for(int row = 0; row < size; row++) graphics.fill(x, y + row, x + Math.max(1, size - row), y + row + 1, 0xFFF0F6FA);
+        for(int idx = size / 2; idx < size; idx++) graphics.fill(x + idx, y + idx, x + idx + line, y + idx + line, 0xFFF0F6FA);
     }
     private static void rounded(Canvas graphics, ViewControlLayout.Bounds bounds, int radius, int color){
         for(int row = 0; row < bounds.height(); row++){
@@ -270,6 +360,8 @@ public final class ViewControlPanel{
     }
     // Let a host retain its own depth, projection and buffer state
     public interface Canvas{
+        // Select an overlay layer while flat GUI canvases retain ordinary draw order
+        default Canvas layer(int index){ return this; }
         void fill(int left, int top, int right, int bottom, int color);
         void drawString(Font font, String text, int x, int y, int color, boolean shadow);
         default void drawCenteredString(Font font, String text, int x, int y, int color){

@@ -43,7 +43,8 @@ public final class PlayerScopedMap<V> extends AbstractMap<String, V>{
     // Read a player's value before the shared fallback
     @Override public V get(Object key){
         UUID id = player.get();
-        Map<String, V> values = id == null ? null : players.get(id);
+        Map<String, V> values = id == null || !(key instanceof String name) || !personal.test(name)
+                ? null : players.get(id);
         return values != null && values.containsKey(key) ? values.get(key) : shared.get(key);
     }
     // Write only personal keys into the current player's scope
@@ -64,7 +65,9 @@ public final class PlayerScopedMap<V> extends AbstractMap<String, V>{
     @Override public Set<Entry<String, V>> entrySet(){
         Map<String, V> values = new LinkedHashMap<>(shared);
         UUID id = player.get();
-        if(id != null) values.putAll(players.getOrDefault(id, Map.of()));
+        if(id != null) players.getOrDefault(id, Map.of()).forEach((key, val) -> {
+            if(personal.test(key)) values.put(key, val);
+        });
         return java.util.Collections.unmodifiableMap(values).entrySet();
     }
     // Export shared state without merging the currently active player's values

@@ -43,6 +43,44 @@ public record GraphPlayerScopePlan(Set<String> nodes, Set<String> variables){
         }
         return new GraphPlayerScopePlan(personal, variables);
     }
+    // Scope only UI dependencies driven by personal input; observing shared state does not change its owner
+    public static <N extends GraphModel.Node, E extends GraphModel.Edge> GraphPlayerScopePlan analyze(
+            GraphModel<N, E> graph, Predicate<N> ui, Predicate<N> action,
+            Function<N, String> readVariable, Function<N, String> writeVariable, Predicate<E> execution,
+            Predicate<N> personalSource){
+        GraphPlayerScopePlan dependencies = analyze(graph, ui, node -> false, readVariable, writeVariable, execution);
+        Set<String> eligible = new HashSet<>(dependencies.nodes());
+        graph.nodes().stream().filter(action).forEach(node -> eligible.add(node.id()));
+        Map<String, N> nodes = new HashMap<>();
+        Map<String, List<String>> downstream = new HashMap<>();
+        Map<String, List<String>> readers = new HashMap<>();
+        graph.nodes().forEach(node -> {
+            nodes.put(node.id(), node);
+            String variable = readVariable.apply(node);
+            if(variable != null && !variable.isBlank())
+                readers.computeIfAbsent(variable, ignored -> new java.util.ArrayList<>()).add(node.id());
+        });
+        for(E edge : graph.edges()) downstream.computeIfAbsent(edge.fromNode(),
+                ignored -> new java.util.ArrayList<>()).add(edge.toNode());
+        Set<String> personal = new HashSet<>();
+        Set<String> variables = new HashSet<>();
+        ArrayDeque<String> pending = new ArrayDeque<>();
+        graph.nodes().stream().filter(node -> ui.test(node) || personalSource.test(node))
+                .forEach(node -> pending.add(node.id()));
+        while(!pending.isEmpty()){
+            String id = pending.removeFirst();
+            if(!personal.add(id)) continue;
+            N node = nodes.get(id);
+            String variable = node == null ? "" : writeVariable.apply(node);
+            if(variable != null && !variable.isBlank() && variables.add(variable))
+                pending.addAll(readers.getOrDefault(variable, List.of()));
+            pending.addAll(downstream.getOrDefault(id, List.of()));
+        }
+        personal.retainAll(eligible);
+        variables.retainAll(dependencies.variables());
+        return new GraphPlayerScopePlan(personal, variables);
+    }
+
     // Recognize a host's node-prefixed and variable-prefixed runtime state keys
     public boolean containsStateKey(String key){
         if(key.startsWith("variable:")) return variables.contains(key.substring(9));

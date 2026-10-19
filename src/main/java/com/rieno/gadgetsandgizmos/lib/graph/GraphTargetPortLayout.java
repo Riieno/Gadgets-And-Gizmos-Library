@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 // Compose stable graph ports and labelled sections for one or more data targets
 public final class GraphTargetPortLayout {
@@ -45,6 +46,12 @@ public final class GraphTargetPortLayout {
 
     // Preserve generated port names while target reference ids change
     public static Layout compose(Collection<Target> targets, boolean mergeLikePorts, Map<String, String> stableTargetIds){
+        return compose(targets, mergeLikePorts, stableTargetIds, Set.of());
+    }
+
+    // Keep selected source ports independent even when other matching ports are merged
+    public static Layout compose(Collection<Target> targets, boolean mergeLikePorts,
+                                 Map<String, String> stableTargetIds, Set<String> targetSpecificPorts){
         List<Target> values = targets == null ? List.of() : targets.stream()
                 .filter(target -> target != null && !target.id().isBlank())
                 .toList();
@@ -54,7 +61,7 @@ public final class GraphTargetPortLayout {
         Map<String, List<Binding>> bindings = new LinkedHashMap<>();
         List<Section> sections = new ArrayList<>();
         Map<String, String> merged = new LinkedHashMap<>();
-        Map<String, List<String>> sectionPorts = new LinkedHashMap<>();
+        List<String> mergedPorts = new ArrayList<>();
 
         for (Target target : values) {
             String targetKey = key(stableTargetIds == null ? target.id() : stableTargetIds.getOrDefault(target.id(), target.id()));
@@ -66,7 +73,8 @@ public final class GraphTargetPortLayout {
                 }
                 String label = port.label().isBlank() ? port.id() : port.label();
                 String portId;
-                if (mergeLikePorts) {
+                boolean mergePort = mergeLikePorts && (targetSpecificPorts == null || !targetSpecificPorts.contains(port.id()));
+                if (mergePort) {
                     String mergeKey = normalize(label);
                     portId = merged.computeIfAbsent(mergeKey, ignored -> "merged_" + key(label));
                 } else {
@@ -89,15 +97,16 @@ public final class GraphTargetPortLayout {
                 }
                 bindings.computeIfAbsent(portId, ignored -> new ArrayList<>())
                         .add(new Binding(target.id(), port.id()));
-                entries.add(portId);
+                if(mergePort){
+                    if(!mergedPorts.contains(portId)) mergedPorts.add(portId);
+                }else entries.add(portId);
             }
-            sectionPorts.put(sectionId, entries);
-            if (!mergeLikePorts) {
+            if (!mergeLikePorts || !entries.isEmpty()) {
                 sections.add(new Section(sectionId, target.label().isBlank() ? target.id() : target.label(), entries));
             }
         }
-        if (mergeLikePorts && !ports.isEmpty()) {
-            sections.add(new Section("merged", "Merged Ports", new ArrayList<>(ports.keySet())));
+        if (mergeLikePorts && !mergedPorts.isEmpty()) {
+            sections.add(new Section("merged", "Merged Ports", mergedPorts));
         }
         return new Layout(ports, labels, options, bindings, sections);
     }

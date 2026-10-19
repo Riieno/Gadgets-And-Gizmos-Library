@@ -10,11 +10,14 @@ package com.rieno.gadgetsandgizmos.lib.physics;
 
 import com.simibubi.create.AllTags;
 import com.rieno.gadgetsandgizmos.lib.discovery.SubLevelBlockEntityCollector;
+import com.rieno.gadgetsandgizmos.lib.navigation.ReactiveCollisionAvoidance;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.api.block.BlockSubLevelCollisionShape;
+import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.api.physics.collider.SableCollisionContext;
 import dev.ryanhcode.sable.companion.math.BoundingBox3d;
 import dev.ryanhcode.sable.sublevel.SubLevel;
+import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.BlockGetter;
@@ -32,6 +35,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.IdentityHashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -72,6 +76,68 @@ public final class SubLevelParticleOcclusion {
     =======================================================================================================================
 
     ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Inspect authoritative live poses before an intruder enters the requested travel corridor
+    public static ReactiveCollisionAvoidance.ProximityHazard findSubLevelProximityHazard(Level level,
+            List<AABB> movingBounds, Vec3 velocity, Set<UUID> excludedIds, double clearance, double responseSeconds){
+        return findSubLevelProximityHazard(level, movingBounds, velocity, excludedIds, clearance, responseSeconds, null);
+    }
+
+    // Share one authoritative body list with the controller's directional queries
+    public static ReactiveCollisionAvoidance.ProximityHazard findSubLevelProximityHazard(Level level,
+            List<AABB> movingBounds, Vec3 velocity, Set<UUID> excludedIds, double clearance, double responseSeconds,
+            @Nullable ProbeCache cache){
+        List<ReactiveCollisionAvoidance.MovingObstacle> obstacles = new ArrayList<>();
+        for(Object candidate : knownSubLevels(level, cache)){
+            if(!(candidate instanceof SubLevel body) || body.isRemoved() || excludedIds.contains(body.getUniqueId())) continue;
+            Vec3 motion = body instanceof ServerSubLevel server
+                    ? new Vec3(server.latestLinearVelocity.x, server.latestLinearVelocity.y, server.latestLinearVelocity.z) : Vec3.ZERO;
+            AABB bounds = subLevelWorldBounds(body);
+            if(bounds != null) obstacles.add(new ReactiveCollisionAvoidance.MovingObstacle(bounds, motion));
+        }
+        return ReactiveCollisionAvoidance.proximityHazard(movingBounds, velocity, obstacles, clearance, responseSeconds);
+    }
+
+    // Recover from forced physical overlap while retaining terrain and new-obstacle checks
+    public static double findAirOnlyDepartureBlockingDistance(Level level, Vec3 direction, double range,
+            List<AABB> movingBounds, boolean includeWorld, Set<UUID> excludedIds, int probes,
+            @Nullable ProbeCache cache, double padding){
+        double distance = findAirOnlyBoundsBlockingDistance(level, direction, range, movingBounds,
+                includeWorld, excludedIds, probes, cache, padding);
+        if(distance > EPSILON) return distance;
+        List<AABB> physical = movingBounds.stream().map(bounds -> contactBounds(bounds, padding))
+                .filter(java.util.Objects::nonNull).toList();
+        Set<UUID> exclusions = new HashSet<>(excludedIds);
+        for(Object candidate : knownSubLevels(level, cache)){
+            if(!(candidate instanceof SubLevel body) || body.isRemoved() || exclusions.contains(body.getUniqueId())) continue;
+            AABB bounds = subLevelWorldBounds(body);
+            if(bounds != null && allowsOverlapDeparture(physical, bounds, direction, range))
+                exclusions.add(body.getUniqueId());
+        }
+        return exclusions.equals(excludedIds) && !includeWorld ? distance
+                : findAirOnlyBoundsBlockingDistance(level, direction, range, movingBounds,
+                        includeWorld, exclusions, probes, cache, padding, physical);
+    }
+
+    // Permit only outward translation for every overlapping piece of a compound hull
+    public static boolean allowsOverlapDeparture(List<AABB> bounds, AABB obstacle, Vec3 direction, double range){
+        boolean overlapping = false;
+        for(AABB hull : bounds){
+            if(!hull.intersects(obstacle)){
+                if(translatedBoundsEntryDistance(hull, obstacle, direction, range) != null) return false;
+                continue;
+            }
+            overlapping = true;
+            boolean outward = direction.x < -EPSILON && hull.maxX - obstacle.minX <= obstacle.maxX - hull.minX + EPSILON
+                    || direction.x > EPSILON && obstacle.maxX - hull.minX <= hull.maxX - obstacle.minX + EPSILON
+                    || direction.y < -EPSILON && hull.maxY - obstacle.minY <= obstacle.maxY - hull.minY + EPSILON
+                    || direction.y > EPSILON && obstacle.maxY - hull.minY <= hull.maxY - obstacle.minY + EPSILON
+                    || direction.z < -EPSILON && hull.maxZ - obstacle.minZ <= obstacle.maxZ - hull.minZ + EPSILON
+                    || direction.z > EPSILON && obstacle.maxZ - hull.minZ <= hull.maxZ - obstacle.minZ + EPSILON;
+            if(!outward) return false;
+        }
+        return overlapping;
+    }
 
     // Find the blocking distance
     public static double findBlockingDistance(Level rootLevel, Vec3 startWorld, Vec3 directionWorld,
@@ -135,7 +201,7 @@ public final class SubLevelParticleOcclusion {
         Vec3 worldDirection = directionWorld.normalize();
         Vec3 endWorld = startWorld.add(worldDirection.scale(maxDistance));
         AABB worldBounds = new AABB(startWorld, endWorld).inflate(1.0D);
-        List<Object> subLevels = intersectingSubLevels(rootLevel, worldBounds, probeCache);
+        List<Object> subLevels = intersectingSubLevels(rootLevel, worldBounds, probeCache, excludedSubLevelIds);
         if (containingSubLevel != null && !containsIdentity(subLevels, containingSubLevel)) {
             subLevels.add(0, containingSubLevel);
         }
@@ -295,7 +361,7 @@ public final class SubLevelParticleOcclusion {
             return maxDistance;
         }
         List<Object> subLevels = intersectingSubLevels(
-                rootLevel, queryBounds, probeCache);
+                rootLevel, queryBounds, probeCache, excludedSubLevelIds);
         if (containingSubLevel != null
                 && !containsIdentity(subLevels, containingSubLevel)) {
             subLevels.add(0, containingSubLevel);
@@ -341,13 +407,38 @@ public final class SubLevelParticleOcclusion {
             int maximumProbesPerBounds,
             @Nullable ProbeCache probeCache
     ) {
+        return findAirOnlyBoundsBlockingDistance(rootLevel, directionWorld, maxDistance,
+                movingBoundsWorld, includeRootLevel, excludedSubLevelIds,
+                maximumProbesPerBounds, probeCache, 0.0D);
+    }
+
+    // Allow a padded hull to leave initial contact while keeping physical bodies separated
+    public static double findAirOnlyBoundsBlockingDistance(
+            Level rootLevel, Vec3 directionWorld, double maxDistance,
+            List<AABB> movingBoundsWorld, boolean includeRootLevel,
+            Set<UUID> excludedSubLevelIds, int maximumProbesPerBounds,
+            @Nullable ProbeCache probeCache, double initialContactAllowance
+    ){
+        return findAirOnlyBoundsBlockingDistance(rootLevel, directionWorld, maxDistance,
+                movingBoundsWorld, includeRootLevel, excludedSubLevelIds, maximumProbesPerBounds,
+                probeCache, initialContactAllowance, List.of());
+    }
+
+    private static double findAirOnlyBoundsBlockingDistance(
+            Level rootLevel, Vec3 directionWorld, double maxDistance,
+            List<AABB> movingBoundsWorld, boolean includeRootLevel,
+            Set<UUID> excludedSubLevelIds, int maximumProbesPerBounds,
+            @Nullable ProbeCache probeCache, double initialContactAllowance, List<AABB> departureBounds
+    ){
         if (rootLevel == null || directionWorld == null
                 || directionWorld.lengthSqr() < EPSILON || maxDistance <= 0.0D
                 || movingBoundsWorld == null || movingBoundsWorld.isEmpty()) {
             return Math.max(0.0D, maxDistance);
         }
         Vec3 direction = directionWorld.normalize();
-        double nearest = maxDistance;
+        double nearest = findSubLevelEnvelopeBlockingDistance(rootLevel, direction, maxDistance, movingBoundsWorld,
+                excludedSubLevelIds, probeCache, initialContactAllowance);
+        if(nearest <= EPSILON) return 0.0D;
         Vec3 probeOffset = direction.scale(COLLISION_MARGIN * 2.0D);
         Map<BlockGetter, LoadedBlockLookup> sharedLookups = probeCache == null
                 ? new IdentityHashMap<>() : probeCache.lookups;
@@ -359,15 +450,14 @@ public final class SubLevelParticleOcclusion {
                         bounds, direction, maximumProbesPerBounds)) {
                     Vec3 probeStart = start.add(probeOffset);
                     double distance = findAirOnlyBlockingDistanceInLevel(
-                            lookup, probeStart, direction, nearest);
+                            lookup, probeStart, direction, nearest, bounds,
+                            contactBounds(bounds, initialContactAllowance), departureBounds);
                     nearest = Math.min(nearest, distance);
                     if (nearest <= EPSILON) return 0.0D;
                 }
             }
         }
-        return Math.min(nearest, findSubLevelEnvelopeBlockingDistance(
-                rootLevel, direction, nearest, movingBoundsWorld,
-                excludedSubLevelIds, probeCache));
+        return nearest;
     }
 
     /**
@@ -382,6 +472,15 @@ public final class SubLevelParticleOcclusion {
             List<AABB> movingBoundsWorld,
             List<AABB> obstacleBoundsWorld
     ) {
+        return findEnvelopeBlockingDistance(directionWorld, maxDistance,
+                movingBoundsWorld, obstacleBoundsWorld, 0.0D);
+    }
+
+    // Preserve clearance for parallel or separating motion within existing hull padding
+    public static double findEnvelopeBlockingDistance(
+            Vec3 directionWorld, double maxDistance, List<AABB> movingBoundsWorld,
+            List<AABB> obstacleBoundsWorld, double initialContactAllowance
+    ){
         double maximum = Double.isFinite(maxDistance)
                 ? Math.max(0.0D, maxDistance) : 0.0D;
         if (directionWorld == null || directionWorld.lengthSqr() < EPSILON
@@ -396,6 +495,8 @@ public final class SubLevelParticleOcclusion {
             if (moving == null) continue;
             for (AABB obstacle : obstacleBoundsWorld) {
                 if (obstacle == null) continue;
+                if(leavesPaddedContact(moving, contactBounds(moving, initialContactAllowance),
+                        obstacle, direction)) continue;
                 Double distance = translatedBoundsEntryDistance(
                         moving, obstacle, direction, nearest);
                 if (distance == null) continue;
@@ -422,6 +523,16 @@ public final class SubLevelParticleOcclusion {
             Set<UUID> excludedSubLevelIds,
             @Nullable ProbeCache probeCache
     ) {
+        return findSubLevelEnvelopeBlockingDistance(rootLevel, directionWorld, maxDistance,
+                movingBoundsWorld, excludedSubLevelIds, probeCache, 0.0D);
+    }
+
+    // Keep neighbouring ships blocking inward motion while permitting a safe escape
+    public static double findSubLevelEnvelopeBlockingDistance(
+            Level rootLevel, Vec3 directionWorld, double maxDistance,
+            List<AABB> movingBoundsWorld, Set<UUID> excludedSubLevelIds,
+            @Nullable ProbeCache probeCache, double initialContactAllowance
+    ){
         if (rootLevel == null || directionWorld == null
                 || directionWorld.lengthSqr() < EPSILON || maxDistance <= 0.0D
                 || movingBoundsWorld == null || movingBoundsWorld.isEmpty()) {
@@ -437,10 +548,10 @@ public final class SubLevelParticleOcclusion {
         }
         if (queryBounds == null) return maxDistance;
         List<Object> subLevels = intersectingSubLevels(
-                rootLevel, queryBounds, probeCache);
+                rootLevel, queryBounds, probeCache, excludedSubLevelIds);
         return findEnvelopeBlockingDistance(
                 direction, maxDistance, movingBoundsWorld,
-                subLevelWorldBounds(subLevels, excludedSubLevelIds));
+                subLevelWorldBounds(subLevels, excludedSubLevelIds), initialContactAllowance);
     }
 
     // Handle the probe cache
@@ -452,12 +563,21 @@ public final class SubLevelParticleOcclusion {
         private @Nullable Level subLevelRoot;
         // Current root-level Sable body snapshot
         private List<Object> subLevels = List.of();
+        private int subLevelCount = -1;
+
+        // Refresh additions and same-size replacements without retaining stale body identities
+        private boolean currentBodies(Level level){
+            if(subLevelRoot != level || subLevelCount != bodyCount(level)) return false;
+            for(Object body : subLevels) if(body instanceof SubLevel subLevel && subLevel.isRemoved()) return false;
+            return true;
+        }
 
         // Clear the probe cache
         public void clear() {
             lookups.clear();
             subLevelRoot = null;
             subLevels = List.of();
+            subLevelCount = -1;
         }
     }
 
@@ -631,7 +751,7 @@ public final class SubLevelParticleOcclusion {
         }
 
         List<Object> subLevels = intersectingSubLevels(
-                rootLevel, sweptWorldBounds, null);
+                rootLevel, sweptWorldBounds, null, excludedSubLevelIds);
         if (containingSubLevel != null && !containsIdentity(subLevels, containingSubLevel)) {
             subLevels.add(0, containingSubLevel);
         }
@@ -685,6 +805,22 @@ public final class SubLevelParticleOcclusion {
                 : Mth.clamp(nearest * maxDistance - 0.0625D, 0.0D, maxDistance);
     }
 
+    // Sweep a padded hull without rejecting safe motion away from initial contact
+    public static double findSweptBoundsBlockingDistance(
+            Level rootLevel, @Nullable Object containingSubLevel,
+            Vec3 anchorStartWorld, Vec3 directionWorld, double maxDistance,
+            List<AABB> movingBoundsWorld, boolean includeRootLevel,
+            Set<UUID> excludedSubLevelIds, boolean includeTaggedTransparentBlocks,
+            double initialContactAllowance
+    ){
+        SweptBoundsScan scan = beginSweptBoundsBlockingDistanceScan(rootLevel, containingSubLevel,
+                anchorStartWorld, directionWorld, maxDistance, movingBoundsWorld,
+                includeRootLevel, excludedSubLevelIds, includeTaggedTransparentBlocks,
+                initialContactAllowance);
+        while(!scan.advance(Integer.MAX_VALUE, 0L)){}
+        return scan.result();
+    }
+
     // Begin the swept bounds blocking distance scan
     public static SweptBoundsScan beginSweptBoundsBlockingDistanceScan(
             Level rootLevel,
@@ -697,6 +833,44 @@ public final class SubLevelParticleOcclusion {
             Set<UUID> excludedSubLevelIds,
             boolean includeTaggedTransparentBlocks
     ) {
+        return beginSweptBoundsBlockingDistanceScan(rootLevel, containingSubLevel,
+                anchorStartWorld, directionWorld, maxDistance, movingBoundsWorld,
+                includeRootLevel, excludedSubLevelIds, includeTaggedTransparentBlocks, 0.0D);
+    }
+
+    // Retain physical bounds separately from padding through rotated SubLevel transforms
+    public static SweptBoundsScan beginSweptBoundsBlockingDistanceScan(
+            Level rootLevel, @Nullable Object containingSubLevel,
+            Vec3 anchorStartWorld, Vec3 directionWorld, double maxDistance,
+            List<AABB> movingBoundsWorld, boolean includeRootLevel,
+            Set<UUID> excludedSubLevelIds, boolean includeTaggedTransparentBlocks,
+            double initialContactAllowance
+    ){
+        return beginSweptBoundsScan(rootLevel, containingSubLevel, anchorStartWorld, directionWorld,
+                maxDistance, movingBoundsWorld, includeRootLevel, excludedSubLevelIds,
+                includeTaggedTransparentBlocks, initialContactAllowance, false);
+    }
+
+    // Permit only outward departure from initial physical overlap during a bounded exact scan.
+    public static SweptBoundsScan beginDepartureBoundsBlockingDistanceScan(
+            Level rootLevel, @Nullable Object containingSubLevel,
+            Vec3 anchorStartWorld, Vec3 directionWorld, double maxDistance,
+            List<AABB> movingBoundsWorld, boolean includeRootLevel,
+            Set<UUID> excludedSubLevelIds, boolean includeTaggedTransparentBlocks,
+            double initialContactAllowance
+    ){
+        return beginSweptBoundsScan(rootLevel, containingSubLevel, anchorStartWorld, directionWorld,
+                maxDistance, movingBoundsWorld, includeRootLevel, excludedSubLevelIds,
+                includeTaggedTransparentBlocks, initialContactAllowance, true);
+    }
+
+    private static SweptBoundsScan beginSweptBoundsScan(
+            Level rootLevel, @Nullable Object containingSubLevel,
+            Vec3 anchorStartWorld, Vec3 directionWorld, double maxDistance,
+            List<AABB> movingBoundsWorld, boolean includeRootLevel,
+            Set<UUID> excludedSubLevelIds, boolean includeTaggedTransparentBlocks,
+            double initialContactAllowance, boolean allowDeparture
+    ){
         if (rootLevel == null || anchorStartWorld == null || directionWorld == null
                 || directionWorld.lengthSqr() < EPSILON || maxDistance <= 0.0D
                 || movingBoundsWorld == null || movingBoundsWorld.isEmpty()) {
@@ -719,19 +893,22 @@ public final class SubLevelParticleOcclusion {
             return SweptBoundsScan.complete(maxDistance);
         }
 
+        List<AABB> physicalBounds = allowDeparture ? movingBoundsWorld.stream()
+                .filter(java.util.Objects::nonNull).map(bounds -> contactBounds(bounds, initialContactAllowance))
+                .filter(java.util.Objects::nonNull).toList() : List.of();
         List<SweptBoundsLevelScan> levelScans = new ArrayList<>();
         if (includeRootLevel) {
             for (AABB bounds : movingBoundsWorld) {
                 if (bounds != null) {
                     levelScans.add(new SweptBoundsLevelScan(
                             rootLevel, anchorStartWorld, anchorEndWorld, bounds,
-                            includeTaggedTransparentBlocks));
+                            includeTaggedTransparentBlocks, contactBounds(bounds, initialContactAllowance), physicalBounds));
                 }
             }
         }
 
         List<Object> subLevels = intersectingSubLevels(
-                rootLevel, sweptWorldBounds, null);
+                rootLevel, sweptWorldBounds, null, excludedSubLevelIds);
         if (containingSubLevel != null && !containsIdentity(subLevels, containingSubLevel)) {
             subLevels.add(0, containingSubLevel);
         }
@@ -750,15 +927,27 @@ public final class SubLevelParticleOcclusion {
             if (localStart == null || localEnd == null) {
                 continue;
             }
+            List<AABB> localPhysical = physicalBounds.stream()
+                    .map(bounds -> transformWorldBoundsToLocal(subLevel, bounds))
+                    .filter(java.util.Objects::nonNull).toList();
             for (AABB worldBounds : movingBoundsWorld) {
                 if (worldBounds == null) {
                     continue;
                 }
+                AABB physical = contactBounds(worldBounds, initialContactAllowance);
+                AABB obstacle = subLevelWorldBounds((SubLevel) subLevel);
+                if(obstacle == null) continue;
+                if(physical != null && (leavesPaddedContact(worldBounds.inflate(COLLISION_MARGIN),
+                        physical, obstacle, worldDelta)
+                        || translatedBoundsEntryDistance(worldBounds.inflate(COLLISION_MARGIN),
+                        obstacle, worldDirection, maxDistance) == null)) continue;
                 AABB localBounds = transformWorldBoundsToLocal(subLevel, worldBounds);
                 if (localBounds != null) {
                     levelScans.add(new SweptBoundsLevelScan(
                             subLevelLevel, localStart, localEnd, localBounds,
-                            includeTaggedTransparentBlocks));
+                            includeTaggedTransparentBlocks, physical != null
+                            ? transformWorldBoundsToLocal(subLevel, physical)
+                            : null, localPhysical));
                 }
             }
         }
@@ -849,6 +1038,26 @@ public final class SubLevelParticleOcclusion {
             Vec3 localStart, Vec3 localEnd, AABB localBoundsAtStart,
             boolean includeTaggedTransparentBlocks
     ){
+        return sweptBoundsBlockIntersectionFraction(level, pos, state, localStart, localEnd,
+                localBoundsAtStart, includeTaggedTransparentBlocks, null);
+    }
+
+    // Apply the same initial-contact rule to every physical block shape
+    private static @Nullable Double sweptBoundsBlockIntersectionFraction(
+            BlockGetter level, BlockPos pos, BlockState state,
+            Vec3 localStart, Vec3 localEnd, AABB localBoundsAtStart,
+            boolean includeTaggedTransparentBlocks, @Nullable AABB physicalBoundsAtStart
+    ){
+        return sweptBoundsBlockIntersectionFraction(level, pos, state, localStart, localEnd,
+                localBoundsAtStart, includeTaggedTransparentBlocks, physicalBoundsAtStart, List.of());
+    }
+
+    private static @Nullable Double sweptBoundsBlockIntersectionFraction(
+            BlockGetter level, BlockPos pos, BlockState state,
+            Vec3 localStart, Vec3 localEnd, AABB localBoundsAtStart,
+            boolean includeTaggedTransparentBlocks, @Nullable AABB physicalBoundsAtStart,
+            List<AABB> departureBounds
+    ){
         if (state.isAir() || (!includeTaggedTransparentBlocks
                 && AllTags.AllBlockTags.FAN_TRANSPARENT.matches(state))) {
             return null;
@@ -860,7 +1069,7 @@ public final class SubLevelParticleOcclusion {
         if (shape == Shapes.block()) {
             return sweptBoundsIntersectionFraction(
                     localStart, localEnd, localBoundsAtStart,
-                    new AABB(pos), COLLISION_MARGIN);
+                    new AABB(pos), COLLISION_MARGIN, physicalBoundsAtStart, departureBounds);
         }
 
         double[] nearestShapeHit = {Double.POSITIVE_INFINITY};
@@ -875,7 +1084,7 @@ public final class SubLevelParticleOcclusion {
                             pos.getX() + shapeMaxX,
                             pos.getY() + shapeMaxY,
                             pos.getZ() + shapeMaxZ),
-                    COLLISION_MARGIN);
+                    COLLISION_MARGIN, physicalBoundsAtStart, departureBounds);
             if (hit != null) {
                 nearestShapeHit[0] = Math.min(nearestShapeHit[0], hit);
             }
@@ -943,6 +1152,7 @@ public final class SubLevelParticleOcclusion {
                                         nearestFraction * maxDistance - 0.0625D,
                                         0.0D, maxDistance);
                     }
+                    if(timeBudgetElapsed(startedNanos, timeBudgetNanos)) break;
                     continue;
                 }
                 if (processed == 0 || timeBudgetElapsed(
@@ -956,6 +1166,12 @@ public final class SubLevelParticleOcclusion {
         // Check if this is complete
         public boolean isComplete() {
             return complete;
+        }
+
+        // Reject retained clearance after a block edit in any inspected terrain section
+        public boolean isCurrent(){
+            for(SweptBoundsLevelScan scan : levelScans) if(!scan.lookup.isCurrent()) return false;
+            return true;
         }
 
         // Get the result
@@ -987,6 +1203,9 @@ public final class SubLevelParticleOcclusion {
         private final Vec3 localEnd;
         // Local bounds at start
         private final AABB localBoundsAtStart;
+        // Physical hull before the caller's clearance padding
+        private final @Nullable AABB physicalBoundsAtStart;
+        private final List<AABB> departureBounds;
         // Controls whether to include tagged transparent blocks
         private final boolean includeTaggedTransparentBlocks;
         // Minimum x
@@ -1042,13 +1261,16 @@ public final class SubLevelParticleOcclusion {
                 Vec3 localStart,
                 Vec3 localEnd,
                 AABB localBoundsAtStart,
-                boolean includeTaggedTransparentBlocks
+                boolean includeTaggedTransparentBlocks,
+                @Nullable AABB physicalBoundsAtStart, List<AABB> departureBounds
         ) {
             this.level = level;
             this.lookup = new LoadedBlockLookup(level, false);
             this.localStart = localStart;
             this.localEnd = localEnd;
             this.localBoundsAtStart = localBoundsAtStart;
+            this.physicalBoundsAtStart = physicalBoundsAtStart;
+            this.departureBounds = departureBounds;
             this.includeTaggedTransparentBlocks = includeTaggedTransparentBlocks;
             Vec3 localDelta = localEnd.subtract(localStart);
             if (localDelta.lengthSqr() < EPSILON) {
@@ -1117,8 +1339,9 @@ public final class SubLevelParticleOcclusion {
                 }
 
                 pos.set(x, y, z);
-                if(lookup.emptySection(y)){
-                    y = Math.min(maxY, y | 15);
+                int occupiedY = lookup.nextOccupiedY(x, y, z);
+                if(occupiedY > y){
+                    y = Math.min(maxY, occupiedY - 1);
                     processed++;
                     advanceBlock();
                     continue;
@@ -1128,7 +1351,7 @@ public final class SubLevelParticleOcclusion {
                         sweptBoundsBlockIntersectionFraction(
                                 level, pos, lookup.blockState(pos), localStart, localEnd,
                                 localBoundsAtStart,
-                                includeTaggedTransparentBlocks));
+                                includeTaggedTransparentBlocks, physicalBoundsAtStart, departureBounds));
                 processed++;
                 if (nearestFraction != null && nearestFraction <= EPSILON) {
                     complete = true;
@@ -1213,6 +1436,28 @@ public final class SubLevelParticleOcclusion {
             AABB obstacleBounds,
             double margin
     ) {
+        return sweptBoundsIntersectionFraction(anchorStart, anchorEnd, movingBoundsAtStart,
+                obstacleBounds, margin, null);
+    }
+
+    // Ignore only initial padding contact whose physical separation cannot decrease
+    static @Nullable Double sweptBoundsIntersectionFraction(
+            Vec3 anchorStart, Vec3 anchorEnd, AABB movingBoundsAtStart,
+            AABB obstacleBounds, double margin, @Nullable AABB physicalBoundsAtStart
+    ){
+        return sweptBoundsIntersectionFraction(anchorStart, anchorEnd, movingBoundsAtStart,
+                obstacleBounds, margin, physicalBoundsAtStart, List.of());
+    }
+
+    private static @Nullable Double sweptBoundsIntersectionFraction(
+            Vec3 anchorStart, Vec3 anchorEnd, AABB movingBoundsAtStart,
+            AABB obstacleBounds, double margin, @Nullable AABB physicalBoundsAtStart,
+            List<AABB> departureBounds
+    ){
+        Vec3 delta = anchorEnd.subtract(anchorStart);
+        if(allowsOverlapDeparture(departureBounds, obstacleBounds, delta.normalize(), delta.length())) return null;
+        if(leavesPaddedContact(movingBoundsAtStart.inflate(Math.max(0.0D, margin)),
+                physicalBoundsAtStart, obstacleBounds, anchorEnd.subtract(anchorStart))) return null;
         double minOffsetX = movingBoundsAtStart.minX - anchorStart.x;
         double minOffsetY = movingBoundsAtStart.minY - anchorStart.y;
         double minOffsetZ = movingBoundsAtStart.minZ - anchorStart.z;
@@ -1235,6 +1480,25 @@ public final class SubLevelParticleOcclusion {
             return null;
         }
         return intersection;
+    }
+
+    // Remove only the clearance padding supplied by the caller
+    private static @Nullable AABB contactBounds(AABB bounds, double allowance){
+        if(!Double.isFinite(allowance) || allowance <= 0.0D) return null;
+        double maximum = Math.min(bounds.getXsize(), Math.min(bounds.getYsize(), bounds.getZsize())) * 0.5D;
+        return allowance < maximum ? bounds.deflate(allowance) : null;
+    }
+
+    // Preserve a separating axis instead of treating an existing safety overlap as a new collision
+    private static boolean leavesPaddedContact(AABB padded, @Nullable AABB physical,
+            AABB obstacle, Vec3 movement){
+        if(physical == null || !padded.intersects(obstacle) || movement.lengthSqr() < EPSILON) return false;
+        return physical.maxX <= obstacle.minX + EPSILON && movement.x <= 0.0D
+                || physical.minX >= obstacle.maxX - EPSILON && movement.x >= 0.0D
+                || physical.maxY <= obstacle.minY + EPSILON && movement.y <= 0.0D
+                || physical.minY >= obstacle.maxY - EPSILON && movement.y >= 0.0D
+                || physical.maxZ <= obstacle.minZ + EPSILON && movement.z <= 0.0D
+                || physical.minZ >= obstacle.maxZ - EPSILON && movement.z >= 0.0D;
     }
 
     // Keep movement blocked into a resting surface while allowing it to leave
@@ -1320,29 +1584,26 @@ public final class SubLevelParticleOcclusion {
     private static List<Object> intersectingSubLevels(
             Level level,
             AABB worldBounds,
-            @Nullable ProbeCache probeCache
+            @Nullable ProbeCache probeCache,
+            @Nullable Set<UUID> excludedIds
     ) {
         List<Object> res = new ArrayList<>();
-        if (probeCache != null && probeCache.subLevelRoot == level) {
+        if (probeCache != null && probeCache.currentBodies(level)) {
             for (Object candidate : probeCache.subLevels) {
-                addIntersectingSubLevel(res, candidate, worldBounds);
+                addIntersectingSubLevel(res, candidate, worldBounds, excludedIds);
             }
             return res;
         }
         try {
             for (SubLevel subLevel : Sable.HELPER.getAllIntersecting(
                     level, new BoundingBox3d(worldBounds))) {
-                addIntersectingSubLevel(res, subLevel, worldBounds);
+                addIntersectingSubLevel(res, subLevel, worldBounds, excludedIds);
             }
         } catch (RuntimeException | LinkageError ignored) {
         }
-        if (probeCache == null && !res.isEmpty()) return res;
-        // Sable's spatial index may legally be empty while newly loaded or moving bodies are
-        // already present in the container. Merge the authoritative container snapshot so a
-        // cached reactive query never makes another vehicle invisible for that tick. Uncached
-        // planner scans use this fallback only when the spatial index returned no candidates.
+        // Merge authoritative bodies even when the spatial index has not published their new pose
         List<Object> known;
-        if (probeCache != null && probeCache.subLevelRoot == level) {
+        if (probeCache != null && probeCache.currentBodies(level)) {
             known = probeCache.subLevels;
         } else {
             known = SubLevelBlockEntityCollector.getSubLevels(level);
@@ -1353,12 +1614,26 @@ public final class SubLevelParticleOcclusion {
                     if (!containsIdentity(snapshot, candidate)) snapshot.add(candidate);
                 }
                 probeCache.subLevels = List.copyOf(snapshot);
+                probeCache.subLevelCount = bodyCount(level);
             }
         }
         for (Object candidate : known) {
-            addIntersectingSubLevel(res, candidate, worldBounds);
+            addIntersectingSubLevel(res, candidate, worldBounds, excludedIds);
         }
         return res;
+    }
+
+    // Retain body identities only; bounds and velocities remain live on every query
+    private static List<Object> knownSubLevels(Level level, @Nullable ProbeCache cache){
+        if(cache != null && cache.currentBodies(level)) return cache.subLevels;
+        List<Object> bodies = SubLevelBlockEntityCollector.getSubLevels(level);
+        if(cache != null){ cache.subLevelRoot = level; cache.subLevels = List.copyOf(bodies); cache.subLevelCount = bodyCount(level); }
+        return bodies;
+    }
+
+    private static int bodyCount(Level level){
+        SubLevelContainer container = level == null ? null : SubLevelContainer.getContainer(level);
+        return container == null ? -1 : container.getAllSubLevels().size();
     }
 
     // Get collision envelopes for every non-excluded Sable body in one query.
@@ -1372,12 +1647,15 @@ public final class SubLevelParticleOcclusion {
             if (!(candidate instanceof SubLevel subLevel) || subLevel.isRemoved()) continue;
             UUID id = subLevel.getUniqueId();
             if (excludedSubLevelIds != null && excludedSubLevelIds.contains(id)) continue;
-            var envelope = subLevel.boundingBox();
-            bounds.add(new AABB(
-                    envelope.minX(), envelope.minY(), envelope.minZ(),
-                    envelope.maxX(), envelope.maxY(), envelope.maxZ()));
+            AABB live = subLevelWorldBounds(subLevel);
+            if(live != null) bounds.add(live);
         }
         return List.copyOf(bounds);
+    }
+
+    // Preserve world separation before a rotated local AABB expands the hull
+    private static @Nullable AABB subLevelWorldBounds(SubLevel subLevel){
+        return SableAssemblyHullApi.worldBounds(subLevel);
     }
 
     // Get the first distance at which one translated AABB overlaps a fixed AABB.
@@ -1389,27 +1667,26 @@ public final class SubLevelParticleOcclusion {
     ) {
         double entry = 0.0D;
         double exit = Math.max(0.0D, maxDistance);
-        double[] movingMin = {moving.minX, moving.minY, moving.minZ};
-        double[] movingMax = {moving.maxX, moving.maxY, moving.maxZ};
-        double[] obstacleMin = {obstacle.minX, obstacle.minY, obstacle.minZ};
-        double[] obstacleMax = {obstacle.maxX, obstacle.maxY, obstacle.maxZ};
-        double[] velocity = {direction.x, direction.y, direction.z};
         for (int axis = 0; axis < 3; axis++) {
-            if (Math.abs(velocity[axis]) <= EPSILON) {
-                if (movingMax[axis] < obstacleMin[axis]
-                        || movingMin[axis] > obstacleMax[axis]) {
+            double movingMin = axis == 0 ? moving.minX : axis == 1 ? moving.minY : moving.minZ;
+            double movingMax = axis == 0 ? moving.maxX : axis == 1 ? moving.maxY : moving.maxZ;
+            double obstacleMin = axis == 0 ? obstacle.minX : axis == 1 ? obstacle.minY : obstacle.minZ;
+            double obstacleMax = axis == 0 ? obstacle.maxX : axis == 1 ? obstacle.maxY : obstacle.maxZ;
+            double velocity = axis == 0 ? direction.x : axis == 1 ? direction.y : direction.z;
+            if (Math.abs(velocity) <= EPSILON) {
+                if (movingMax < obstacleMin || movingMin > obstacleMax) {
                     return null;
                 }
                 continue;
             }
             double axisEntry;
             double axisExit;
-            if (velocity[axis] > 0.0D) {
-                axisEntry = (obstacleMin[axis] - movingMax[axis]) / velocity[axis];
-                axisExit = (obstacleMax[axis] - movingMin[axis]) / velocity[axis];
+            if (velocity > 0.0D) {
+                axisEntry = (obstacleMin - movingMax) / velocity;
+                axisExit = (obstacleMax - movingMin) / velocity;
             } else {
-                axisEntry = (obstacleMax[axis] - movingMin[axis]) / velocity[axis];
-                axisExit = (obstacleMin[axis] - movingMax[axis]) / velocity[axis];
+                axisEntry = (obstacleMax - movingMin) / velocity;
+                axisExit = (obstacleMin - movingMax) / velocity;
             }
             entry = Math.max(entry, axisEntry);
             exit = Math.min(exit, axisExit);
@@ -1423,13 +1700,16 @@ public final class SubLevelParticleOcclusion {
     private static void addIntersectingSubLevel(
             List<Object> target,
             Object candidate,
-            AABB worldBounds
+            AABB worldBounds,
+            @Nullable Set<UUID> excludedIds
     ) {
         if (!(candidate instanceof SubLevel subLevel) || subLevel.isRemoved()
-                || !subLevel.boundingBox().intersects(worldBounds)
+                || excludedIds != null && excludedIds.contains(subLevel.getUniqueId())
                 || containsIdentity(target, subLevel)) {
             return;
         }
+        AABB bounds = subLevelWorldBounds(subLevel);
+        if(bounds == null || !bounds.intersects(worldBounds)) return;
         target.add(subLevel);
     }
 
@@ -1543,7 +1823,10 @@ public final class SubLevelParticleOcclusion {
             LoadedBlockLookup lookup,
             Vec3 start,
             Vec3 direction,
-            double maxDistance
+            double maxDistance,
+            AABB movingBoundsAtStart,
+            @Nullable AABB physicalBoundsAtStart,
+            List<AABB> departureBounds
     ) {
         Vec3 end = start.add(direction.scale(maxDistance));
         int currentX = Mth.floor(start.x);
@@ -1570,7 +1853,11 @@ public final class SubLevelParticleOcclusion {
             pos.set(currentX, currentY, currentZ);
             if (!lookup.moveTo(pos)) return maxDistance;
             if (!lookup.emptySection(currentY) && !lookup.blockState(pos).isAir()) {
-                return Mth.clamp(travelled - COLLISION_MARGIN, 0.0D, maxDistance);
+                if(!leavesPaddedContact(movingBoundsAtStart.inflate(COLLISION_MARGIN * 2.0D),
+                        physicalBoundsAtStart, new AABB(pos), direction)
+                        && !allowsOverlapDeparture(departureBounds, new AABB(pos), direction, maxDistance)){
+                    return Mth.clamp(travelled - COLLISION_MARGIN, 0.0D, maxDistance);
+                }
             }
             if (currentX == endX && currentY == endY && currentZ == endZ) break;
             if (tMaxX <= tMaxY && tMaxX <= tMaxZ) {
@@ -1730,6 +2017,8 @@ public final class SubLevelParticleOcclusion {
         private @Nullable LevelChunkSection[] sections;
         private int minSection;
         private boolean sectionMetadataLoaded;
+        private final Map<LevelChunkSection, Long> observedSections = new IdentityHashMap<>();
+        private final Map<Long, LevelChunk> observedChunks = new java.util.HashMap<>();
         // Current chunk keys
         private long[] chunkKeys = new long[8];
         // Current chunk states
@@ -1788,7 +2077,7 @@ public final class SubLevelParticleOcclusion {
             }
             if (cacheQueries) {
                 rememberChunk(chunkKey);
-            }
+            }else if(level instanceof Level) observedChunks.putIfAbsent(chunkKey, chunk);
             return loaded;
         }
 
@@ -1809,6 +2098,32 @@ public final class SubLevelParticleOcclusion {
         // Get the block state
         private BlockState blockState(BlockPos pos) {
             return chunk == null ? level.getBlockState(pos) : chunk.getBlockState(pos);
+        }
+
+        private boolean isCurrent(){
+            for(var entry : observedSections.entrySet()){
+                if(((CollisionBlockIndex.Revision)entry.getKey()).collisionBlockRevision() != entry.getValue()) return false;
+            }
+            if(level instanceof Level world && world.getChunkSource() != null){
+                for(var entry : observedChunks.entrySet()){
+                    long key = entry.getKey();
+                    if(world.getChunkSource().getChunkNow((int)key, (int)(key >> 32)) != entry.getValue()) return false;
+                }
+            }
+            return true;
+        }
+
+        // Skip known empty column spans across repeated hull and route sweeps
+        private int nextOccupiedY(int x, int y, int z){
+            if(chunk == null) return y;
+            if(!sectionMetadataLoaded) emptySection(y);
+            int idx = (y >> 4) - minSection;
+            if(sections == null || idx < 0 || idx >= sections.length) return (y | 15) + 1;
+            LevelChunkSection section = sections[idx];
+            if(section instanceof CollisionBlockIndex.Revision tracked){
+                observedSections.putIfAbsent(section, tracked.collisionBlockRevision());
+            }
+            return section == null ? y : (y & ~15) + CollisionBlockIndex.nextOccupiedY(section, x, y, z);
         }
 
         // Skip air sections and out-of-height positions without reading their palettes

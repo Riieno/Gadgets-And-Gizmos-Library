@@ -93,6 +93,7 @@ public final class ScmArticulatedFlightControl{
                     torques.get(idx), cruiseDirection, prev));
         }
         // Share missing force while retaining each carriage's own attitude target.
+        double previousError = Double.POSITIVE_INFINITY;
         for(int pass = 0; pass < 8; pass++){
             List<Vec3> achieved = new ArrayList<>();
             Vec3 sum = Vec3.ZERO;
@@ -103,6 +104,9 @@ public final class ScmArticulatedFlightControl{
             }
             Vec3 error = targetForce.subtract(sum);
             if(error.lengthSqr() <= Math.max(1.0E-12D, targetForce.lengthSqr() * 0.0009D)) break;
+            double squaredError = error.lengthSqr();
+            if(pass > 0 && previousError - squaredError <= Math.max(1.0E-12D, previousError * 1.0E-6D)) break;
+            previousError = squaredError;
             Vec3 direction = error.normalize();
             double[] reserve = new double[carriages.size()];
             double total = 0.0D;
@@ -221,29 +225,23 @@ public final class ScmArticulatedFlightControl{
                 ScmAdaptiveStateModel secondModel = models.get(secondIdx);
                 // Share the sampled response across every joint acting on the same section.
                 int degree = Math.max(neighbours.get(connection.first()).size(), neighbours.get(connection.second()).size());
-                // Only separation velocity is damped; transverse carriage swing remains free.
-                Vec3 axis = second.center().subtract(first.center()).normalize();
-                double rate = second.velocity().subtract(first.velocity()).dot(axis);
+                // Remove relative swing while preserving the lead body's commanded rigid motion.
+                Vec3 separation = second.center().subtract(first.center());
+                Vec3 relativeVelocity = second.velocity().subtract(first.velocity())
+                        .subtract(primary.angularVelocity().cross(separation));
                 double reducedMass = first.mass() * second.mass() / (first.mass() + second.mass());
-                double firstResponse = Math.abs(firstModel.velocityFeedback(axis, false,
-                        0.0D, rate, characteristicLength(first)));
-                double secondResponse = Math.abs(secondModel.velocityFeedback(axis, false,
-                        0.0D, rate, characteristicLength(second)));
-                Vec3 damping = axis.scale(Math.copySign(Math.min(firstResponse, secondResponse) * reducedMass / degree, rate));
+                double response = Math.min(2.0D, 0.25D / Math.max(1.0E-3D, tickSeconds));
+                Vec3 damping = relativeVelocity.scale(response * reducedMass / degree);
+                damping = supportedReaction(first, second, damping, false);
                 forces.set(firstIdx, forces.get(firstIdx).add(damping));
                 forces.set(secondIdx, forces.get(secondIdx).subtract(damping));
-                // Equal and opposite yaw damping removes joint energy without steering the whole train.
-                double yawRate = second.angularVelocity().subtract(first.angularVelocity()).dot(vertical);
-                double inverseInertia = vertical.dot(first.inertia().inverse().transform(vertical))
-                        + vertical.dot(second.inertia().inverse().transform(vertical));
-                double firstYaw = Math.abs(firstModel.velocityFeedback(vertical, true,
-                        0.0D, yawRate, angularTolerance));
-                double secondYaw = Math.abs(secondModel.velocityFeedback(vertical, true,
-                        0.0D, yawRate, angularTolerance));
-                Vec3 yaw = inverseInertia > 1.0E-12D ? vertical.scale(
-                        Math.copySign(Math.min(firstYaw, secondYaw) / (inverseInertia * degree), yawRate)) : Vec3.ZERO;
-                torques.set(firstIdx, torques.get(firstIdx).add(yaw));
-                torques.set(secondIdx, torques.get(secondIdx).subtract(yaw));
+                // The complete inertia tensor damps yaw, pitch and roll without fixing joint angles.
+                Vec3 relativeRotation = second.angularVelocity().subtract(first.angularVelocity());
+                Tensor reducedInertia = first.inertia().inverse().add(second.inertia().inverse()).inverse();
+                Vec3 torque = reducedInertia.transform(relativeRotation).scale(response / degree);
+                torque = supportedReaction(first, second, torque, true);
+                torques.set(firstIdx, torques.get(firstIdx).add(torque));
+                torques.set(secondIdx, torques.get(secondIdx).subtract(torque));
             }
         }
         List<Request> res = new ArrayList<>();
@@ -251,6 +249,20 @@ public final class ScmArticulatedFlightControl{
             res.add(new Request(carriages.get(idx).id(), forces.get(idx), torques.get(idx)));
         }
         return List.copyOf(res);
+    }
+
+    // Bound paired damping by opposing native wrench capacity before allocation.
+    private static Vec3 supportedReaction(Carriage first, Carriage second, Vec3 requested, boolean angular){
+        double magnitude = requested.length();
+        if(magnitude <= 1.0E-12D) return Vec3.ZERO;
+        Vec3 direction = requested.scale(1.0D / magnitude);
+        Vec3 firstLimit = angular ? ScmPrecisionAllocator.physicalTorque(first.units(), direction)
+                : ScmPrecisionAllocator.physicalForce(first.units(), direction);
+        Vec3 secondLimit = angular ? ScmPrecisionAllocator.physicalTorque(second.units(), direction.scale(-1.0D))
+                : ScmPrecisionAllocator.physicalForce(second.units(), direction.scale(-1.0D));
+        double capacity = Math.min(Math.max(0.0D, firstLimit.dot(direction)),
+                Math.max(0.0D, -secondLimit.dot(direction)));
+        return direction.scale(Math.min(magnitude, capacity));
     }
 
     // Resolve a stable carriage identity in the supplied telemetry order

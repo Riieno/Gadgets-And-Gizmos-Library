@@ -6,6 +6,17 @@ import java.util.Locale;
 public final class GraphComparison{
     private GraphComparison(){}
 
+    // Match a second operand to the first operand's wire or authored literal
+    public static String operandType(String connectedType, String literalType){
+        String type = connectedType == null || connectedType.isBlank() || "any".equals(connectedType)
+                ? literalType : connectedType;
+        if(type == null || type.isBlank() || "exec".equals(type)) return "any";
+        return switch(type){
+            case "integer", "int", "float", "double" -> "number";
+            default -> type;
+        };
+    }
+
     // Normalize the supported symbolic and named comparison operators
     public static String normalizeOperator(String operator){
         if(operator == null) return "";

@@ -119,12 +119,30 @@ class ViewTrackingAcquisitionTest{
         }
     }
 
+    @Test void passiveAndHostileMobsAcquireUsingTheSameConfirmedGeometry(){
+        for(var type : List.of(net.minecraft.world.entity.EntityType.COW, net.minecraft.world.entity.EntityType.ZOMBIE)){
+            var hit = new ViewRaycast.Result("entity", new Vec3(3, 0, -10), 10.44,
+                    BlockPos.ZERO, null, null, net.minecraft.core.registries.BuiltInRegistries.ENTITY_TYPE.getKey(type).toString(),
+                    PLAYER_ID.toString(), "");
+            Scan result = scan(NEAR, true, hit, true);
+            assertEquals(1, result.targets().size());
+            assertEquals(PLAYER_ID, result.targets().getFirst().key().playerId());
+            assertTrue(result.probes() > 0);
+        }
+    }
+
     private static Scan scan(AABB bounds, boolean accepted, ViewRaycast.Result hit){
+        return scan(bounds, accepted, hit, false);
+    }
+
+    private static Scan scan(AABB bounds, boolean accepted, ViewRaycast.Result hit, boolean mob){
         ServerLevel root = mock(ServerLevel.class);
-        ServerPlayer player = mock(ServerPlayer.class);
+        Entity player = mob ? mock(net.minecraft.world.entity.Mob.class) : mock(ServerPlayer.class);
         ViewRaycast.Filter filter = mock(ViewRaycast.Filter.class);
-        when(root.players()).thenReturn(List.of(player));
-        when(root.getPlayerByUUID(PLAYER_ID)).thenReturn(player);
+        when(root.players()).thenReturn(mob ? List.of() : List.of((ServerPlayer)player));
+        when(root.getEntity(PLAYER_ID)).thenReturn(player);
+        when(root.getEntities((Entity)isNull(), any(AABB.class), any(java.util.function.Predicate.class)))
+                .thenReturn(mob ? List.of(player) : List.of());
         when(player.getUUID()).thenReturn(PLAYER_ID);
         when(player.isAlive()).thenReturn(true);
         when(player.isPickable()).thenReturn(true);

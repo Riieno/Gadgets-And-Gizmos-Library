@@ -9,9 +9,12 @@ package com.rieno.gadgetsandgizmos.lib.navigation;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.AABB;
 
 import java.util.Comparator;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
 // Select an immediate escape direction when a live collision probe overrides a planned route
 public final class ReactiveCollisionAvoidance {
@@ -27,13 +30,6 @@ public final class ReactiveCollisionAvoidance {
     private ReactiveCollisionAvoidance() {
     }
 
-    // Motion away from a surface must not inhibit propulsion that leaves it
-    public static boolean probeMotionDirection(Vec3 velocity, Vec3 travelDirection, double minimumSpeed){
-        return velocity != null && travelDirection != null
-                && velocity.lengthSqr() > Math.max(0.0D, minimumSpeed) * Math.max(0.0D, minimumSpeed)
-                && velocity.dot(travelDirection) > 0.0D;
-    }
-
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================
@@ -41,6 +37,106 @@ public final class ReactiveCollisionAvoidance {
     =======================================================================================================================
 
     ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Motion away from a surface must not inhibit propulsion that leaves it
+    public static boolean probeMotionDirection(Vec3 velocity, Vec3 travelDirection, double minimumSpeed){
+        return velocity != null && travelDirection != null
+                && velocity.lengthSqr() > Math.max(0.0D, minimumSpeed) * Math.max(0.0D, minimumSpeed)
+                && velocity.dot(travelDirection) > 0.0D;
+    }
+
+    // Keep translation available throughout an escape before restoring the preferred heading
+    public static boolean retainForwardPreference(boolean requested, boolean escapeActive){
+        return requested && !escapeActive;
+    }
+
+    // Detect nearby bodies even when the controlled craft has no requested travel
+    public static ProximityHazard proximityHazard(List<AABB> bounds, Vec3 velocity,
+            List<MovingObstacle> obstacles, double clearance, double responseSeconds){
+        double margin = positive(clearance, 1.0D);
+        double horizon = Math.max(0.0D, responseSeconds);
+        ProximityHazard res = ProximityHazard.NONE;
+        double risk = Double.POSITIVE_INFINITY;
+        for(AABB hull : bounds) for(MovingObstacle obstacle : obstacles){
+            AABB other = obstacle.bounds();
+            double dx = axisGap(hull.minX, hull.maxX, other.minX, other.maxX);
+            double dy = axisGap(hull.minY, hull.maxY, other.minY, other.maxY);
+            double dz = axisGap(hull.minZ, hull.maxZ, other.minZ, other.maxZ);
+            double squared = dx * dx + dy * dy + dz * dz;
+            double vx = obstacle.velocity().x - velocity.x, vy = obstacle.velocity().y - velocity.y,
+                    vz = obstacle.velocity().z - velocity.z;
+            double maximum = margin + Math.sqrt(vx * vx + vy * vy + vz * vz) * horizon;
+            if(squared >= maximum * maximum) continue;
+            double gap = Math.sqrt(squared);
+            if(squared <= 1.0E-12D){
+                dx = (other.minX + other.maxX) * 0.5D - (hull.minX + hull.maxX) * 0.5D;
+                dy = (other.minY + other.maxY) * 0.5D - (hull.minY + hull.maxY) * 0.5D;
+                dz = (other.minZ + other.maxZ) * 0.5D - (hull.minZ + hull.maxZ) * 0.5D;
+            }
+            double length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if(length <= 1.0E-6D){ dx = 1.0D; dy = 0.0D; dz = 0.0D; }
+            else{ dx /= length; dy /= length; dz /= length; }
+            double closing = Math.max(0.0D, -(vx * dx + vy * dy + vz * dz));
+            double required = margin + closing * horizon;
+            if(gap >= required) continue;
+            // Crossing traffic must enter the inflated hull during the response interval
+            if(gap >= margin){
+                AABB corridor = hull.inflate(margin + other.getXsize() * 0.5D,
+                        margin + other.getYsize() * 0.5D, margin + other.getZsize() * 0.5D);
+                Vec3 center = other.getCenter();
+                if(corridor.clip(center, center.add(vx * horizon, vy * horizon, vz * horizon)).isEmpty()) continue;
+            }
+            double score = gap / required;
+            if(score < risk){ risk = score; res = new ProximityHazard(new Vec3(dx, dy, dz), gap, required); }
+        }
+        return res;
+    }
+
+    // Prefer motion which increases separation from an approaching body
+    public static Response resolveProximity(ProximityHazard hazard, List<EscapeCandidate> candidates){
+        if(hazard == null || !hazard.available()) return Response.clear(0.0D);
+        EscapeCandidate escape = candidates.stream().filter(candidate -> candidate.clearance() > 0.25D
+                && candidate.direction().dot(hazard.direction()) < -0.01D)
+                .max(Comparator.comparingDouble(candidate -> -candidate.direction().dot(hazard.direction())
+                        * Math.min(candidate.clearance(), hazard.requiredClearance() + 1.0D)))
+                .orElse(null);
+        if(escape == null) escape = candidates.stream().filter(candidate -> candidate.clearance() > 0.25D)
+                .max(Comparator.comparingDouble(EscapeCandidate::clearance)).orElse(null);
+        return new Response(true, escape == null ? Vec3.ZERO : escape.direction(), 1.0D,
+                hazard.clearance(), escape != null);
+    }
+
+    // Stop probing when the direct departure already has the greatest possible escape score
+    public static ProximityEscape resolveProximity(ProximityHazard hazard, List<Vec3> directions,
+            Function<Vec3, EscapeCandidate> probe){
+        if(hazard == null || !hazard.available()) return new ProximityEscape(Response.clear(0.0D), 0.0D);
+        List<EscapeCandidate> candidates = new ArrayList<>(directions.size());
+        for(Vec3 direction : directions){
+            EscapeCandidate candidate = probe.apply(direction);
+            candidates.add(candidate);
+            if(candidate.direction().dot(hazard.direction()) <= -1.0D
+                    && candidate.clearance() >= hazard.requiredClearance() + 1.0D)
+                return new ProximityEscape(new Response(true, candidate.direction(), 1.0D,
+                        hazard.clearance(), true), candidate.clearance());
+        }
+        Response res = resolveProximity(hazard, candidates);
+        double clearance = candidates.stream().filter(candidate -> candidate.direction().dot(res.escapeDirection()) > 0.999D)
+                .mapToDouble(EscapeCandidate::clearance).min().orElse(0.0D);
+        return new ProximityEscape(res, clearance);
+    }
+
+    public record ProximityEscape(Response response, double clearance){}
+
+    public record MovingObstacle(AABB bounds, Vec3 velocity){}
+
+    public record ProximityHazard(Vec3 direction, double clearance, double requiredClearance){
+        public static final ProximityHazard NONE = new ProximityHazard(Vec3.ZERO, 0.0D, 0.0D);
+        public boolean available(){ return direction.lengthSqr() > 1.0E-12D; }
+    }
+
+    private static double axisGap(double min, double max, double otherMin, double otherMax){
+        return otherMin > max ? otherMin - max : otherMax < min ? otherMax - min : 0.0D;
+    }
 
     // Resolve one immediate collision response
     public static Response resolve(Request request) {

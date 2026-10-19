@@ -12,14 +12,30 @@ import org.jetbrains.annotations.Nullable;
 import java.util.UUID;
 
 // Identify a loaded view source in a dimension and optional SubLevel
-public record ViewReference(ResourceLocation dimension, @Nullable UUID subLevelId, BlockPos blockPos){
+public record ViewReference(ResourceLocation dimension, @Nullable UUID subLevelId, BlockPos blockPos,
+                            @Nullable UUID entityId){
+    public ViewReference(ResourceLocation dimension, @Nullable UUID subLevelId, BlockPos blockPos){
+        this(dimension, subLevelId, blockPos, null);
+    }
+
+    public static ViewReference of(net.minecraft.world.entity.Entity entity){
+        return new ViewReference(entity.level().dimension().location(), null, BlockPos.ZERO, entity.getUUID());
+    }
+
     // Retain an immutable source position
     public ViewReference{ blockPos = blockPos.immutable(); }
 
     // Resolve only a loaded source in the requested dimension
     public @Nullable ViewSource resolve(Level level){
-        if(level == null || !dimension.equals(level.dimension().location())
-                || !SubLevelBlockEntityCollector.isTargetLoaded(level, subLevelId, blockPos)) return null;
+        if(level == null || !dimension.equals(level.dimension().location())) return null;
+        if(entityId != null){
+            var root = level.isClientSide ? null : SableLevelApi.serverLevel(level);
+            net.minecraft.world.entity.Entity entity = level.isClientSide
+                    ? level.players().stream().filter(player -> entityId.equals(player.getUUID())).findFirst().orElse(null)
+                    : root == null ? null : root.getEntity(entityId);
+            return entity != null && entity.isAlive() ? new EntityViewSource(entity) : null;
+        }
+        if(!SubLevelBlockEntityCollector.isTargetLoaded(level, subLevelId, blockPos)) return null;
         Level target = SubLevelBlockEntityCollector.resolveTargetLevel(level, subLevelId);
         if(target == null) return null;
         BlockEntity be = target.getBlockEntity(blockPos);
@@ -37,6 +53,7 @@ public record ViewReference(ResourceLocation dimension, @Nullable UUID subLevelI
         CompoundTag tag = new CompoundTag();
         tag.putString("Dimension", dimension.toString());
         tag.putLong("BlockPos", blockPos.asLong());
+        if(entityId != null) tag.putUUID("Entity", entityId);
         if(subLevelId != null) tag.putUUID("SubLevel", subLevelId);
         return tag;
     }
@@ -46,6 +63,6 @@ public record ViewReference(ResourceLocation dimension, @Nullable UUID subLevelI
         ResourceLocation dim = ResourceLocation.tryParse(tag.getString("Dimension"));
         if(dim == null || !tag.contains("BlockPos")) return null;
         return new ViewReference(dim, tag.hasUUID("SubLevel") ? tag.getUUID("SubLevel") : null,
-                BlockPos.of(tag.getLong("BlockPos")));
+                BlockPos.of(tag.getLong("BlockPos")), tag.hasUUID("Entity") ? tag.getUUID("Entity") : null);
     }
 }

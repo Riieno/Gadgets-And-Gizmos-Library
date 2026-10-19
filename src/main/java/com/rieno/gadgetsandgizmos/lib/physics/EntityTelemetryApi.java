@@ -51,7 +51,7 @@ public final class EntityTelemetryApi {
         for(String port : new String[]{"look_block", "look_face", "look_sub_level", "main_hand", "off_hand"}){
             ports.put(port, "string");
         }
-        return Map.copyOf(ports);
+        return com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder.copy(ports);
     }
 
     // Build correctly typed unavailable values
@@ -75,7 +75,7 @@ public final class EntityTelemetryApi {
         var feet = Sable.HELPER.getFeetPos(wearer, 0.0F);
         Vec3 pos = new Vec3(feet.x(), feet.y(), feet.z());
         Vec3 eye = wearer.getEyePosition();
-        Vec3 velocity = wearer.getDeltaMovement().scale(20.0D);
+        Vec3 velocity = EntityMotionTelemetry.velocity(wearer);
         boolean sameDimension = wearer.level().dimension().location().toString().equals(dimension);
         values.put("same_dimension", GraphValue.bool(sameDimension));
         values.put("position", vector(pos));

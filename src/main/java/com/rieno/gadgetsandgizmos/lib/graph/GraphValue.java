@@ -120,7 +120,7 @@ public record GraphValue(String type, Object value) {
             map.forEach((key, entry) -> copy.put(
                     immutableValue(key, active), immutableValue(entry, active)));
             active.remove(val);
-            return Map.copyOf(copy);
+            return GraphPortOrder.copy(copy);
         }
         if (val != null && val.getClass().isArray()) {
             throw new IllegalArgumentException("Graph values cannot contain arrays");

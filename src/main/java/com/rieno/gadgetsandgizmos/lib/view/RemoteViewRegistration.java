@@ -14,6 +14,13 @@ public final class RemoteViewRegistration{
     public static void register(RegisterPayloadHandlersEvent evt){
         var registrar = evt.registrar("1");
         registrar.playToServer(RemoteViewPayload.TYPE, RemoteViewPayload.STREAM_CODEC, RemoteViewPayload::handle);
+        registrar.playToServer(RemoteViewInputPayload.TYPE, RemoteViewInputPayload.STREAM_CODEC, RemoteViewInputPayload::handle);
+        registrar.playToClient(RemoteViewAimPayload.TYPE, RemoteViewAimPayload.STREAM_CODEC, RemoteViewAimPayload::handle);
+        registrar.playToServer(RemoteViewActionPayload.TYPE, RemoteViewActionPayload.STREAM_CODEC, RemoteViewActionPayload::handle);
+        registrar.playToClient(RemoteViewRaycastPayload.TYPE, RemoteViewRaycastPayload.STREAM_CODEC, RemoteViewRaycastPayload::handle);
         registrar.playToClient(RemoteViewStatePayload.TYPE, RemoteViewStatePayload.STREAM_CODEC, RemoteViewStatePayload::handle);
+        registrar.playToClient(ViewInteractionPayload.TYPE, ViewInteractionPayload.STREAM_CODEC, ViewInteractionPayload::handle);
+        registrar.playToServer(ViewInteractionKeepAlivePayload.TYPE, ViewInteractionKeepAlivePayload.STREAM_CODEC, ViewInteractionKeepAlivePayload::handle);
+        registrar.playToServer(ViewInteractionTakeoverPayload.TYPE, ViewInteractionTakeoverPayload.STREAM_CODEC, ViewInteractionTakeoverPayload::handle);
     }
 }

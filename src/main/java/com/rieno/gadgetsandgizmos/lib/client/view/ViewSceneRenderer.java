@@ -16,6 +16,7 @@ import com.rieno.gadgetsandgizmos.lib.client.render.SceneRenderTargets;
 import com.rieno.gadgetsandgizmos.lib.client.render.SceneRenderTypes;
 import com.rieno.gadgetsandgizmos.lib.view.ViewPose;
 import com.rieno.gadgetsandgizmos.lib.view.ViewRefreshSchedule;
+import com.rieno.gadgetsandgizmos.lib.view.ViewFeedResolution;
 import com.rieno.gadgetsandgizmos.lib.view.ViewReference;
 import com.rieno.gadgetsandgizmos.lib.view.ViewSource;
 import foundry.veil.api.client.render.VeilLevelPerspectiveRenderer;
@@ -27,6 +28,7 @@ import dev.ryanhcode.sable.sublevel.render.SubLevelRenderer;
 import dev.ryanhcode.sable.sublevel.render.dispatcher.SubLevelRenderDispatcher;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
+import com.rieno.gadgetsandgizmos.lib.client.render.ClientViewOwnership;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.LevelRenderer;
@@ -62,7 +64,7 @@ public final class ViewSceneRenderer{
 ------------------------------------------------------------##-----------------------------------------------------*/
 
     private static final int MAX_SOURCES = 8;
-    private static final int MAX_SIZE = 320;
+    private static IntSupplier resolution = () -> 320;
     private static final float CAPTURE_DISTANCE = 96;
     private static final float PROJECTION_DISTANCE = 1024;
     private static IntSupplier minimumRefreshRate = () -> 10;
@@ -71,6 +73,7 @@ public final class ViewSceneRenderer{
     private static @Nullable ClientLevel owningLevel;
     private static @Nullable Capture active;
     private static @Nullable ViewPose pose;
+    private static @Nullable net.minecraft.world.entity.Entity viewEntity;
     private static long frame;
     private static long nextId;
 
@@ -88,6 +91,10 @@ public final class ViewSceneRenderer{
     public static void setMinimumRefreshRate(IntSupplier supplier){
         minimumRefreshRate = java.util.Objects.requireNonNull(supplier);
     }
+    // Supply a live longest-edge resolution for ACC displays and tablet camera feeds
+    public static void setResolution(IntSupplier supplier){
+        resolution = java.util.Objects.requireNonNull(supplier);
+    }
     // Expose the isolated lightmap to vanilla and optional terrain renderers
     public static @Nullable LightTexture captureLightmap(){ return isCapturing() ? active.lightmap : null; }
     // Keep camera overrides on the render thread while asynchronous meshes compile
@@ -102,6 +109,10 @@ public final class ViewSceneRenderer{
     }
     // Supply the lens override only during a secondary scene render
     public static @Nullable ViewPose capturePose(){ return isCapturing() ? pose : null; }
+    // Preserve the body while excluding the source entity's head and equipment
+    public static boolean hidesHead(net.minecraft.world.entity.Entity entity){
+        return isCapturing() && entity != null && entity == viewEntity;
+    }
     // Limit secondary terrain and entity draws without changing the player's options
     public static float captureDistance(){ return active == null ? CAPTURE_DISTANCE : active.distance; }
     // Keep celestial geometry inside the projection while terrain remains bounded independently
@@ -184,6 +195,12 @@ public final class ViewSceneRenderer{
     // Queue a source and return its most recently completed texture
     public static @Nullable ResourceLocation request(ViewReference ref, int width, int height){
         Minecraft mc = Minecraft.getInstance();
+        if(ClientViewOwnership.isReserved()){
+            Capture capture = CAPTURES.get(ref);
+            if(capture == null) return null;
+            capture.requested = frame;
+            return capture.ready ? capture.texture : null;
+        }
         if(isCapturing() || mc.level == null || ref.resolve(mc.level) == null) return null;
         Capture capture = CAPTURES.get(ref);
         if(capture == null){
@@ -198,10 +215,17 @@ public final class ViewSceneRenderer{
             CAPTURES.put(ref, capture);
         }
         capture.requested = frame;
-        double scale = Math.min(1.0D, MAX_SIZE / (double) Math.max(1, Math.max(width, height)));
-        // Shared displays may grow a target but cannot repeatedly resize it down
-        capture.width = Math.max(capture.width, Math.max(16, (int) (width * scale)));
-        capture.height = Math.max(capture.height, Math.max(16, (int) (height * scale)));
+        int pixels = Math.clamp(resolution.getAsInt(), 64, 2048);
+        ViewFeedResolution.Size size = ViewFeedResolution.fit(width, height, pixels);
+        if(capture.resolution != pixels){
+            capture.width = size.width();
+            capture.height = size.height();
+            capture.resolution = pixels;
+        }else{
+            // Shared displays may grow a target but cannot repeatedly resize it down
+            capture.width = Math.max(capture.width, size.width());
+            capture.height = Math.max(capture.height, size.height());
+        }
         return capture.ready ? capture.texture : null;
     }
     // Draw the framebuffer with its native vertical texture orientation
@@ -210,15 +234,22 @@ public final class ViewSceneRenderer{
         ResourceLocation texture = request(ref, width, height);
         Capture capture = CAPTURES.get(ref);
         if(texture == null || capture == null || capture.target == null) return false;
-        double scale = Math.min(width / (double) capture.target.width, height / (double) capture.target.height);
-        float w = (float) (capture.target.width * scale);
-        float h = (float) (capture.target.height * scale);
+        var viewport = fittedViewport(ref, width, height);
         stack.pushPose();
-        stack.translate((width - w) / 2, (height - h) / 2, 0);
-        drawTexture(capture.surface, w, h, z, stack, buffers);
+        stack.translate(viewport.x(), viewport.y(), 0);
+        drawTexture(capture.surface, viewport.width(), viewport.height(), z, stack, buffers);
         stack.popPose();
         return true;
     }
+    // Return the image bounds without the letterbox bars
+    public static Viewport fittedViewport(ViewReference ref, int width, int height){
+        Capture capture = CAPTURES.get(ref);
+        if(capture == null || capture.target == null) return new Viewport(0, 0, width, height);
+        double scale = Math.min(width / (double) capture.target.width, height / (double) capture.target.height);
+        float w = (float)(capture.target.width * scale), h = (float)(capture.target.height * scale);
+        return new Viewport((width - w) / 2, (height - h) / 2, w, h);
+    }
+    public record Viewport(float x, float y, float width, float height){}
     // Draw the framebuffer with its native vertical texture orientation
     public static boolean draw(ViewReference ref, int width, int height, float z,
                                PoseStack stack, MultiBufferSource buffers){
@@ -246,6 +277,7 @@ public final class ViewSceneRenderer{
             clear();
             owningLevel = mc.level;
         }
+        if(mc.level != null && ClientViewOwnership.isReserved()) return;
         CAPTURES.entrySet().removeIf(entry -> {
             if(frame - entry.getValue().requested <= 120 && entry.getKey().resolve(mc.level) != null) return false;
             entry.getValue().close();
@@ -288,9 +320,10 @@ public final class ViewSceneRenderer{
             capture.lightmap.updateLightTexture(partialTick);
             capture.lightmap.turnOnLightLayer();
             src.updateViewEffects(partialTick);
+            viewEntity = src.viewEntity();
             pose = src.viewPose(partialTick, capture.width / (double) capture.height);
             capture.target.bindWrite(true);
-            capture.camera.setup(mc.level, mc.player, false, false,
+            capture.camera.setup(mc.level, src.viewEntity() == null ? mc.player : src.viewEntity(), false, false,
                     partialTick);
             ((ViewCameraAccess) capture.camera).gadgetsngizmos$applyView(pose);
             if(capture.reload){
@@ -335,6 +368,7 @@ public final class ViewSceneRenderer{
             }finally{
                 active = null;
                 pose = null;
+                viewEntity = null;
                 ((ViewSceneWorldAccess) mc).gadgetsngizmos$swapViewRenderer(prevRenderer);
                 Camera camera = mc.gameRenderer.getMainCamera();
                 mc.getBlockEntityRenderDispatcher().prepare(mc.level, camera, mc.hitResult);
@@ -371,6 +405,7 @@ public final class ViewSceneRenderer{
         private final ResourceLocation texture = ResourceLocation.fromNamespaceAndPath(
                 "gadgetsngizmos", "view/" + nextId++);
         private final RenderType surface = SceneRenderTypes.opaqueTexture(texture);
+        private int resolution;
         private int width = 16;
         private int height = 16;
         private float distance = CAPTURE_DISTANCE;

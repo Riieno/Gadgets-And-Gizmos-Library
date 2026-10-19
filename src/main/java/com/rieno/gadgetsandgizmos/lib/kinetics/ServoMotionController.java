@@ -32,6 +32,8 @@ public final class ServoMotionController {
     private float remainingMotionDegrees;
     // Current motion ticks remaining
     private int motionTicksRemaining;
+    // Planned speed
+    private float plannedSpeed;
     // Generated speed
     private float generatedSpeed;
 
@@ -56,30 +58,37 @@ public final class ServoMotionController {
 
     ------------------------------------------------------------##-----------------------------------------------------*/
 
+    // Use the default only when a face has no finite override
+    public static double resolveAngleLimit(double configured, double defaultLimit){
+        double limit = Double.isFinite(configured) ? configured : defaultLimit;
+        return Double.isFinite(limit) ? Math.abs(limit) : 0.0D;
+    }
+
     // Get the current angle
     public float getCurrentAngle() {
         return currentAngle;
     }
 
-    // Get the generated speed
+    // Get the signed RPM of the most recent motion step
     public float getGeneratedSpeed() {
         return generatedSpeed;
     }
 
     // Check if this is moving
     public boolean isMoving() {
-        return motionTicksRemaining > 0 && Math.abs(generatedSpeed) > 1.0E-3f;
+        return Math.abs(generatedSpeed) > 1.0E-3f;
     }
 
     // Snap the servo motion
     public void snapTo(float targetAngle) {
-        currentAngle = targetAngle;
+        currentAngle = Float.isFinite(targetAngle) ? targetAngle : 0.0f;
         stop();
     }
 
     // Stop the servo motion
     public void stop() {
         generatedSpeed = 0.0f;
+        plannedSpeed = 0.0f;
         plannedTargetAngle = currentAngle;
         remainingMotionDegrees = 0.0f;
         motionTicksRemaining = 0;
@@ -89,6 +98,7 @@ public final class ServoMotionController {
     public void applySyncedState(float angle, float speed) {
         currentAngle = angle;
         generatedSpeed = speed;
+        plannedSpeed = speed;
         plannedTargetAngle = angle;
         remainingMotionDegrees = 0.0f;
         motionTicksRemaining = Math.abs(speed) > 1.0E-3f ? 1 : 0;
@@ -96,6 +106,18 @@ public final class ServoMotionController {
 
     // Update the servo motion
     public void update(float targetAngle) {
+        if(!Float.isFinite(targetAngle)){
+            stop();
+            return;
+        }
+        float previousAngle = currentAngle;
+        advanceMotion(targetAngle);
+        float actualSpeed = (currentAngle - previousAngle) / config.degreesPerTickPerRpm();
+        generatedSpeed = Float.isFinite(actualSpeed) ? actualSpeed : 0.0f;
+    }
+
+    // Advance the position plan separately from the RPM reported to driven kinetics
+    private void advanceMotion(float targetAngle){
         float requestedError = targetAngle - currentAngle;
         if (Math.abs(requestedError) <= config.angleTolerance()) {
             currentAngle = targetAngle;
@@ -114,7 +136,7 @@ public final class ServoMotionController {
             return;
         }
 
-        float maxStep = Math.max(Math.abs(generatedSpeed) * config.degreesPerTickPerRpm(), config.angleTolerance());
+        float maxStep = Math.max(Math.abs(plannedSpeed) * config.degreesPerTickPerRpm(), config.angleTolerance());
         float allowedTravel = Math.min(Math.abs(executingError), Math.min(remainingMotionDegrees, maxStep));
         if (allowedTravel <= config.angleTolerance()) {
             currentAngle = plannedTargetAngle;
@@ -137,8 +159,8 @@ public final class ServoMotionController {
     private void planMotion(float targetAngle, float requestedError) {
         plannedTargetAngle = targetAngle;
         remainingMotionDegrees = Math.abs(requestedError);
-        generatedSpeed = Mth.clamp(requestedError * config.rpmPerDegreeError(), -config.maxRpm(), config.maxRpm());
-        float maxStep = Math.max(Math.abs(generatedSpeed) * config.degreesPerTickPerRpm(), config.angleTolerance());
+        plannedSpeed = Mth.clamp(requestedError * config.rpmPerDegreeError(), -config.maxRpm(), config.maxRpm());
+        float maxStep = Math.max(Math.abs(plannedSpeed) * config.degreesPerTickPerRpm(), config.angleTolerance());
         motionTicksRemaining = Math.max(1, Mth.ceil(remainingMotionDegrees / maxStep) + 1);
     }
 

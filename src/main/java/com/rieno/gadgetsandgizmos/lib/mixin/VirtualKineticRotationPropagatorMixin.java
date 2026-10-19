@@ -13,6 +13,7 @@ import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticBlockEntity;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticHostBlock;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticPos;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticProvider;
+import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticSourceLink;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
@@ -50,6 +51,17 @@ public abstract class VirtualKineticRotationPropagatorMixin {
             at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/Level;getBlockEntity(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/block/entity/BlockEntity;"))
     private static BlockEntity ct$resolveVirtualBlockEntity(Level level, BlockPos pos, Operation<BlockEntity> original) {
         return ct$resolveVirtualBlockEntity(original.call(level, pos), pos);
+    }
+
+    // Disconnect only consumers of the removed virtual slot
+    @WrapOperation(method = "handleRemoved",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/core/BlockPos;equals(Ljava/lang/Object;)Z"))
+    private static boolean ct$matchRemovedSourceSlot(BlockPos sourcePos, Object removedPos, Operation<Boolean> original,
+                                                     @Local(argsOnly = true) KineticBlockEntity removed,
+                                                     @Local(ordinal = 1) KineticBlockEntity consumer){
+        if(!original.call(sourcePos, removedPos)) return false;
+        if(!GadgetsNGizmosKineticGuard.shouldUseVirtualKineticFor(consumer, removed.getBlockPos())) return true;
+        return VirtualKineticSourceLink.isSourcedBy(consumer, removed);
     }
 
     // Add the virtual kinetic neighbour positions

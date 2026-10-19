@@ -65,9 +65,14 @@ public final class GadgetsNGizmosLibraryMixinConfigPlugin implements IMixinConfi
     // Check if this should apply mixin
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if(mixinClassName.endsWith(".SablePhysicalConnectionMixin") || mixinClassName.endsWith(".SableConstraintRemovalMixin"))
+            return MixinCompatibility.canApply(targetClassName, "sable");
         if("com.rieno.gadgetsandgizmos.lib.mixin.ViewSceneEntityCullingMixin".equals(mixinClassName)){
             return MixinCompatibility.isModLoaded("entityculling");
         }
+        if(targetClassName.startsWith("dev.eriksonn.aeronautics.")) return MixinCompatibility.canApply(targetClassName, "aeronautics");
+        if(targetClassName.startsWith("dev.simulated_team.simulated.")) return MixinCompatibility.canApply(targetClassName, "simulated");
+        if(targetClassName.startsWith("foundry.veil.")) return MixinCompatibility.canApply(targetClassName, "veil");
         if(targetClassName.startsWith("net.caffeinemc.mods.sodium.")) return MixinCompatibility.canApply(targetClassName, "sodium");
         if(targetClassName.startsWith("net.irisshaders.iris.")) return MixinCompatibility.canApply(targetClassName, "iris");
         if(targetClassName.startsWith("me.cortex.voxy.")) return MixinCompatibility.canApply(targetClassName, "voxy");

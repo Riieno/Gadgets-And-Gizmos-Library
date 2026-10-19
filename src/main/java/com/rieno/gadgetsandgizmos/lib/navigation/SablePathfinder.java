@@ -49,6 +49,7 @@ public final class SablePathfinder {
     // Completion-time shortcutting is cosmetic and must not become an unbounded collision burst.
     private static final int MAX_COMPLETED_ROUTE_SHORTCUT_VALIDATIONS = 128;
     private static final int MAX_ROUTE_GRAPH_BRANCH_SEARCH = 65_536;
+    private static final int MAX_SPATIAL_REFINEMENTS = 8;
     private static final int ROUTE_REJOIN_PROJECTION_SAMPLES = 12;
     private static final int ROUTE_REJOIN_PROJECTION_REFINEMENTS = 6;
     private static final List<GridStep> SPATIAL_STEPS = spatialSteps();
@@ -84,6 +85,22 @@ public final class SablePathfinder {
     // Create a retained, bounded planner which callers may advance over multiple server ticks.
     public static QueuedPlan queue(Request request) {
         return new QueuedPlan(Objects.requireNonNull(request, "request"));
+    }
+
+    // Refine a blocked spatial grid without exceeding the request's total expansion allowance
+    public static QueuedPlan queueRefining(Request request, double minimumNodeSpacing){
+        Objects.requireNonNull(request, "request");
+        double minimum = Math.min(request.nodeSpacing(), positive(minimumNodeSpacing, request.nodeSpacing()));
+        int refinements = 0;
+        double spacing = request.nodeSpacing();
+        if(request.movement().modes().stream().allMatch(RouteMode::spatial)){
+            while(spacing > minimum + EPSILON && refinements < MAX_SPATIAL_REFINEMENTS
+                    && refinements + 1 < request.maximumExpansions()){
+                spacing = Math.max(minimum, spacing * 0.5D);
+                refinements++;
+            }
+        }
+        return new QueuedPlan(request, minimum, refinements);
     }
 
     // Advance a route cursor when its swept hull has already crossed one or more checkpoints.
@@ -130,6 +147,16 @@ public final class SablePathfinder {
             index++;
         }
         return new WaypointAdvance(index, index - first);
+    }
+
+    // Capture short spatial bends only when the routed control point reaches or crosses them
+    public static WaypointAdvance advanceWaypointProgress(List<Vec3> waypoints, int nextWaypointIndex,
+            Vec3 previousPosition, Vec3 currentPosition, double captureRadius){
+        return advanceWaypointOverlap(waypoints, nextWaypointIndex, previousPosition, currentPosition,
+                captureRadius, (start, end, waypoint, radius) -> {
+                    RouteProjection projection = routeLegProjection(0, start, end, waypoint, RouteMode.FLIGHT);
+                    return projection.found() && projection.distanceToRouteSqr() <= radius * radius;
+                });
     }
 
     // Advance to the endpoint of the furthest contiguous route leg crossed by a swept safety envelope.
@@ -877,19 +904,29 @@ public final class SablePathfinder {
     public static Validator allOf(Validator first, Validator second) {
         Objects.requireNonNull(first, "first");
         Objects.requireNonNull(second, "second");
-        return query -> {
+        return new Validator(){
+            @Override public boolean incremental(){ return first.incremental() || second.incremental(); }
+            @Override public void release(){ first.release(); second.release(); }
+            @Override public Traversal validate(Query query){
             Traversal initial = first.validate(query);
             if (initial == null || initial.result() != TraversalResult.CLEAR) {
                 return initial == null ? Traversal.blocked() : initial;
             }
             Traversal next = second.validate(query);
             return next == null ? Traversal.blocked() : next;
+            }
         };
     }
 
     // Validate a complete compound hull supplied in world coordinates for each segment start
     public static Validator compoundCollisionValidator(CollisionOptions options,
             java.util.function.Function<Query, List<AABB>> boundsAtStart){
+        return compoundCollisionValidator(options, boundsAtStart, 0.0D);
+    }
+
+    // Permit safe departure from existing padding contact without changing later route clearance
+    public static Validator compoundCollisionValidator(CollisionOptions options,
+            java.util.function.Function<Query, List<AABB>> boundsAtStart, double initialContactAllowance){
         CollisionOptions resolved = options == null ? CollisionOptions.DEFAULT : options;
         return query -> {
             if(query == null || query.rootLevel() == null || boundsAtStart == null
@@ -908,7 +945,12 @@ public final class SablePathfinder {
                 if(resolved.includeRootLevel() && !rootLoaded(query.rootLevel(), swept)) return Traversal.unavailable();
                 if(!loaded(query.rootLevel(), query.start(), query.end(), query.safety(),
                         swept, resolved.excludedSubLevelIds())) return Traversal.unavailable();
-                double clearance = SubLevelParticleOcclusion.findSweptBoundsBlockingDistance(
+                double clearance = initialContactAllowance > 0.0D
+                        ? SubLevelParticleOcclusion.findSweptBoundsBlockingDistance(
+                        query.rootLevel(), null, query.start(), delta, distance, bounds,
+                        resolved.includeRootLevel(), resolved.excludedSubLevelIds(),
+                        resolved.includeTaggedTransparentBlocks(), initialContactAllowance)
+                        : SubLevelParticleOcclusion.findSweptBoundsBlockingDistance(
                         query.rootLevel(), null, query.start(), delta, distance, bounds,
                         resolved.includeRootLevel(), resolved.excludedSubLevelIds(), resolved.includeTaggedTransparentBlocks());
                 return clearance + EPSILON >= distance ? Traversal.clear(query.mode()) : Traversal.blocked();
@@ -916,6 +958,100 @@ public final class SablePathfinder {
                 return Traversal.unavailable();
             }
         };
+    }
+
+    // Create a retained, exact hull policy whose block work is shared across the fleet.
+    public static Validator budgetedCompoundCollisionValidator(CollisionOptions options,
+            java.util.function.Function<Query, List<AABB>> boundsAtStart, double initialContactAllowance,
+            CollisionBudget budget){
+        return new BudgetedCompoundValidator(options == null ? CollisionOptions.DEFAULT : options,
+                boundsAtStart, Math.max(0.0D, initialContactAllowance), Objects.requireNonNull(budget));
+    }
+
+    // Limit actual block visits and elapsed scan work rather than only counting A* nodes.
+    public static final class CollisionBudget{
+        private final int blocksPerTick;
+        private final long nanosPerTick;
+        private final Map<Level, ScanAllowance> levels = new java.util.WeakHashMap<>();
+        public CollisionBudget(int blocksPerTick, long nanosPerTick){
+            this.blocksPerTick = Math.max(1, blocksPerTick);
+            this.nanosPerTick = Math.max(1L, nanosPerTick);
+        }
+        private void release(Object owner){
+            for(ScanAllowance allowance : levels.values()){ allowance.visited.remove(owner); allowance.worked.remove(owner); }
+        }
+        private ScanAllowance allowance(Level level, Object owner){
+            ScanAllowance val = levels.computeIfAbsent(level, ignored -> new ScanAllowance());
+            long tick = level.getGameTime();
+            if(val.tick != tick){ val.tick = tick; val.blocks = blocksPerTick; val.nanos = nanosPerTick; }
+            val.visited.put(owner, tick);
+            val.visited.entrySet().removeIf(entry -> tick - entry.getValue() > 40);
+            long previous = val.worked.getOrDefault(owner, Long.MIN_VALUE);
+            for(Object other : val.visited.keySet()){
+                if(val.worked.getOrDefault(other, Long.MIN_VALUE) < previous) return null;
+            }
+            if(val.blocks <= 0 || val.nanos <= 0) return null;
+            val.worked.put(owner, tick);
+            return val;
+        }
+    }
+
+    private static final class ScanAllowance{
+        private long tick = Long.MIN_VALUE;
+        private int blocks;
+        private long nanos;
+        private final Map<Object, Long> visited = new java.util.WeakHashMap<>();
+        private final Map<Object, Long> worked = new java.util.WeakHashMap<>();
+    }
+
+    private static final class BudgetedCompoundValidator implements Validator{
+        private final CollisionOptions options;
+        private final java.util.function.Function<Query, List<AABB>> bounds;
+        private final double contactAllowance;
+        private final CollisionBudget budget;
+        private final Map<Query, SubLevelParticleOcclusion.SweptBoundsScan> scans = new java.util.LinkedHashMap<>();
+        private final Map<Query, Traversal> results = new java.util.LinkedHashMap<>();
+        private BudgetedCompoundValidator(CollisionOptions options, java.util.function.Function<Query, List<AABB>> bounds,
+                                          double contactAllowance, CollisionBudget budget){
+            this.options = options; this.bounds = bounds; this.contactAllowance = contactAllowance; this.budget = budget;
+        }
+        @Override public boolean incremental(){ return true; }
+        @Override public void release(){ budget.release(this); scans.clear(); results.clear(); }
+        @Override public Traversal validate(Query query){
+            if(query == null || query.rootLevel() == null || bounds == null) return Traversal.unavailable();
+            Traversal ready = results.get(query);
+            if(ready != null) return ready;
+            ScanAllowance allowance = budget.allowance(query.rootLevel(), this);
+            if(allowance == null) return Traversal.pending();
+            long started = System.nanoTime();
+            int work = Math.min(4096, allowance.blocks);
+            allowance.blocks -= work;
+            try{
+                SubLevelParticleOcclusion.SweptBoundsScan scan = scans.get(query);
+                if(scan == null){
+                    List<AABB> boxes = bounds.apply(query);
+                    if(boxes == null || boxes.isEmpty()) return Traversal.unavailable();
+                    Vec3 delta = query.end().subtract(query.start());
+                    AABB swept = null;
+                    for(AABB box : boxes){ AABB part = box.minmax(box.move(delta)); swept = swept == null ? part : swept.minmax(part); }
+                    if(options.includeRootLevel() && !rootLoaded(query.rootLevel(), swept)
+                            || !loaded(query.rootLevel(), query.start(), query.end(), query.safety(), swept,
+                            options.excludedSubLevelIds())) return Traversal.unavailable();
+                    scan = SubLevelParticleOcclusion.beginSweptBoundsBlockingDistanceScan(query.rootLevel(), null,
+                            query.start(), delta, delta.length(), boxes, options.includeRootLevel(),
+                            options.excludedSubLevelIds(), options.includeTaggedTransparentBlocks(), contactAllowance);
+                    scans.put(query, scan);
+                }
+                if(!scan.advance(work, Math.max(1L, allowance.nanos - (System.nanoTime() - started)))) return Traversal.pending();
+                Traversal result = scan.result() + EPSILON >= query.start().distanceTo(query.end())
+                        ? Traversal.clear(query.mode()) : Traversal.blocked();
+                scans.remove(query);
+                if(results.size() >= 256) results.remove(results.keySet().iterator().next());
+                results.put(query, result);
+                return result;
+            }catch(RuntimeException | LinkageError err){ return Traversal.unavailable(); }
+            finally{ allowance.nanos -= System.nanoTime() - started; }
+        }
     }
 
     // Validate a segment through live Sable geometry and loaded chunks only
@@ -1062,6 +1198,7 @@ public final class SablePathfinder {
             if (traversal != null && traversal.result() == TraversalResult.CLEAR) {
                 return traversal;
             }
+            if(traversal != null && traversal.result() == TraversalResult.PENDING) return traversal;
             if (traversal != null && traversal.result() == TraversalResult.UNAVAILABLE) {
                 unavailable = traversal;
             }
@@ -1098,7 +1235,10 @@ public final class SablePathfinder {
         if (route.isEmpty() || route.getLast().position().distanceToSqr(target) > EPSILON) {
             route.add(new Waypoint(target, mode));
         }
-        return new Result(Outcome.COMPLETE, simplifyCompletedRoute(request, route), expanded);
+        // Every emitted grid edge is already validated. Incremental completion must not
+        // start another synchronous batch of optional cosmetic shortcut sweeps.
+        return new Result(Outcome.COMPLETE, request.validator().incremental()
+                ? List.copyOf(route) : simplifyCompletedRoute(request, route), expanded);
     }
 
     // Build the safe path to a previously validated grid node without changing its path geometry.
@@ -1959,6 +2099,11 @@ public final class SablePathfinder {
     public interface Validator {
         // Validate one full envelope sweep without changing world state
         Traversal validate(Query query);
+
+        // Incremental policies may yield a pending decision until the next work allowance.
+        default boolean incremental(){ return false; }
+
+        default void release(){}
     }
 
     // Store data supplied to one traversal policy
@@ -1990,6 +2135,8 @@ public final class SablePathfinder {
             return new Traversal(TraversalResult.BLOCKED, null);
         }
 
+        public static Traversal pending(){ return new Traversal(TraversalResult.PENDING, null); }
+
         // Create an unavailable result
         public static Traversal unavailable() {
             return new Traversal(TraversalResult.UNAVAILABLE, null);
@@ -2000,7 +2147,8 @@ public final class SablePathfinder {
     public enum TraversalResult {
         CLEAR,
         BLOCKED,
-        UNAVAILABLE
+        UNAVAILABLE,
+        PENDING
     }
 
     // Configure the built-in Sable collision validator
@@ -2053,6 +2201,11 @@ public final class SablePathfinder {
     // Retain a route search so a caller can spread a complete plan across server ticks.
     public static final class QueuedPlan {
         private final Request request;
+        // Reserve expansion work for finer grids when a spatial opening falls between coarse nodes
+        private final double minimumNodeSpacing;
+        private final int remainingRefinements;
+        private final int expansionLimit;
+        private @Nullable QueuedPlan refinement;
         private final @Nullable Vec3 origin;
         private final @Nullable Vec3 target;
         private final @Nullable State initial;
@@ -2065,13 +2218,24 @@ public final class SablePathfinder {
         private List<DebugSegment> debugCheckedSegments = List.of();
         private @Nullable State nearest;
         private boolean unavailable;
+        private @Nullable Entry pendingEntry;
+        private int nextCandidate;
+        private boolean terminalChecked;
         private int expanded;
         private boolean finished;
         private Result result;
 
         // Initialize a queued plan from one stable pair of resolved endpoints.
         private QueuedPlan(Request request) {
+            this(request, request.nodeSpacing(), 0);
+        }
+
+        // Retain one resolution stage and its share of the remaining search work
+        private QueuedPlan(Request request, double minimumNodeSpacing, int remainingRefinements){
             this.request = request;
+            this.minimumNodeSpacing = minimumNodeSpacing;
+            this.remainingRefinements = remainingRefinements;
+            expansionLimit = Math.max(1, request.maximumExpansions() / (remainingRefinements + 1));
             Vec3 start = request.start().resolve(request.rootLevel());
             origin = start;
             target = request.target().resolve(request.rootLevel());
@@ -2082,7 +2246,7 @@ public final class SablePathfinder {
                 finished = true;
                 return;
             }
-            if (start.distanceToSqr(target) <= request.captureRadius() * request.captureRadius()) {
+            if (!request.validator().incremental() && start.distanceToSqr(target) <= request.captureRadius() * request.captureRadius()) {
                 initial = null;
                 Traversal terminal = traverse(request, start, target);
                 recordCheckedSegment(start, target, terminal);
@@ -2098,7 +2262,7 @@ public final class SablePathfinder {
             Vec3 directHeading = normalize(directDelta,
                     request.preferences().initialHeading(start, target));
             double directForwardDistance = request.preferences().forwardProgress(directDelta);
-            if (request.preferences().acceptsTerminal(directHeading, directForwardDistance,
+            if (!request.validator().incremental() && request.preferences().acceptsTerminal(directHeading, directForwardDistance,
                     start, target, request.captureRadius())) {
                 Traversal terminal = traverse(request, start, target);
                 recordCheckedSegment(start, target, terminal);
@@ -2121,14 +2285,22 @@ public final class SablePathfinder {
         // Advance the search by no more than the supplied node-expansion budget.
         public void advance(int maximumAdditionalExpansions) {
             if (finished) return;
+            if(refinement != null){
+                refinement.advance(maximumAdditionalExpansions);
+                updateRefinementResult();
+                return;
+            }
             int budget = Math.max(1, maximumAdditionalExpansions);
-            int limit = Math.min(request.maximumExpansions(), expanded + budget);
-            while (!frontier.isEmpty() && expanded < limit) {
-                Entry entry = frontier.poll();
-                expanded++;
+            int limit = Math.min(expansionLimit, expanded + budget);
+            while ((pendingEntry != null || !frontier.isEmpty()) && (pendingEntry != null || expanded < limit)) {
+                Entry entry = pendingEntry == null ? frontier.poll() : pendingEntry;
                 State current = states.get(entry.node());
-                if (current == null || entry.cost() > current.cost() + EPSILON || !closed.add(entry.node())) {
-                    continue;
+                if(pendingEntry == null){
+                    expanded++;
+                    if(current == null || entry.cost() > current.cost() + EPSILON || !closed.add(entry.node())) continue;
+                    pendingEntry = entry;
+                    nextCandidate = 0;
+                    terminalChecked = false;
                 }
                 if (nearest == null || target == null) {
                     finish(Result.unavailable());
@@ -2138,9 +2310,13 @@ public final class SablePathfinder {
                         < nearest.position().distanceToSqr(target)) {
                     nearest = current;
                 }
-                if (request.preferences().acceptsTerminal(current.heading(), current.forwardDistance(),
+                // Long destination shortcuts are optional; nearby grid edges still receive exact validation.
+                boolean shortcut = current == initial || expanded >= expansionLimit || (expanded & 7) == 0
+                        || current.position().distanceToSqr(target) <= request.nodeSpacing() * request.nodeSpacing() * 4.0D;
+                if (!terminalChecked && shortcut && request.preferences().acceptsTerminal(current.heading(), current.forwardDistance(),
                         current.position(), target, request.captureRadius())) {
                     Traversal terminal = traverse(request, current.position(), target);
+                    if(terminal.result() == TraversalResult.PENDING){ result = partialResult(); return; }
                     recordCheckedSegment(current.position(), target, terminal);
                     if (terminal.result() == TraversalResult.CLEAR) {
                         finish(complete(request, current, target, terminal.mode(), expanded));
@@ -2148,13 +2324,23 @@ public final class SablePathfinder {
                     }
                     unavailable |= terminal.result() == TraversalResult.UNAVAILABLE;
                 }
-                expand(entry, current);
+                terminalChecked = true;
+                if(!expand(entry, current)){ result = partialResult(); return; }
+                pendingEntry = null;
             }
-            if (frontier.isEmpty() || expanded >= request.maximumExpansions()) {
+            if (frontier.isEmpty() || expanded >= expansionLimit) {
                 finish(partialResult());
             } else {
                 result = partialResult();
             }
+        }
+
+        // Release retained scan work when a caller discards this route.
+        public void cancel(){
+            if(refinement != null) refinement.cancel();
+            request.validator().release();
+            pendingEntry = null;
+            finished = true;
         }
 
         // Check whether no further planner work remains.
@@ -2172,18 +2358,20 @@ public final class SablePathfinder {
             Vec3 debugOrigin = origin == null ? Vec3.ZERO : origin;
             Vec3 debugTarget = target == null ? debugOrigin : target;
             return new DebugRoute(id, debugOrigin, debugTarget,
-                    result.waypoints(), result.outcome(), debugCheckedSegments);
+                    result.waypoints(), result.outcome(), refinement == null
+                    ? debugCheckedSegments : refinement.debugRoute(id).checkedSegments());
         }
 
         // Get work completed against the caller-selected bounded search budget.
         public double progress() {
             return finished ? 1.0D : Math.min(0.999D,
-                    expanded / (double) request.maximumExpansions());
+                    result.expandedNodes() / (double) request.maximumExpansions());
         }
 
         // Add every valid successor of one accepted search state.
-        private void expand(Entry entry, State current) {
-            for (Candidate candidate : candidateMoves) {
+        private boolean expand(Entry entry, State current) {
+            for (; nextCandidate < candidateMoves.size(); nextCandidate++) {
+                Candidate candidate = candidateMoves.get(nextCandidate);
                 Vec3 nextPosition = current.position().add(candidate.step().offset()
                         .scale(request.nodeSpacing()));
                 Vec3 travelDirection = normalize(nextPosition.subtract(current.position()),
@@ -2208,6 +2396,7 @@ public final class SablePathfinder {
                 Traversal traversal = request.validator().validate(new Query(
                         request.rootLevel(), current.position(), nextPosition,
                         request.safety(), candidate.mode()));
+                if(traversal != null && traversal.result() == TraversalResult.PENDING) return false;
                 recordCheckedSegment(current.position(), nextPosition, traversal);
                 if (traversal == null || traversal.result() != TraversalResult.CLEAR) {
                     unavailable |= traversal != null && traversal.result() == TraversalResult.UNAVAILABLE;
@@ -2218,6 +2407,7 @@ public final class SablePathfinder {
                 states.put(next, accepted);
                 frontier.add(new Entry(next, cost, cost + heuristic(request, nextPosition, target)));
             }
+            return true;
         }
 
         // Build the latest valid partial path without marking an arrival.
@@ -2237,7 +2427,31 @@ public final class SablePathfinder {
             // cache renders as its accepted route alone.
             recentCheckedSegments.clear();
             debugCheckedSegments = List.of();
+            if(!result.reachedDestination() && initial != null && remainingRefinements > 0
+                    && expanded < request.maximumExpansions()){
+                Request next = new Request(request.rootLevel(), Location.world(origin), Location.world(target),
+                        request.safety(), request.movement(), Math.max(minimumNodeSpacing, request.nodeSpacing() * 0.5D),
+                        request.maximumRange(), request.maximumExpansions() - expanded,
+                        request.captureRadius(), request.validator(), request.preferences());
+                states.clear();
+                closed.clear();
+                frontier.clear();
+                nearest = null;
+                refinement = new QueuedPlan(next, minimumNodeSpacing, remainingRefinements - 1);
+                updateRefinementResult();
+                return;
+            }
             finished = true;
+            request.validator().release();
+        }
+
+        // Keep a validated coarse prefix available until a finer search finds its own safe route
+        private void updateRefinementResult(){
+            Result next = refinement.result();
+            List<Waypoint> route = !refinement.finished() && next.waypoints().isEmpty()
+                    ? result.waypoints() : next.waypoints();
+            result = new Result(next.outcome(), route, expanded + next.expandedNodes());
+            finished = refinement.finished();
         }
 
         // Retain a small rolling diagnostic sample without turning planner telemetry into retained world state.

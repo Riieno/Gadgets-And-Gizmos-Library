@@ -1223,3 +1223,755 @@ Capture hosts call the additive `ViewSource.viewPose(partialTick, aspect)` overl
 `ViewControlLayout.targetLock` supplies a separate button region, with the previous layout constructors retained. `ViewControlPanel` draws an open/closed padlock and sends only the target-lock command when it is clicked. Projected displays and tablet controls consume this same library control surface and their existing command transport.
 
 The addon defaults Camera tracking to dynamic acquisition on every fresh ray-sampling tick. `LockTarget` on the Camera node and the display/tablet padlock retain the current target until it becomes unavailable or out of range. An unlocked Camera selects the nearest fresh ray/cone detection; between samples it follows the retained identity. The graph default and explicit UI override persist independently and old saved nodes gain a false default without replacing an existing value or label.
+
+# Assembly targeting and schematic APIs (2026-10-12)
+
+This addition documents the APIs introduced by the fresh assembly/targeting discovery pass. Existing documentation was not used to prepare it.
+
+## Assembly lifecycle
+
+`SableSubLevelLifecycleApi.transfer(ServerLevel, ServerSubLevel, Runnable)` retains a source plot while a block/tracking-point transfer runs. Native bounds removal and zero-mass plot destruction are deferred during the scope. Nested calls balance correctly, including exceptions. The native bounds callback runs when the outermost scope ends. Call only on the owning server thread and outside a physics step.
+
+`isTransferring(ServerSubLevel)` lets lifecycle hooks recognize an unfinished transfer. `removeEmpty(ServerLevel, ServerSubLevel)` removes an owned, loaded body only when every loaded chunk is empty. Existing `remove` unloads all selected plots before removing their bodies, so block-entity callbacks can still resolve other bodies in the selection.
+
+## Preview geometry and connected bodies
+
+`SubLevelConnectionApi.connectedBodyIds(Level, Collection<UUID>)` expands live roots through native actor connection chains on client or server. Results are deduplicated and sorted; removed or unavailable bodies are excluded.
+
+`SubLevelPreviewRenderer.setConnectedBodies(UUID, Collection<UUID>)` adds connected child bodies before configuring the preview. Existing `setBodies` remains available for explicit lists. Consumers provide content-specific visibility predicates; those predicates also govern picking.
+
+`SableTransformApi.relativeBlockOrigin(Pose3dc source, Pose3dc reference, BlockPos referenceOrigin, BlockPos pos)` transforms the block center through both frames and returns the origin needed for center-based model rotation. It retains double precision until the client renderer converts the result.
+
+Detached preview snapshots retain child orientation for rendering and picking. Mutable quaternion accessors return copies.
+
+## Body telemetry
+
+`SablePhysicsTelemetry.sample(Level, UUID)` returns a body snapshot cached for one game tick. Sampling does not require a block entity at a diagram or target anchor. An unavailable/removed body returns `Snapshot.available() == false`.
+
+`Snapshot` exposes mass, inverse mass, inertia, local/world center of mass, pose, linear/angular velocity, total local/world force and torque, and individual `ForceSample` values. Vector, matrix and quaternion values are copied at construction and access. Recorded impulses are divided by the physics substep duration; gravity is included at the center of mass. Optional velocity or force failures leave the remaining body data available.
+
+## Portable schematic connections
+
+`SchematicConnectionData.BodyFrame` describes source/template body IDs, source bounds and an optional shared world-space export origin. The four-argument constructor defaults the world origin to zero. `reference` encodes internal endpoints; its owning-source overload disambiguates imported bodies with overlapping local coordinates. `resolve` maps a portable endpoint to its fresh destination plot.
+
+`capture` supplements normal safe block data with portable connections. `restore` runs after every schematic endpoint exists. The placement overload receives target position and rotation for world spline geometry. Built-in adapters handle Create chains and belts.
+
+`SchematicLinkData.register(ResourceLocation, Predicate<BlockEntity>, Schema)` adds an integration-owned schema. Duplicate IDs are rejected. Register once during common setup under the consuming integration's namespace. Optional mod predicates can use `OptionalTypeMatcher` without loading optional classes.
+
+A `Schema` declares:
+
+- `keys`: permitted top-level connection configuration.
+- `references`: paths to endpoint-containing compounds, including paths through compound lists.
+- `identityKeys`: UUID fields to replace consistently across related endpoints on export and each placement.
+- `worldPointLists`: geometry translated relative to the shared export origin, then rotated/translated during placement.
+- `detachedKeys`: runtime objects omitted when creating detached export/material models.
+- `fieldPaths`: selected nested fields, overlaid without copying other fields in the same persistent-state container.
+
+The two-argument and five-argument constructors remain convenient for endpoint-only and complete-field schemas. All schema collections are copied.
+
+`Reference(path, positionKey, subLevelKey, PositionFormat)` declares each saved endpoint's encoding. Formats are packed `LONG`, `BLOCK_POS`, `VECTOR`, `RELATIVE_VECTOR`, or body-only `BODY`. An empty position key selects inline vector coordinates. Compound vectors with `V`, XYZ compounds, coordinate arrays and vector lists preserve their input encoding. Fractional coordinates remain intact. Body IDs support native UUID tags and string UUIDs.
+
+Endpoints outside exported bounds are discarded; incomplete nested connection entries are pruned before upstream readers receive them. The pipeline preserves existing portable descriptors during repeat sanitizing. Restoring clears the native schematic context while loading already-mapped coordinates, then restores the caller's context.
+
+These schemas supplement safe configuration only. Integrations must not declare inventory, stored energy or running network data as connection configuration.
+
+`SubLevelSchematicFiles.displayName(String)` returns the basename without a supported schematic extension. Catalogue IDs and paths stay unchanged.
+
+## Remote client models and control
+
+`ClientBlockEntitySnapshots<B>.resolve(Level, UUID, BlockPos, Supplier<B>)` retains a detached client block entity keyed by body and block position. It clears when the client level changes; call `clear()` on disconnect. Consumers supply authorized server snapshots and apply their own runtime data. The cache grants no server permissions.
+
+`DistanceIndependentLink` marks a Create `IRedstoneLinkable` endpoint whose signal range should be independent of separation. The library's range mixin bypasses only Create's distance comparison when either endpoint opts in. Existing frequency registration and world/network separation still apply.
+
+## Validation
+
+New regression tests cover rotated preview origins, portable endpoint mappings, repeated sanitizing, paired spline identities, fractional geometry, nested state overlays, dropped external links and exceptional nested transfer cleanup. Veil is available on the unit-test runtime classpath because native Sable body signatures reference its packet API.
+
+Headless Minecraft validation: all five required game tests passed against NeoForge 21.1.228, including real chain/belt safe export and placement, anchorless native mass/gravity telemetry, final-block transfer protection and empty-plot cleanup. Both repositories now target the NeoForge minimum required by installed Sable and Simulated dependencies. Both clean builds passed with 164 library and 17 addon unit tests. Visual previews, remote multiplayer behavior and optional-mod spline formats still need interactive world checks.
+
+# Live schematic capture and compatible browsing (2026-10-12)
+
+`SubLevelSchematicCapture.capture(ServerPlayer, UUID, double range, int maximumBodies, int maximumBlocks)` copies a loaded connected world assembly directly into a portable template. It reads the actual live block entities and their safe configuration; it never calls storage, extraction, allocation, block placement or removal. The original body IDs, plot addresses, block entities, links and stored contents remain in the world. Each export receives fresh template body IDs. Existing portable connection capture and retained weld mapping apply to the copied assembly.
+
+Call capture on the owning server game thread, outside a physics step. All connected bodies must be loaded, within the specified range, accessible through world protection and allowed by the ship STORE permission. Construction in progress, moving Create contraptions, unavailable chunks/block entities and exceeded size limits reject capture without removing the source.
+
+`SchematicCatalogue.catalogue(Path, String idPrefix, HolderGetter<Block>, int maximumBodies, int maximumBlocks)` returns only files that the real block schematic decoder accepts. Malformed, empty, unsupported-version, entity-containing and over-limit files are omitted before browser lists are built. `Entry` exposes the unchanged file identity alongside its detected `SubLevelSchematic.Format`. A bounded metadata cache revalidates files when their size, modification time, registry or limits change; it retains no decoded block data.
+
+`ClientSchematicFiles.catalogue(int maximumBodies, int maximumBlocks)` applies the connected server limits to private client folders before returning entries. Private names stay on the client until a selected file is uploaded. Client entries now expose their validated format; the previous four-argument Entry constructor remains available for native files.
+
+`TabletMultiSelectDropdown` provides a compact reusable checklist dropdown for tablet apps. Supply stable Option IDs and labels, call render after other content, route mouseClicked before underlying controls, and consume keyPressed before the host handles Escape. All options start selected; selectedIds returns an immutable set. close releases page-specific hit areas. It supports normal screen clicks and projected tablet right-click interaction.
+
+Digisable consumes these surfaces for world copying through Reader mode, source-format filters and compatible shared/private lists. Its search bar uses the existing TabletAppPanel inline input. Saving now belongs to the Schematics tab and is independent of the stored-archive workflow.
+
+Regression coverage includes malformed/incompatible catalogue entries, content-based Photomancy recognition, file and limit invalidation, and a Minecraft live capture test that exports twice while preserving source body/block-entity identity, chest contents and chain links.
+
+Live export and import share `SubLevelSchematicFiles.MAXIMUM_BODY_SIDE` (512 blocks), so capture rejects an oversized body before creating a file that the browser cannot decode. Capture clears an enclosing native schematic context while reading source NBT, then restores it after success or failure.
+
+## Contact-aware hull clearance
+
+`SubLevelParticleOcclusion.findEnvelopeBlockingDistance`, `findSubLevelEnvelopeBlockingDistance`, `findAirOnlyBoundsBlockingDistance`, `findSweptBoundsBlockingDistance`, and `beginSweptBoundsBlockingDistanceScan` have additive overloads accepting a final `double initialContactAllowance` argument. Supply only the uniform padding already included in every moving hull bound. Existing overloads retain their strict behavior.
+
+The contact-aware overloads retain the original physical hull separately from its padded envelope. An obstacle already touching that padding permits parallel or outward translation only while an axis continues to separate the physical bodies. Inward motion, physical overlap, and newly encountered obstacles remain blocked. Short departures need not leave the whole padding envelope in one tick. Padding still applies to every later collision. Invalid, non-positive, or excessive allowances fall back to strict contact handling. Exact scans transform the physical and padded bounds independently into each SubLevel's local frame.
+
+`SablePathfinder.compoundCollisionValidator(options, boundsAtStart, initialContactAllowance)` applies the same policy to complete loaded route segments. Keep world queries and control mutation on the owning server thread. Excluded body IDs, loaded-chunk validation, and incremental scan budgets retain their existing ownership rules.
+
+`ReactiveCollisionAvoidance.retainForwardPreference(requested, escapeActive)` suspends a preferred forward heading throughout a live escape or committed bypass. Restore the preference after the bypass has completed; projecting escape force onto the old heading can remove all sideways propulsion.
+
+The SCM consumer supplies its existing hull padding to live clearance, exact safety scans, and route validation. A local obstacle bypass also takes over an already queued destination search, retains its own validation progress, and preserves the authored schedule spline and destination.
+
+Final validation for live schematic capture and browsing: both isolated clean builds passed with 176 library and 18 addon unit tests. All eight headless Minecraft tests passed, including repeated source-preserving capture and rejection at the configured block limit. Reader and browser UI behavior still requires interactive client verification.
+World-space separation is checked before a rotated SubLevel local AABB can enlarge the hull. A body is skipped only when its whole world envelope proves that the padded sweep cannot enter it, or when initial padding contact preserves physical separation throughout the segment.
+
+## Refined spatial navigation and short bends
+
+`SablePathfinder.queueRefining(Request, double minimumNodeSpacing)` returns the existing `QueuedPlan` surface. For requests whose movement modes are all spatial, unsuccessful searches halve their grid spacing toward the supplied minimum, for at most eight refinements. Every stage shares the original maximum expansion allowance; `advance` remains bounded by its supplied node budget, `result().expandedNodes()` includes all stages, and endpoints retain their originally resolved world coordinates. Accepted coarse prefixes remain available while a finer search prepares a replacement. Every candidate leg still uses the caller's validator; refinement does not reduce the hull or permit unloaded geometry. Existing `queue(Request)` behavior is preserved.
+
+`ObstacleDetourPlanner` now also checks offsets smaller than the requested horizontal and vertical clearance scale. This permits a complete over/under pass inside a low tunnel when larger offsets hit its walls or ceiling. The host must continue validating every swept hull leg and its translation authority. Opposing participants can choose complementary vertical passes as well as complementary horizontal passes.
+
+`SablePathfinder.advanceWaypointProgress(waypoints, nextWaypointIndex, previousPosition, currentPosition, captureRadius)` advances only ordered waypoints reached by the actual control-point movement segment. Use it for short spatial bends which a large hull can overlap before completing the required climb or descent. The list is not mutated; the returned `WaypointAdvance` retains the existing cursor contract.
+
+The Airship SCM consumer enables refinement down to its collision padding, allows initial pure ascent/descent without a forward commitment, and applies its live translation authority to every searched leg. Live Airship routes and temporary schedule bypasses capture bends by control-point progress, approach them at a stopping speed, and use a matching local control tolerance. Reactive emergency escapes retain their independent motion authority. Ground/sea and plane search policies retain their existing forward commitment.
+
+
+## Schematic producer identity and live capture
+
+- `SubLevelSchematicFiles.encode(schematic, source)` and `save(server, name, schematic, source)` add the caller's ResourceLocation to the root `gadgetsngizmos:source` string. Existing overloads preserve unmarked exports.
+- `readTag(bytes)` uses the existing compressed/raw NBT size and allocation limits.
+- `SchematicProvenance.source(tag, format)` recognizes Photomancy and Toolgun coordinate formats, then requires an explicit producer tag for native structures. Missing or invalid producer tags return `UNKNOWN`.
+- `SchematicCatalogue.Entry.source()` and `ClientSchematicFiles.Entry.source()` retain provenance separately from import format. Existing constructors remain available. A native structure layout alone does not identify its producer.
+- `SubLevelBlockEntityCollector.getOrCreateBlockEntity(body, pos)` resolves an existing actor first, then promotes pending configuration or initializes the entity inside an already loaded plot chunk on the owning server thread. It does not load source chunks or create detached copies.
+- `SubLevelSchematicCapture.capture(level, rootId, maximumBodies, maximumBlocks, validate)` lets trusted server consumers check access to every physically connected source body. The player overload retains range, permission and protection checks.
+
+## Physical collision ownership and proximity escape
+
+- `SablePhysicalConnectionApi.track(first, second, handle)` registers live body-to-body constraints. The native Rapier integration records attachments including stickers. World anchors are excluded.
+- `connectedBodyIds(level, roots)` expands collision ownership through valid handles without changing SCM control-map partitions. `revision(level)` changes when attachments are added, removed or invalidated; dimension unload releases retained handles.
+- `ReactiveCollisionAvoidance.proximityHazard(bounds, velocity, obstacles, clearance, responseSeconds)` detects nearby or approaching bodies independently of requested motion. `resolveProximity(hazard, candidates)` prefers directions which increase separation and can use available vertical clearance.
+- `SubLevelParticleOcclusion.findSubLevelProximityHazard(...)` supplies current native plot poses and velocities to that selector. Collision queries merge the authoritative container even when the spatial index is incomplete. Empty plots have no collision envelope.
+- `findAirOnlyDepartureBlockingDistance(...)` permits outward recovery from forced overlap with another body. Every overlapping compound-hull piece must permit departure, and separated pieces must avoid new contact. Terrain and unrelated bodies remain blocking. Existing strict sweep APIs preserve their contact policy.
+- `allowsOverlapDeparture(...)` exposes the geometric departure predicate for other collision adapters.
+
+## Text confirmation transitions
+
+`TextInputScreen.confirm()` returns to the parent before invoking the acceptance callback. A callback may then close the tablet for reader mode or open another screen without the dialog restoring its parent afterward. Cancel still returns to the parent without invoking confirmation.
+
+## Graph preview value sampling
+
+`GraphValueMirrors.sample(live, key, authoritative, fallback)` reads a retained value when the host marks its key authoritative. Otherwise it evaluates the supplied fallback once. Zero, false and structured values are preserved without conversion; authoritative values skip fallback evaluation. The method does not modify either source.
+
+Graph hosts can use this API to retain execution-owned outputs during read-only observer sampling while reevaluating ordinary data expressions. Gadgets & Gizmos uses it for graph previews and live variable lookup. Preview compilation stays separate from the running program; sampling does not reinitialize its events or reconcile its retained ports.
+
+## Editor preview snapshots and state isolation
+
+`GraphPreviewPlan.compile(source, draft, sameNode)` identifies nodes whose runtime configuration and incoming wiring still match the source graph. `unchanged(nodeId)` excludes changed nodes and all data or execution consumers, including cycles and removed sources. Hosts supply a comparison that ignores editor position, labels and presentation metadata.
+
+`GraphEvaluationState<V>` wraps the host's state map. `snapshot(copy)` creates private state using the supplied value copier. `evaluate(values, sample)` directs reads and writes into that private map and restores the enclosing scope on completion or failure. `evaluating()` identifies that scope. These operations run on the host's owning thread. Hosts may retain private maps across editor samples without modifying authoritative runtime or personal state.
+
+The addon now transmits complete typed port values and observer-scoped variables, separately from truncated display summaries. Both editor input and output calculations use the same seeded evaluation frame. Layout edits preserve live values; semantic edits invalidate affected snapshots. Stateful calculations and library callbacks write to isolated preview state, and preview callbacks cannot access mutable block entity services. Controller packet encoding now includes a compressed snapshot, so clients and servers must use matching addon versions.
+
+The addon's existing `AdvancedGraphDocument.Value.toTag()` and `Value.fromTag()` adapters are public so the controller transport can preserve exact value types and payloads. Existing serialized keys and saved graph formats are unchanged. Editor snapshots are matched against the applied graph, separately from unsaved graph or layout changes.
+
+
+## Collision query performance and physics frames
+
+- `SableAssemblyHullApi.worldBounds(body)` returns an immutable world envelope cached on the calling thread. It compares occupied plot coordinates and all pose components on every access, so same-tick translation, rotation, pivot, scale and block edits are visible immediately. Empty and removed bodies remain absent.
+- Assembly snapshots reuse these world envelopes and retain independent root-frame bounds for articulated shape changes.
+- `findSubLevelProximityHazard(..., ProbeCache)` shares body identities with directional probes while reading live poses and velocities. Cache membership refreshes when bodies are added or removed, including same-size replacement. Connected-body exclusions are applied before envelope transforms.
+- Air-only collision queries resolve other-body envelopes first, then limit terrain probes to the nearest possible hit. Strict shape sweeps, terrain policy, compound hulls and contact allowances are unchanged.
+- `ReactiveCollisionAvoidance.resolveProximity(hazard, directions, probe)` returns `ProximityEscape(response, clearance)` and stops probing only when directly outward motion achieves the greatest possible score. Constrained departures retain the full alternative search, including over and under paths.
+- `SablePhysicalConnectionApi` polls native handle validity once per game/physics frame and caches connected components until membership changes. `invalidate(level)` requests validation after the next published physics state. Native physics ticks invoke it automatically.
+- `untrack(handle)` and `untrack(body)` remove ownership immediately. Rapier handle removal and body removal invoke these methods, so a detached body does not remain excluded until a polling timer expires. Custom physics integrations can use the same callbacks.
+- Block and world reads still run on the owning game thread; cache invalidation observes completed physics frames without moving those reads into native simulation.
+
+### World schematic capture with optional block entities
+
+`SubLevelSchematicCapture.capture(...)` retains block states whose block entity factory intentionally returns null, including plain Create tracks. Pending entities are still resolved through the loaded plot lookup before capturing safe configuration. Capturing remains a copy operation and preserves source blocks, entities, inventories and connections.
+
+### Player schematic directory
+
+`ClientSchematicFiles.directory()` returns the current client's game-directory `schematics` folder. `ClientSchematicFiles.openDirectory()` creates that folder when necessary and opens it through Minecraft's operating-system integration. Opening failures are exposed through the existing `status()` API. The folder is local to the player and independent of server/world schematic catalogues.
+
+## SCM collision authority
+
+`ScmCommandRouting.allowsCollisionAvoidance(commandType, requested, scheduleControlled, manualControlActive)` grants collision checking and avoidance only to `ship_navigate`, `ship_follow`, and `ship_climb` with `requested=true`. `ship_dock` also requires `scheduleControlled=true`. Manual control, hover, stabilization, and facing commands cannot acquire collision authority. `manualControlActive=true` suspends avoidance for every command.
+
+`ScmCommandRouting.isManualControl(commandType)` identifies direct translation, rotation, acceleration, deceleration, brake, and stop commands. Hosts should combine this classification with current command activity and external controller inputs. Hover and stabilization do not count as direct manual input, so they can support opted-in autonomous travel.
+
+The addon consumes this policy before path planning, reactive proximity checks, collision speed limiting, and schedule spline capture. It skips background schedule hazard scans during manual input. Idle and manual SCM ships no longer synthesize proximity escape commands. Climb to Y Level exposes an `avoid_collisions` boolean defaulting to false; enabled climbs retain their initial world column as the destination and can route laterally around blockers using the existing spatial navigation API. Existing serialized command keys remain unchanged.
+## Named docking workflow
+
+`NamedDockingOperation<T>` exposes a host-independent docking lifecycle. The host resolves an exact dock name, validates its current target, reserves a berth, navigates to its approach, engages docking, and reports physical connector lock. Completion requires a locked pair; an existing lock is adopted without navigation. The operation retains its reservation while complete, releases it on cancellation or failure, and stops failed docking attempts after the configured timeout. Cancellation preserves completed docking, while incomplete attempts and failures disconnect their endpoints. Host callbacks run on the owning game thread; no addon types are exposed by the library.
+
+`findNamed` performs a trimmed, case-insensitive exact-name lookup and selects the nearest valid match. Names are not wildcard expressions.
+
+The SCM `ship_dock` graph node now exposes `dock` (string) and `speed` instead of XYZ and orientation inputs. Its existing ID, success output, and completion wire remain. The addon resolves registered docks in the ship's current dimension, uses the shared berth scheduler, selects compatible ship and station connectors, and drives the SCM's existing approach and magnetic docking commands. Unknown names or unusable connectors are rejected. A valid named request pauses an active shipping schedule before taking over movement. Existing coordinate nodes retain their IDs and speed but need an explicit dock name; obsolete coordinate wiring is removed on load. The internal coordinate command remains available for shipping schedules.
+
+## Autonomous SCM avoidance and shared dock provisioning
+
+`ScmCommandRouting.allowsCollisionAvoidance(commandType, requested, manualControlActive)` now accepts Navigate, Follow, Climb and Dock commands. The four-argument overload remains compatible and delegates to the same policy; Dock commands no longer require a schedule-specific command id. `isActiveManualControl(commandType, amount, strength)` separates actual manual signals from zero inputs and retained Stop markers. Hosts should exclude their own autonomous support commands when resolving manual authority.
+
+`ShipDockScheduler.request(server, requester, candidates, occupied, owned, priority, vessel)` uses the Minecraft server tick for lease expiry. All clients of the same scheduler must use this clock, including clients in dimensions with different world times. Existing explicit-tick overloads remain available. `owned` means confirmed physical connector ownership; committing an approach does not confer physical ownership or allow displacement of another lease.
+
+`NamedDockingOperation.Host.waitForReservation(target)` is an additive default callback for maintaining a safe holding movement while a berth is provisioned to another vessel. Reservation loss during an unfinished docking attempt now returns to WAITING instead of abandoning the request. Completed operations still require a granted lease and a physical lock. Hosts must withdraw unfinished connector capture when entering their holding movement.
+
+The addon uses these APIs for both graph Dock At nodes and shipping schedules. Named requests offer all compatible connectors at docks with the exact requested name, retain a stable size-aware holding location outside approach corridors, and keep collision-enabled Follow active while queued. Schedule docking renews and rechecks its lease throughout capture, reports physical ownership only for a reciprocal connector pair, and preserves committed approach priority without claiming occupied connectors. Collision queries continue to exclude the own assembled hull and selected docking target, while other loaded ships remain visible during docking and world terrain remains blocking. Genuine manual inputs retain their avoidance override; schedule reset markers and support controls do not disable autonomous safety.
+Escape authority is evaluated in the actuator model's ship frame after converting the requested world direction. Optional attitude and altitude controllers no longer suppress all autonomous collision queries: the addon keeps their owned force and torque axes out of reactive movement and route validation while allowing avoidance along free axes. Direct manual SCM commands still bypass collision checks and override autonomous avoidance while actively driven.
+
+# Library API changes for stable feature integration
+
+## Dependency versions
+
+The addon and library have independent versions. Consumers use library_mod_version for the NeoForge dependency minimum and nested library metadata, and library_artifact_version to locate the built library jar. The shared feature API requires Minecraft 1.21.1, NeoForge 21.1.228 and Sable 2.0.3.
+
+## Graph snapshot compatibility
+
+GraphDocumentSnapshot includes scmActionFunctions, mapping public SCM action ids to graph function ids. The original constructor remains available and supplies an empty mapping. Hosts supporting action functions must serialize, validate and execute those bindings alongside their graph revision.
+
+## Physics Staff authorization
+
+PhysicsStaffInteractionGuard.TargetAuthorization is a server-side callback taking the player and target sublevel UUID. Register a provider with registerTargetAuthorization(ResourceLocation, TargetAuthorization) during addon initialization. Use the owning mod namespace; duplicate ids are rejected. Every registered provider must authorize the target. Initialization protection, ship permissions and target availability still apply. Optional-mod implementation classes stay in consuming addon adapters.
+
+## Shared feature APIs
+
+The stable library now exposes the existing experimental APIs for adaptive SCM state, control axes, speed and precision allocation, steering, articulated/IK control, ship permissions, native physical connections and telemetry. Navigation contracts provide hull geometry, collision and ground-support checks, route planning, splines and bounded work scheduling. View and client rendering contracts provide camera sessions, target tracking, scene capture, detached previews, projection and particle rendering. Inventory, archive, graph reconciliation and display helpers retain typed ownership and immutable snapshot contracts.
+
+Content ids, blocks, item registrations, network entry points, graph hosts, screens and compatibility adapters remain owned by the consuming addon. The stable addon does not register worker content or new tablet apps. Those optional library APIs remain available to other consumers.
+
+## Saved data
+
+Existing library method signatures and serialized ids are retained where possible. The car id remains an alias of Ground/Sea. Addon graph and SCM map migrations remain the host's responsibility. Missing or unloaded sublevels are normal unavailable states; all world mutation stays on the owning game thread.
+
+
+`ItemFoilRenderScope.overrideFor(Item)` returns a nullable per-item foil override on the current render thread. `withoutFoil(Item, Runnable)` scopes a draw call, restores nested overrides after exceptions, and does not affect other items or threads. Addon item implementations may consult the override before their ordinary foil policy.
+
+
+`ReadOnlyBooleanDataAdapter<T>` exposes one read-only `boolean` data port for a block entity type. Construct it with the target class, port ID, and a `Predicate<? super T>` that reads the current state; register it through `BlockEntityDataAdapterRegistry`. Each sample calls the probe again, and Set Data cannot write this port. Owning addons supply any external-mod access.
+
+
+## Exact energy probes and bulk-processing previews
+
+`lib.power.EnergyStorageProbe.findExact(Level, BlockPos)` finds a loaded block entity implementing `LongEnergyStorage` without loading chunks. `read(IEnergyStorage, LongEnergyStorage)` prefers exact FE totals and returns a `Reading(long stored, long capacity)`, retaining integer-capability fallback and zero values for unavailable storage.
+
+`lib.client.recipe.BulkProcessingLayout` exposes shared recipe-viewer dimensions, input/output slot positions and `render(GuiGraphics, int left, int top, BlockState)` for a static block preview. Addons supply their block state and recipe categories; the library creates no addon block entities or particle effects.
+
+
+## Inline graph group editing
+
+`lib.client.ui.GraphGroupHeader` provides zoom-aware title and eyedropper button rendering and hit bounds. Use `layout(x, y, width, scale, titleWidth)` for screen coordinates, then `render` and the layout's `titleContains` / `colorContains` methods. Empty header space remains available for dragging.
+
+`lib.client.ui.InlineTextEditor` edits text without replacing the screen. Supply a Font, accessible message, initial text, maximum length, accept callback, and cancel callback. Set screen bounds and scale before rendering or input. Route mouse click/drag/release, key, and character events while `isOpen()`. Enter or an outside click accepts; Escape cancels. An outside click returns false so the owner may handle it. Explicit `accept()` / `cancel()` are safe to call once on resize or close. The owner stores values and manages undo. Reuse `ColorPickerModal` for color preview, confirmation, and cancellation.
+
+
+## Scaled control previews
+
+`lib.client.ui.GuiControlPreviews` draws GUI previews in the host canvas coordinate space. `drawItemSlot(graphics, stack, x, y, color, renderStack, scale)` scales an 18-unit slot, its border and the inset 16-unit item together. `drawColorSwatch(graphics, x, y, color, scale)` scales a 14-unit swatch with its border and color inset. Coordinates are screen coordinates in the current pose; scale is the host canvas zoom. Use scale 1 for fixed-size inspector previews. Both methods restore the incoming pose, omit invalid/non-positive scales, and leave document data and host layout ownership with the consumer.
+
+
+## HUD control and progress styles
+
+`lib.display.HudStyleCatalog` exposes six `ControlStyle` looks (Material Filled/Outlined, Neumorphic Raised/Inset, Skeuomorphic Beveled/Glass), 14 `ProgressStyle` looks, stable IDs/labels, saved-style migration, switch/checkbox shape normalization, and safe range normalization with `amount`. Previous style IDs map to a new style and are absent from the designer options.
+
+`lib.client.ui.HudControlRenderer` renders controls through a generic `Canvas` quad callback. Supply a `Rect` and `Palette` with custom background, fill, gradient end, track and border colors, border width/radius in host units, and layout scale. `button`, `toggle`, and `progress` return the available label rectangle; `slider` draws its track and thumb. Text and interaction dispatch remain with the consumer. `gui(GuiGraphics)` and `textured(VertexConsumer, Matrix4f, depth, layerStep, light)` adapt GUI and world surfaces, respectively. Text should be drawn above geometry layers (GUI z +1, or the host's foreground text plane). Half-circle and ring styles retain their proportions inside the supplied rectangle. The `checkbox` argument selects a checkbox variant of all six toggle looks.
+
+## Graph control data and kinetic state writes
+
+`lib.control.BlockStateControlReceiver` lets a block entity handle writable `state_*` ports through `applyControlledBlockState(BlockState)`. `BlockStateDataAccess` invokes this contract before its default state update. The handler returns whether the update changed the world and must run on the owning server thread.
+
+`lib.kinetics.KineticBlockStateControl.apply(KineticBlockEntity, BlockState)` detaches the old kinetic network, publishes a same-block state with client synchronization, and immediately reattaches the network. It rejects client calls, removed targets and block replacements. This also works when scheduled block ticks are unavailable on moving sub-levels.
+
+`lib.probe.ScrollValueDataAdapter<T>` accepts a target class and a callback returning named Create `ScrollValueBehaviour` instances. Numeric ports use the behaviour's clamped setter and existing callbacks; enum ports expose lowercase option names. Writes require a live server-side target. `fieldBehaviours(BlockEntity)` supplies deterministic snake-case field IDs for existing behaviours and excludes single-option screen launchers. Consumers register adapters with `BlockEntityDataAdapterRegistry`; declared provider ports keep precedence. Inventory mutation ports remain excluded.
+
+The addon exposes vector-bearing `max_tilt` and `control_mode` writes, plus readable stabilization settings. The vector-bearing tilt range remains symmetric. Thruster and aileron bearings retain their existing minimum/maximum ports. Simulated directional gearshifts expose independent boolean `left_powered` and `right_powered` controls and immediately rebuild their kinetic networks after graph or face-redstone changes.
+
+`BlockEntityDataAdapter.isSupplemental()` defaults to false. Supplemental adapters add settings alongside existing direct controls. `BlockEntityDataAdapterRegistry.hasPrimaryWritableData(BlockEntity)` identifies dedicated writable schemas after access-policy filtering; the addon uses this instead of treating any supplemental setting as a replacement for direct control.
+
+
+## SCM motion damping, residency and projected controls
+
+`ScmMotionDamping.stop(velocity, angularVelocity, strength)` returns opposing linear and angular acceleration in the caller's shared coordinate frame. `holdYaw(angularVelocity, up, strength)` damps only rotation about the supplied normalized yaw axis. Hosts convert acceleration into mass/inertia-scaled actuator demands and keep ownership of command lifetimes. Strength is clamped to 0..1 and non-finite inputs are sanitized.
+
+`ScmCommandRouting.supersededByMotionHold(incoming, active)` identifies retained commands replaced by Brake or Hold yaw. Manual yaw commands release Hold yaw; other axes are preserved.
+
+`SableSubLevelResidency.release(owner, subLevels)` removes only that owner's current and legacy residency tickets, including tickets restored from disk before a lease adopts them. Terrain leases are still closed by the host.
+
+`ViewControlPanel.Canvas.layer(index)` defaults to the original canvas. `ProjectedViewControlCanvas` provides separated foreground depths while preserving its existing constructor and accessors. Projected camera controls use these layers to prevent coplanar overlays.
+
+
+`GuiViewportScale.forWidth(preferred, framebufferWidth, minimumWidth)` preserves the preferred GUI scale when its controls fit, reduces it for smaller windows and returns at least one. Hosts own applying the scale and restoring player preferences when their editor closes. A non-positive minimum leaves the preferred scale unchanged.
+
+
+## Latched yaw angle control and unsigned strength
+
+`ScmControlInputs.strength(value)` clamps finite control strength to 0..1; invalid values produce zero. Zero disables control rather than requesting full power. Directional amounts retain their signed range.
+
+`ScmMotionDamping.holdYaw(angularVelocity, up, currentForward, targetForward, strength)` combines heading correction and yaw-rate damping. All vectors must share a coordinate frame. The host captures and retains the target direction until explicitly released. `yawError(currentForward, targetForward, up)` returns the shortest signed rotation in radians about the supplied axis, projecting forward directions onto its plane. The existing rate-only overload remains available.
+
+`ScmCommandRouting.supersededByMotionHold` retains yaw holds when manual yaw is requested; a new hold replaces another hold while retaining manual yaw requests. Hosts give the hold exclusive yaw demand until explicit release, after which retained yaw requests can resume.
+
+
+## Linear braking and client camera quality
+
+- ScmMotionDamping.stopLinear(velocity, strength) returns counter acceleration without angular damping. The existing stop API retains its full motion damping behavior.
+- ScmCommandRouting.supersededByMotionHold preserves hover, stabilization and rotation controls during Brake; a new yaw or pan command automatically replaces Hold Yaw.
+- ViewSceneRenderer.setResolution(IntSupplier) supplies a live camera longest-edge size (64-2048 pixels) for displays and tablet feeds. ViewFeedResolution.fit retains the viewport aspect ratio. Lowering the setting also shrinks existing render targets. The existing setMinimumRefreshRate supplier controls feed updates at 1-60 FPS.
+
+Completed Brake commands retain SCM gravity support with zero braking force, zero brake-group output and no manual-control priority. A new movement command replaces this settled brake state; yaw, pitch and roll remain independent. Explicit Stop Ship Control still releases control.
+
+
+## Hold Yaw rotational braking
+
+The addon Hold Yaw node uses ScmMotionDamping.holdYaw(angularVelocity, up, strength) to oppose angular velocity only. It does not capture a heading or call initialization. ScmMotionDamping.yawRate(angularVelocity, up) returns the signed normalized-axis yaw rate in radians per second for completion checks. Once settled, the node applies no torque and releases manual yaw priority. The captured-heading overload remains available for other library consumers.
+
+## Retired container controls
+
+Global container locks, Create filters, and adjacent push/pull toggles are retired.
+The library no longer replaces block item capabilities or intercepts container menus,
+hopper transfers, player interaction, or block breaking for these controls.
+
+`ContainerAccessRegistry` and `ContainerAutomationPolicies` remain as deprecated,
+inactive compatibility APIs. Access checks allow access; policy registration has no
+effect; `wrap` and `unwrap` return the supplied handler unchanged, including null.
+`sameStorage` compares handler identity only.
+
+`ContainerAutomation` retains stock targets, their owner, and controller bindings.
+Its retired lock, filter, push, and pull setters have no effect; their getters return
+false or an empty filter, and `accepts` returns true. Existing saved values for these
+controls are ignored and are omitted on the next save. Stock replenishment remains
+available without changing third-party capability objects.
+
+
+## Safe SCM motion-stop completion routing
+
+ScmCommandRouting.activeActions(type, completed, actions) returns immutable active action IDs without modifying the supplied set. Completed Brake and Decelerate release their scalar outputs; completed Hold Yaw releases yaw routing. Other command routing remains unchanged. ScmCommandRouting.isMotionStop(type) identifies Brake, Hold Yaw and Decelerate. The new isActiveManualControl(type, amount, strength, completed) overload releases manual priority when these requests complete; the existing overload remains available. Addons retain their active hover, attitude and movement command state independently.
+
+
+## SCM declared actuator geometry
+`ScmActuatorGeometry` transforms positions/directions around a host frame and supplies rotary, tilt, and tangent-space gimbal geometry. These read-only helpers let addons use provider capacities without firing propulsion or sweeping physical bearing angles during setup. Native limits and force application remain provider-owned.
+
+`PropellerForceGeometry.maximumPropellerThrust()` optionally declares full-speed thrust without driving the shaft. The default NaN preserves existing implementations.
+
+
+## Incremental SCM navigation collision checks
+`SablePathfinder.budgetedCompoundCollisionValidator` shares exact hull scan work through `CollisionBudget` (block visits and nanoseconds per level tick). `Validator.incremental()` defaults to false. Incremental validators return `Traversal.pending()` / `TraversalResult.PENDING`; queued searches retain the current node and edge until validated. Pending segments never become accepted paths, and synchronous validator behavior is retained.
+
+`ScmArticulatedFlightControl.requests` now dissipates relative transverse motion and all-axis joint rotation with the reduced inertia tensor while preserving collective rigid-body rotation. Reaction targets remain bounded by opposing provider capacities; joints stay free. Allocation stops repeating load redistribution once error no longer improves. Authority solves start from proven component bounds without discarding feasible capacity.
+
+`SableAssemblyDynamicsApi.Tensor.add(Tensor)` is now public for additive full-tensor joint response calculations. `QueuedPlan.cancel()` / `Validator.release()` release discarded scan ownership.
+
+Queued plans now check optional long destination shortcuts at a sparse node cadence. Near-target segments and every accepted grid edge still require full validation; an unchecked shortcut is never returned.
+
+## Collision occupancy and vector control
+- CollisionBlockIndex.nextOccupiedY caches exact section occupancy columns. Revision invalidates edits immediately; untracked sections are read afresh. The section mixin supplies revision tracking.
+- SableAssemblyHullApi.localBounds distinguishes construction changes from carriage articulation.
+- ScmVectorThrustAllocator.allocate jointly solves bounded force vectors and throttle for fixed and cone-limited actuators; project exposes the same physical bounds.
+- ScmActuatorGeometry.gimbalCoordinates inverts the native tangent gimbal basis.
+- SweptBoundsScan.isCurrent checks inspected section revisions and chunk availability so unrelated distant block edits do not discard verified local clearance.
+- Corrected gimbalDirection/gimbalCoordinates to retain the native reversed tangent basis on vertical nozzles.
+
+## Graph input fallback selection
+- GraphInputDefaults.selectPort(data, preferred, fallback, connected) selects a connected preferred input or an explicitly authored literal before the legacy fallback port. Reads typed Defaults and legacy primitive properties; false, zero and empty strings remain authored values. This keeps runtime assignment and graph export consistent.
+
+## HUD control ports and canvas projection
+- HudInteractionPorts synchronizes persistent per-control Exec/Value sections, orders their ports, and compares encoded values for change events. Existing port IDs are retained.
+- WidgetCanvasProjection describes display-sized or independent world canvases, inverse pointer transforms, and world-ray intersections. Offsets and sizes are in blocks; positive Y is up and positive Z projects outward.
+- WidgetCanvasProjection.resizeCanvas rescales element rectangles when their hosting surface changes size.
+
+
+## GraphReadView
+
+`lib.graph.GraphReadView.of(GraphModel)` retains ordered, unmodifiable node and edge lists and an indexed `node(id)` lookup without serializing or cloning node payloads. Node and edge objects are borrowed and must be treated as read-only on the source owner thread. Cache views by source identity and revision with `RevisionSnapshotCache`; replace them when either changes. Live values and interaction events remain separate from topology. Editing must use a detached document instead.
+
+
+## Named controller targets
+
+`ControllerDiscoveryService.firstNamed(Iterable<ControllerDiscoveryNode>, String)` returns the first candidate whose complete display label matches the requested name, ignoring case and surrounding whitespace. Null or blank queries and unmatched names return null. Caller order determines duplicate resolution; hosts supply aliases as additional candidates and restrict the iterable to authorized bindings.
+
+
+## Item icon buttons
+
+`lib.client.ui.ItemIconButton` extends the vanilla client `Button` with a centered 16-pixel item icon. Its constructor accepts bounds, an accessible message, an ItemStack and an OnPress action. It copies the supplied icon once, retains vanilla hover/focus styling, and uses the message for its tooltip and narration. Hosts choose menu placement and the action; the library has no dependency on addon registries or config screens.
+
+
+### GraphTargetPortLayout independent target ports
+`compose(targets, mergeLikePorts, stableTargetIds, targetSpecificPorts)` keeps the supplied source port IDs in each target section while merging other like ports. Existing overloads preserve their original behavior. Use this for controls that must remain individually adjustable.
+
+
+### ReceiverSignalScope
+`sampleSources(IntSupplier)` evaluates physical outgoing power while `allowsReceiverSignals()` is false. Input-only virtual signal providers can omit their receiver contributions in that scope, preventing feedback through solid conductors while preserving ordinary receiver queries. Scopes nest and restore on exceptions; state is local to the calling thread.
+
+
+### Named target collections
+`ControllerDiscoveryService.allNamed(targets, name)` returns distinct binding IDs matching a name or supplied alias, preserving caller order and ignoring case. `ControllerTargetMap.encode(targets)` encodes an ordered NBT map of typed Target values; `read(payload)` accepts either a single discovery target or that map; `first(payload)` resolves the first valid target. Stable padded map keys preserve selection order through serialization and ordinary graph map operations. Invalid entries are ignored.
+
+
+## Remote assembly storage
+
+`SubLevelArchiveApi.canStoreRemotely(player)` checks creative mode or operator permission level 2. `storeRemote(player, level, rootId, limits)` archives a loaded connected assembly within `limits.locateRange()` without moving the player. It retains the existing archive transaction, owner, ship storage permissions, world protection, capacity and construction checks. The original `store` API retains `limits.storeRange()` and its existing access behavior. Missing or unloaded assemblies remain unavailable. Callers continue to enforce their app configuration and operation cooldown.
+
+
+## Graph port rows
+
+`GraphNodeLayout.portRows(portIds, rowHeight)` returns immutable `PortRows` with an ordered map of port IDs to vertical offsets and the total occupied height. Null, blank and duplicate IDs are ignored; row height is at least one unit. Consumers can cache this layout and use the same offsets for drawing, wire anchors, label editing and hit testing. The API is independent of node types and game-side classes.
+
+
+## SCM recovery speed controls
+- Additive `ScmStateFeedback.recoveryAcceleration(error, rate, strength, tickSeconds)` supplies discrete, critically damped position/attitude recovery. The overload accepting positive/negative acceleration authority limits approach speed by braking capacity and bounds output. `recoveryVelocityAcceleration(desiredRate, rate, strength, tickSeconds)` requests a rate change within one interval at strength 1. Strength is clamped to 0..1; zero returns no correction. Control intervals must be finite and positive.
+- `ScmAdaptiveStateModel.feedback(axis, angular, error, rate, strength)` and `angularFeedback(error, rate, strength)` use recovery speed and live directional capacity. Existing overloads preserve autonomous navigation tuning.
+- Additive `ScmMotionDamping.stopLinear(velocity, strength, tickSeconds)` and `holdYaw(angularVelocity, up, strength, tickSeconds)` use recovery speed. The yaw overload damps only the supplied yaw axis; it does not capture a heading. Existing overloads retain their behavior. All acceleration and rate vectors must share a coordinate frame. Callers apply physical force/torque through propulsion and retain feedback while active.
+- `ScmCommandRouting.usesRecoveryStrength(type)` identifies Hover, Stabilize, Decelerate, Brake and Hold Yaw. A completed Hold Yaw keeps its action groups available for residual counter-torque; completion still releases manual priority and explicit yaw supersedes the hold.
+
+
+## Conditional graph inputs and sourced graph catalogues
+
+`BlockEntityDataProvider.graphWritableInputConditions()` optionally returns conditions keyed by raw writable port id. Each `GraphInputVisibility.Condition(selector, values, fallback)` selects the permitted selector values and the current provider fallback. Existing providers keep every input visible by default.
+
+Use `GraphInputVisibility.configure(data, targetId, conditions)` while capturing a target schema. Use an empty target id for uncomposed ports. `GraphInputVisibility.filter(ports, data, bindings)` resolves authored selector literals in `Defaults`, or the provider fallback, through composed Target/Port bindings. Merged inputs are visible if any bound target accepts them. Hidden defaults and identifiers remain intact.
+
+`KineticTargetSpeed.percentageRatio(percentage)` clamps finite percentages to 0?100% and returns a 0?1 speed ratio; nonfinite values stop the output. Multiply the driven output ratio by this value while leaving the source shaft at full speed.
+
+`SourcedGraphCatalog.merge(client, server, id, name)` builds a sorted catalogue whose entries retain CLIENT/SERVER identity and expose `[C]`/`[S]` display labels. Matching ids on different sides remain separate.
+
+`GraphInputVisibility.filterValues(values, conditions)` evaluates a requested write batch using its selector values or each condition fallback. The default `BlockEntityDataProvider.writeGraphValues` applies selectors before dependent inputs and accepts an inactive-only batch as a no-op. This prevents merged graph controls from changing the modes of targets for which the control is hidden.
+
+
+## Boolean logic and SR latch API
+`com.rieno.gadgetsandgizmos.lib.graph.GraphLogic` exposes pure boolean `xor(a, b)`, `nor(a, b)`, `nand(a, b)` and `xnor(a, b)` gates. `srLatch(current, set, reset)` retains the current value when neither input is asserted, sets true for Set and false for Reset. Reset takes priority when both boolean inputs are asserted. The host owns storage, initialization (false for the ACC node), event ordering and persistence. The ACC SR-Latch has separate Set/Reset execution inputs, a State boolean output, and one Exec output emitted after each accepted pulse, including repeated Set or Reset pulses. Sequential pulses are processed in execution order.
+
+
+## Bounded loops and pulse cadence
+
+`GraphBoundedLoop.start(previous, iterations, maximum)` captures a bounded nonnegative integer limit and leaves an active run unchanged. `advance(state)` returns the next zero-based index, whether to emit an iteration, whether to emit completion, and the next retained state. Zero iterations complete without emitting an iteration. Hosts own scheduling, persistence, and player scope; hold the running state until iteration/completion callbacks return.
+
+`GraphCounters.FlipMode` offers Every Pulse, Every Second Pulse, and Every Nth Pulse. `flipPulse(value, skipped, mode, requestedSkip)` retains the Boolean while skipping pulses and toggles after the requested skip count. Zero skips toggle immediately; Every Second Pulse skips one pulse. `GraphComparison.operandType(connectedType, literalType)` resolves a matching second-operand type, preferring the first operand wire and normalizing numeric aliases.
+
+
+## Graph numeric display precision
+
+`GraphNumberDisplay` owns the per-node `EditorShowPreciseValues` preference. `precise(data)` defaults to false and `setPrecise(data, enabled)` changes only that flag. `format(value, true)` uses lossless, round-trippable double text; false preserves the editor's existing compact two-decimal format. `numericType(type)` accepts number/integer/int/float/double. `supportsNumericPorts` reserves stable layout space for numeric or any ports; `hasNumericPorts(inputs, outputs, resolvedType)` checks declared types and asks the host to resolve any ports. `PRECISE_WIDTH_SAMPLE` reserves room for a full double.
+
+Hosts should exclude this presentation flag from program fingerprints and preview configuration comparisons, preserve it during graph serialization, and continue transporting and calculating full numeric values in both modes.
+
+
+## Ordered graph ports and fixed frame sections
+
+`GraphPortOrder` builds immutable ordered schemas (`ports`, `entries`, `copy`), merges dynamic NBT types while honoring saved `InputOrder` / `OutputOrder`, and reads/writes order lists. `numberedKeys` recovers numeric indices and generated ordinals in older data without alphabetizing named fields. `withChildren` places inline fields beside their parent. `EntryOrder` can carry collection field order outside a value payload.
+
+`GraphNodeDefinition`, graph document snapshots and `GraphValue` retain supplied map order. Math node schemas and component maps preserve their declaration order. `GraphDynamicPortSchema.retainConnectedOutputs` has an ordered map overload for live schema refreshes.
+
+`GraphNodeLayout.frame` sizes title/body/footer sections from canvas scale; node width does not affect title height. Hosts can widen numeric displays without stretching the titlebar.
+
+
+## Collection operations and complete node browsers
+
+`GraphCollectionOperations` provides immutable `push`, `pop`, `contains`, and `indexOf` operations for lists and maps. Push appends a list value or inserts/replaces a map key. Pop removes the zero-based ordinal, preserving remaining keys and order, and returns a `Pop(result, value, removed)` result. Invalid indices leave the collection intact. Searches compare values (including nested typed collections); map keys are not searched, and missing values return -1. Numeric comparisons retain double precision.
+
+`GraphCollectionNodes.nodes(namespace)` supplies four schemas, executors and defaults under the caller's owning namespace. These are data operations that return new collections; source values are never mutated. Push takes Collection, Value and Key (maps only). Pop returns Result, Value and Removed. Contains returns Result; Index Of returns Index.
+
+`GraphNodeBrowser.categories(preferred, available, label)` retains preferred category order and appends every additional available category, preventing registered categories from disappearing in host palettes.
+
+
+## Function graph browser: resolved execution ports
+
+`GraphNodeBrowser.standaloneExecutionSource(inputs, outputs)` classifies a node as an execution source when it has an `exec` output and no `exec` input. Hosts must pass the resolved port maps, including ports generated from node defaults or the current configuration. This keeps dynamic flow nodes such as execution combiners available inside function graphs while retaining event-source filtering.
+
+
+## Sub-level preview highlight buffer fix
+
+`SubLevelPreviewRenderer` now draws translucent face highlights and outlines in separate passes, completing each render batch before requesting the next shared buffer. This fixes `IllegalStateException: Not building!` when highlighting a block face in a preview. Public signatures, caller-supplied highlights, and saved data are unchanged.
+
+
+## Website graph catalog API
+
+`GraphWebCatalog.node(definition, name, categoryName, color, defaultData, inputs, outputs)` exports a host-supplied node schema without depending on addon implementations. It preserves declared and resolved port order, copied default data, and primitive property types. `GraphWebCatalog.ports` exports an ordered port map. Hosts supply selector variants, matching operands, and their own property options.
+
+The reusable browser API is packaged as `assets/gadgetsngizmos/web/graph-nodes.js` and exposed as `GadgetsGraphNodes`. It resolves default values, dynamic and conditional ports, ordered/collapsed map ports, bound target visibility, collection operations, and compact/precise numeric rendering. It never rounds stored numeric values. Website hosts copy this resource with their generated node catalog.
+
+`EntityTelemetryApi.ports()` now retains its declared port groups in its immutable map, keeping tracker catalog exports consistent across JVM runs.
+
+
+## Solver-driven mounted joints
+
+`SableConstraintApi` adds three server-side APIs for Sable 2.0.3:
+
+- `fixedFrameConstraint(pipeline, bodyA, bodyB, posA, posB, orientation)` returns a nullable `GenericConstraintHandle` with all six axes locked. `orientation` is the first local frame; the second starts at identity. Retarget through `setFrame1` and `setFrame2`.
+- `rotaryConstraint(pipeline, bodyA, bodyB, posA, posB, axisA, axisB)` returns a nullable `RotaryConstraintHandle`. It copies the anchors and normalizes each body's local hinge axis.
+- `setRotaryServo(handle, bodyA, bodyB, axisA, axisB, targetRadians, stiffness, damping)` scales the motor coefficients by local rotational inertia, with a minimum of 10. Pass unit axes in each body's own frame. The two-body case uses the larger inertia; a world attachment uses the finite body's inertia.
+
+Anchors use each body's local coordinates. A null body represents the stationary world, so its anchor and axis use world coordinates. Creating a joint with identical bodies, including two null bodies, returns null. Other backend failures propagate to the caller. Joint creation copies its inputs and disables contacts between the attached bodies. Callers own the returned handle and must remove it when detaching or unloading.
+
+These APIs leave motion and collision response to Sable's solver. They do not register pose correction callbacks, teleport bodies, or reset momentum. Thruster and aileron bearings consume the rotary APIs; vector bearings consume the adjustable generic joint. Existing public APIs and saved identifiers are retained.
+
+## Sequenced shaft angles
+
+`kinetics.SequencedShaftAngle` accumulates signed output rotation across relative instructions. `start(travelDegrees)` limits the next instruction to its requested travel (positive infinity allows continuous rotation), `advance(rpm)` advances one game tick, and `restore(angleDegrees, remainingDegrees)` resumes saved motion. The angle and remaining travel are available through `angleDegrees()` and `remainingDegrees()`.
+
+Sequenced gearshifts now publish accumulated angles on their output side, clamp tick padding to the requested angle, retain completed turns while idle, and persist unfinished travel. They stop upstream precise-angle propagation at the gearshift boundary.
+
+
+## Independent SCM recovery strengths
+
+`ScmControlPriority.remainingForce(request, controlledAxis)` removes the component along an axis already owned by another control. Both vectors must use the same coordinate frame. The axis is normalized internally; a zero axis leaves the request unchanged. Existing overloads retain their behavior.
+
+`ScmControlPriority.uprightRecoveryStrength(hoverStrength, stabilizationStrength)` chooses an enabled explicit stabilization strength before Hover's implicit leveling strength. A disabled or invalid stabilization strength falls back to Hover. Both strengths use the existing unsigned 0..1 normalization.
+
+The addon demand builders use these APIs so Brake and Decelerate preserve active height recovery, and Hover cannot raise an explicit Stabilize setting. Without height control, braking still counters all three linear axes. Hold Yaw continues to own only yaw. Node IDs, graph defaults and serialized command strengths are unchanged.
+
+`SequencedShaftAngle.angleDegrees()` retains full turns. Directional precise-angle propagation applies gear ratios before normalizing each target angle, preserving reduction-gear phase across repeated turns.
+
+
+## Saved docking and departure recovery
+
+`com.rieno.gadgetsandgizmos.lib.compat.simulated.SimulatedDockingApi` provides optional Simulated compatibility for persistent connector pairs. Its public entry points accept Minecraft block entities, not addon implementations. Call on the owning server thread.
+
+- `isEndpointLoaded(level, bodyId, pos)` checks availability without retaining or loading chunks.
+- `isAwaitingPeer(endpoint)` distinguishes an unloaded saved peer from a broken loaded connection.
+- `restoreConnection(endpoint)` retries native joint restoration for a reciprocal saved pair; it does not connect unrelated endpoints or power them on.
+- `hasPhysicalConnection(endpoint)` checks a live native constraint rather than the connector's saved logical lock state.
+- `PhysicsState` is the typed compatibility contract implemented by the library mixin.
+
+The optional connector mixin preserves links while peer chunks are unavailable and retries restoration when they load. Real undocking and broken loaded peers retain the native behavior. No addon types or new saved identifiers are involved.
+
+`SubLevelParticleOcclusion.findAirOnlyDepartureBlockingDistance` now permits outward departure from initially overlapping world blocks as well as sublevels. The complete compound hull must move out of the original obstruction without another hull piece entering it. New terrain, ceilings, and other obstacles still block departure. The strict clearance APIs retain their existing behavior. Supply the safety padding used to inflate the hull so the query can recover its physical bounds.
+
+`beginDepartureBoundsBlockingDistanceScan` is the bounded exact-sweep counterpart. It retains the same incremental work limits, contact-padding rules and obstacle invalidation as `beginSweptBoundsBlockingDistanceScan`, adding compound-hull overlap departure for recovery. The original scan remains strict.
+
+`PhysicsState.isDockingConstraintPending()` distinguishes a newly queued native joint from a missing joint until Sable publishes it on the physics tick, preventing repeated recreation during load.
+
+
+## Native buoyancy controls
+
+`ScmControlProbe.hasForceModel()` defaults to false. A native physical force provider can return true and expose its current full-output force in newtons through `maximumForce()`. Consumers should refresh its live geometry/capacity, allocate absolute force (including gravity support), bypass redstone calibration curves, and avoid replacing allocated output with a face-action signal. Existing providers retain their calibration behavior.
+
+`ScmBuoyancyControl` adapts a `Source` reporting available/current gas volume, force per volume, and body-local lift geometry. Its normalized control sets an absolute target gas volume; filling and cooling remain native. `volumeShare()` distributes one enclosure's capacity across multiple providers without multiplying available lift.
+
+`AeronauticsHotAirApi.createProbes(blockEntity, adapterId)` optionally adapts Aeronautics adjustable hot-air burners. Supply the previous redstone adapter ID to preserve saved SCM block/face mappings. It samples live balloon capacity/center, gravity and air pressure without requiring Aeronautics at compile time.
+
+`LiftingGasControl` exposes transient, exact target-volume control and release. The optional Aeronautics mixin implements this contract, preserves the wrench volume setting, synchronizes the exact target for clients, and resumes ordinary redstone input on release. The control override is not persisted as an owner across world reloads.
+
+`ScmControlProbe.responseTimeSeconds()` defaults to zero. Slow gas sources expose their native filling/cooling response through `ScmBuoyancyControl.Source.responseTimeSeconds()`. `ScmStateFeedback.delayedRecoveryAcceleration()` limits altitude feedback bandwidth to that response, keeping buoyancy warmup from destabilizing Hover while other control providers retain existing feedback.
+
+## Servo face angle overrides
+
+`ServoMotionController.resolveAngleLimit(configured, defaultLimit)` resolves a finite per-output angle magnitude independently of its default. A missing/non-finite override uses the default; invalid defaults resolve to zero. Consumers can preserve their default gyro range while supporting explicitly configured face limits above it.
+
+`ServoMotionController.getGeneratedSpeed()` now reports signed RPM from the angle actually traversed during the latest `update()`, including tolerance-sized moves and the final arrival step. Planned speed remains separate, preserving the position trajectory. `isMoving()` stays true for a step that moved and becomes false on the next stationary update; `stop()` and `snapTo()` still clear generated RPM immediately. This keeps virtual kinetic outputs and stress capacity active while a slowly updated servo target is rotating.
+
+`VirtualKineticSourceLink` exposes the saved virtual source slot on driven Create kinetic block entities. `isSourcedBy(consumer, source)` compares the position and slot together, including after NBT reload. Removing or changing one virtual source now leaves consumers of other slots at the same block position connected.
+
+## Connected storage and signed kinetic controls
+
+`ConnectedVaultBlockEntity` extends Create's `ItemVaultBlockEntity` for custom vault-shaped storage. It queues native formation after initialization, asks nearby controllers to include newly available members, and retries standalone groups during lazy ticks. A controller waits for all chunks in its saved geometry before rebuilding. Missing controllers in loaded chunks recover without changing member contents; unloaded controller chunks remain unavailable without being forced to load.
+
+`ConfigurableKineticScrollValueBehaviour` retains Create's kinetic speed and direction rows, signed value settings, formatting and saved scroll value. Its board maximum follows the configured behaviour range instead of Create's fixed 256 RPM board limit.
+
+`EnergyTransfer.transfer(sources, targets)` supplies the demand reported by FE receivers, respects each handler's own limits, and returns the total transferred FE as a long. It has no network-wide transfer budget, de-duplicates shared handler instances, skips transfers back into the same handler, and supplies input-only machines before charging bidirectional storage. Connected cable implementations should call it once per network per tick.
+
+## Angle from Coords
+
+`RotationMath.rotationFromCoordinates(origin, target)` returns the shortest unit-quaternion rotation from +Z (Minecraft south) toward `target - origin`. Coordinates share one coordinate frame; translation does not change the result. Exactly opposite directions use +Y as a deterministic half-turn axis. Equal, non-finite or null coordinates throw `IllegalArgumentException`.
+
+`MathGraphNodes.nodes(namespace)` now includes `namespace:angle_from_coords` in Math. Inputs are `origin` and `target` coordinate maps (`x`, `y`, `z`, with uppercase aliases accepted). Defaults are Origin `(0,0,0)` and Target `(0,0,1)`. Outputs are `euler`, `quaternion`, `tait_bryan`, `axis`, `angle`, and the standard `valid` flag. Euler maps use ZXZ `alpha/beta/gamma`; Tait-Bryan maps use XYZ `roll/pitch/yaw`; both retain XYZ aliases. The quaternion uses XYZW, the axis is a unit vector, and all angles are radians. The scalar angle is the shortest rotation magnitude in `[0, pi]`, paired with the axis. Invalid or coincident coordinates return empty maps, angle zero and `valid=false`.
+
+## Scalar angle conversion ports
+
+`MathGraphNodes.nodes(namespace)` now exposes an `angle:number` input and output on
+`degrees_to_radians` and `radians_to_degrees`. Connect a scalar Angle output directly
+to Angle; the converted Angle output remains a number. The input defaults to zero.
+Negative angles and multiple turns are preserved without wrapping or clamping.
+
+The existing `angles:map` ports retain their IDs and recursive conversion behavior,
+so saved map connections continue to work. Scalar and map inputs convert separately;
+`valid` is false if either conversion contains a non-finite input or result.
+
+`MathGraphValues.convertAngle(double angle, boolean toRadians)` is the reusable
+scalar conversion API, returning a numeric `GraphValue` and rejecting non-finite
+inputs/results with `IllegalArgumentException`. `convertAngles` uses the same API
+for numeric map/list fields. These are unit conversions; they do not project a 3D
+rotation onto the X/Z plane or calculate a signed heading.
+
+## Angle from Coords degrees output
+
+`MathGraphNodes.nodes(namespace)` adds `degrees:number` to `angle_from_coords`.
+It is the existing `angle:number` converted from radians to degrees, so a graph
+can connect Degrees directly to a bearing Pivot Angle numeric input without a
+conversion or multiplier node. The existing port IDs and radians-based rotation
+outputs are unchanged. Degrees has the same unsigned 3D shortest-rotation meaning
+as Angle, in the range 0 to 180 degrees; it is not a signed horizontal heading.
+Invalid or coincident coordinates return Degrees = 0 and valid = false. Bearings
+retain their configured range limits, swivel mode, inversion and local zero.
+
+## Entity velocity telemetry
+
+`EntityMotionTelemetry.velocity(Entity)` reads the most recently completed server
+tick of actual world-space feet movement in blocks per second. It is sampled once
+per level tick and shared between graph consumers. The first observation returns
+zero while establishing a baseline. This includes carried movement and rotation on
+Sable assemblies and ordinary passengers without interpreting gravity, drag or
+blocked movement attempts as actual travel. Call on the owning server thread.
+
+`EntityMotionTelemetry.reset(Entity)` clears the baseline after a discontinuous
+move. Vanilla teleport events, dimension changes, entity removal and server stop
+clear it automatically. Missing ticks and invalid positions also start a new
+baseline. Entities and levels are referenced weakly.
+
+`EntityTelemetryApi.sample` now uses this velocity for both velocity and speed.
+Existing port IDs, map fields and units are unchanged. Native Sable ship velocity
+remains in blocks/second and angular velocity in radians/second; predictor and
+integrator nodes continue to use their supplied motion values and delta_time.
+
+## Full-circle Degrees heading correction
+
+The `angle_from_coords` node keeps its existing `degrees:number` port ID, but
+Degrees now returns the horizontal X/Z heading in [0, 360), replacing the earlier
+unsigned 3D degree magnitude. Targets continue through 180 degrees instead of
+folding back. Positive angles rotate +Z toward +X about +Y: south = 0, east = 90,
+north = 180, west = 270. Height does not affect the heading. No horizontal
+displacement returns zero; coincident or invalid coordinates still set valid
+to false. This supersedes the earlier description of the Degrees output.
+
+`RotationMath.horizontalHeadingDegrees(Vector3 origin, Vector3 target)` publishes
+the reusable calculation. Finite extreme coordinates are supported; non-finite
+or missing coordinates are rejected. All inputs must use the same coordinate
+frame. Connect Degrees to a bearing Pivot Angle in Swivel mode for a full turn.
+Bearing inversion and its local zero still apply.
+
+Euler, Quaternion, Tait-Bryan, Axis and the radians Angle output retain their
+existing shortest 3D rotation meaning. To convert that 3D magnitude to degrees,
+connect Angle to the numeric Radians to Degrees conversion node. Saved graphs
+need no rewiring to receive the corrected Degrees heading.
+
+
+## ACC editing, entity cameras and bounded schematic construction
+
+- `GraphCanvasSearch.matches(nodes, query, label)` searches supplied nodes by type and host label, preserving order. `next(matches, currentId, previous)` wraps in either direction and returns null for an empty result.
+- `GraphValueText.parse(type, text)` parses finite numbers, booleans, plain strings, JSON maps and JSON lists. `any` infers a concrete type. `format(value)` supports editing nested values without discarding zero, false or map ordering.
+- The additive `GraphPlayerScopePlan.analyze(..., personalSource)` overload scopes UI dependencies only when they are reached from a personal source or UI interaction. Observing a shared controller value does not change its state ownership. The original overload remains available.
+- `AccessoryHeadwearRenderer.armor(texture, offset)` and `.hat(model, offset)` render a supplied accessory stack against a humanoid model independently of its armor equipment. The addon owns Curios registration and visibility checks; the library has no Curios dependency.
+- `ViewReference` adds an optional `entityId` and `of(Entity)` factory. Its existing three-argument constructor and block reference tags remain supported. Entity references add the optional `Entity` UUID tag and resolve loaded players on the client. `EntityViewSource` supplies a read-only eye camera. `ViewSource.viewEntity()` defaults to null and allows captures to omit the source entity's own head.
+- `ViewRaycast.trace(..., ignoredEntityId)` can omit a lens carrier. `ViewRaySampler` shares rate-limited samples and typed hit values across consumers. `ViewTrackingTargets` now resolves all loaded pickable entities, including passive and hostile mobs. The existing `Reference.playerId()` accessor remains compatible and may identify any entity.
+- `SubLevelSchematicBuild.prepare(player, schematic, target, rotation, sections)` defers destination validation and native allocation to subsequent ticks. Existing constructors retain immediate preparation. All builds share a measured server work allowance; placement batches are capped at 256 blocks and connection/joint restoration resumes across ticks. Call `tickSections` until `complete()` and `close()` to roll back an unfinished build. Slow builds retain their material reservation until completion or refund on cancellation/failure.
+
+The addons consume these APIs for graph search, zoom-scaled inline values, independent HUD state, wearable camera targets and Digisable construction. Wearable selection and pair revocation remain addon gameplay contracts.
+
+`GraphViewport.centerOn(graphX, graphY, canvasWidth, canvasHeight)` returns a centered viewport while preserving its origin and zoom. Pan values remain screen pixels.
+
+`GraphPortValueEdits.mark(data, key)`, `contains(data, key)` and `clear(data)` distinguish explicit authored defaults from stale live snapshots. Hosts skip live-value merging for marked keys and consume the markers after merging. The addon uses these markers to preserve edited persistent defaults through Save/Apply.
+
+
+## Rendering and schematic compatibility APIs
+
+- `GuiRenderLayer.push(GuiGraphics, float)` returns an `AutoCloseable` overlay layer. Use it in try-with-resources. It flushes buffered geometry and text before entering and leaving the relative depth, then restores the caller's pose.
+- `VeilPointLightBackend.install()` installs the optional client-only implementation of `ColoredLightBridge`. Call it only when Veil is present. The backend releases deferred point lights while Flywheel visualization is enabled because its shaders do not provide Veil scene attachments. Existing vanilla block and plume lighting remains available to callers.
+- A block entity may implement `SchematicMaterialData.schematicMaterialData(CompoundTag)` to provide independent load data for detached material requirement previews. Keep every field used by Create's requirement callbacks and omit unrelated programs, database identities and runtime state. Ordinary sanitization, export and placement continue loading complete configuration.
+
+The Voxy configuration class is no longer a mixin target, allowing Roxy and Voxy SeedGen to read it during startup. Camera capture still uses the existing Voxy viewport and native-terrain guards. Saved IDs, blockstate properties and schematic payload formats are unchanged.
+
+## Attachment frames
+
+`com.rieno.gadgetsandgizmos.lib.physics.AttachmentFrames.alignAxes(sourceNormal, sourceAxis, targetNormal, targetAxis)` returns a new normalized JOML quaternion mapping a source attachment frame into a target frame. Each frame consists of an outward `Direction` and a perpendicular, unsigned `Direction.Axis` tangent. Tangents always use the axis's positive direction, so changing a rail's travel direction does not introduce a half-turn. Null arguments and parallel normal/tangent pairs are rejected. The helper does not modify world or saved state.
+
+
+## Graph saves, counters and Percentage
+
+- `GraphSaveState.mergeVariables(live, saved, copy)` retains server values for names present in both maps, including their live types. New names keep supplied defaults; removed names stay removed. Call on the owning server thread before saving/applying an edited graph.
+- `GraphSaveState.retain(values, keep, copy)` creates a detached snapshot of only explicitly retained runtime slots. Hosts select variables and opt-in counters and keep personal scopes separate.
+- `GraphCounters.step(value, amount, decrement, reset)` accepts a boolean direction. False increments, true decrements, and reset takes priority. Existing Direction overloads and IDs remain supported.
+- `MathGraphNodes.nodes(namespace)` adds `namespace:percentage`: numeric A/B inputs, numeric Value = A / B * 100, and Valid. Defaults are A = 0, B = 100. Zero B or a nonfinite/unrepresentable result returns Value = 0 and Valid = false. Negative values and values above 100 are supported.
+
+## Graph port section ordering
+
+`GraphPortOrder.grouped(order, groups)` returns an immutable port order with each section kept contiguous in its declared member order. Sections begin where their first available member occurs; ungrouped ports retain their relative order. Missing members are omitted, duplicates are removed, and the first section claiming a port owns it.
+
+`GraphPortOrder.withDescendants(order, roots, parents)` returns an immutable section membership list containing its declared roots followed by their expanded children in depth-first order. Child order follows `order`; `parents` maps child IDs to parent IDs. Nested expansions are included, stale children are ignored, and cyclic mappings terminate safely. These helpers affect presentation only and do not change port IDs, bindings, or saved graph data.
+
+
+## Inline editing and graph rendering
+
+- `InlineTextEditor.setDecorated(false)` edits text using the host control background, without painting a second field or underline. `setTextColor(int)` matches the edited label/value. Focus, selection, clipboard, Enter and Escape behavior are unchanged.
+- `GuiRenderLayer.pushFlattened(graphics, depth)` keeps container widgets, slots, stack decorations and carried items inside a shallow foreground layer. Use `restoreBackground(graphics, depth)` only inside that matching pass to draw normal backgrounds and 3D previews, then close both scopes. Both restore the caller pose and flush buffered draws.
+- A client screen can implement `WorldRenderControl.suppressWorldRendering()` to skip the main terrain/entity/HUD render while covered. Client/server simulation and screen rendering continue; secondary View scene captures are preserved. `shouldRenderWorld(requested, screen)` exposes the policy. Projection renderers should return false.
+- `GraphPortIndex.of(order, sections, members)` snapshots section ownership and section starts. `section(port)` and `startingAt(port)` replace repeated membership scans. Rebuild after structural changes; overlapping ports retain the first section.
+- `GraphNodeLayout.rows(Collection<Row>)` computes immutable offsets and total height for variable-height controls plus anonymous spacers/headers. A blank port occupies height without creating a lookup entry.
+
+- `InlineTextEditor.setRightAligned(true)` preserves the original right edge of a value while editing, including caret placement, drag selection and long text scrolling. Label editing remains left aligned by default.
+
+## Portable block-state and block-entity snapshots
+
+`BlockStateSnapshots.read(registry, data, fallbacks)` resolves a saved block state without converting missing registrations into air. It returns null for unavailable states, preserves properties, and leaves the source NBT unchanged. A caller-supplied resource-location fallback is used only when the source registration is missing; callers must choose property-compatible replacements.
+
+`BlockEntitySnapshots.create(level, position, state, data)` validates the registered block-entity type against the backing block state before creating and loading a detached preview. Air, missing types and incompatible states return null without entering Minecraft's repeated error-logging path. Both APIs are in `com.rieno.gadgetsandgizmos.lib.nbt` and work with non-full blocks. Callers can memoize unavailable results through the existing `RevisionSnapshotCache` API and invalidate on physical snapshot changes.
+
+## Graph evaluation context and action consumers
+
+`GraphEvaluationCache<K, V>(Supplier<?> context)` provides a mutable evaluation map that discards cached ports when its context changes, including transitions to and from null. Use it for frames that change player ownership during execution.
+
+The personal-source overload of `GraphPlayerScopePlan.analyze` scopes UI dependencies and individually reachable action nodes. Action consumers no longer make their ancestors personal; adding camera-like actions preserves producer state ownership. The original overload remains available with its existing behavior.
+
+`PlayerScopedMap` reads and merged entries now honor the current personal-key predicate, so stale restored scopes cannot shadow keys that have become shared. Restored values remain available if their scope becomes personal before pruning.
+
+## Face selections and first-person entity feeds
+
+`GraphTargetSelection` supplies distinct face ids, legacy face matching, alias normalization, and group labels. Aliases change labels while preserving target and generated port ids.
+
+`ViewSceneRenderer.hidesHead(Entity)` identifies the entity whose head, helmet and head accessories must be hidden during a capture. The scope clears after capture and restores model visibility even if rendering fails.
+
+
+## External editor view ownership
+
+`ClientViewOwnership.isReserved()` in `lib.client.render` identifies an external editor that owns the viewport without a Minecraft screen. Axiom is detected through its optional public `EditorUI.isEnabled()` method; installing Axiom is not required. Other integrations can register a live `BooleanSupplier` with `register(id, active)` under their own namespace and release it with `unregister(id)`.
+
+Player HUDs and camera input should yield while reserved. Library remote-view overrides become inactive immediately, then the client tick ends the server session and defers restoration of camera preferences until the editor closes. Secondary camera feeds retain their last completed texture and suspend capture/allocation while reserved, then resume normally. Sable interaction camera-frame providers and physics-goggles overlay callbacks also yield.
+
+## Remote camera controls and viewfinder
+
+- `ViewControlPanel.setTakeControlAction(Runnable)` adds a takeover button to the floating icon row. The host sends its own authorized request and calls `RemoteViewSessions.open(player, reference)` after validating its selected source and access. Existing control rendering and layout constructors remain available.
+- `RemoteViewKeys` registers configurable exit, flashlight, raycast, frame and grid actions under Camera Controls. Flashlight, frame and grid start unbound. Raw keyboard and mouse input honors the player's assignments; Escape remains an exit fallback.
+- `RemoteViewSessions.toggleFlashlight(player)` updates only the active owned lens's flashlight setting. `RemoteViewSessions.raycast(player)` samples an active `RaycastViewSource`, at most once per server tick per action. No action accepts a client-selected source. `RemoteViewSessions.source(player)` exposes the acknowledged reference.
+- Implement `RaycastViewSource.castViewRay()` to supply an explicit server-side lens sample. The camera block retains its range and filters and publishes this sample through its graph outputs.
+- `RemoteViewActionPayload` and `RemoteViewRaycastPayload` carry discrete requests and small hit results separately from the existing mouse-motion protocol. Client callbacks stay side-safe.
+- `RemoteViewHud` shows current bindings and hit feedback during first-person control. `ViewfinderOverlay.render(...)` draws optional camcorder brackets and a rule-of-thirds grid on a `ViewControlPanel.Canvas`. Its optional bottom inset reserves hint space without moving the lens-centre reticle.
+- The frame and grid preferences persist in `gadgetsngizmos-camera-client.toml`; they do not change camera blocks, graph data or other players' views.
+
+## Physical redstone sources and retained frame constraints
+
+- `BlockRedstoneSignals.read(Level, BlockPos, @Nullable Direction)` reads a loaded block's own power (0?15). A null face selects the strongest output; faces point outward. Create Redstone Link receivers report received power, transmitters report transmitted power. Unloaded targets return zero without loading chunks.
+- `BlockRedstoneSignals.readFace(Level, BlockPos, BlockState, Direction)` reads an already resolved block state using Minecraft's opposite query direction.
+- `SableFrameConstraint.update(PhysicsPipeline, @Nullable PhysicsPipelineBody, @Nullable PhysicsPipelineBody, Vector3dc, Vector3dc, Quaterniondc)` creates or updates one fully locked native joint. Anchors use each body's local coordinates, or world coordinates for a null body. The quaternion is the first frame's orientation; the second is identity. Frames are copied, changed in place, and wake bodies only when changed. No body poses or velocities are rewritten.
+- `isValid()` reports native joint availability; `close()` releases it idempotently. Hosts must close attachments when unloading/removing bodies and call the API on the owning server thread. A changed pipeline/body recreates the joint. Invalid frames and removed bodies release it and return false. Anchor jitter below 0.0001 blocks is ignored so stationary attachments can sleep.
+- Saved block IDs, graph node IDs and zipline attachment data are unchanged.
+
+## Entity nameplate visibility API
+
+`com.rieno.gadgetsandgizmos.lib.client.render.NameplateVisibility` is an optional contract for client entities and rendering proxies. Implement `boolean isNameplateVisible()` and return false to suppress the entity nameplate, including when a player renderer would otherwise show it. Returning true preserves normal renderer, distance, team, and visibility rules. The library applies the contract through the client `RenderNameTagEvent` at lowest priority. Existing entities need no changes, and the API adds no saved data or networking.
+
+
+## Camera hit interaction and overlay viewfinder controls
+
+- `ViewControlLayout` adds `frame`, `grid` and `interact` bounds. Existing constructors remain available. `ViewControlPanel.renderOverlay` renders the saved camcorder frame/grid and their local toggle buttons.
+- Hosts opt into the hit-use icon with `ViewControlPanel.setInteractAction(Runnable)` and authorize their selected source before acting. Frame/grid buttons use the same `ViewfinderConfig` preferences as first-person camera keys.
+- `RemoteViewKeys.INTERACT` is an unbound, configurable camera action. `RemoteViewActionPayload.Action.INTERACT` and `RemoteViewSessions.interact(ServerPlayer)` operate only on the acknowledged remote session.
+- `ViewBlockInteractions.interact(ServerPlayer, ViewReference)` recasts the source ray on the server and uses the real player, main-hand item, hit face and plot-local hit through `ServerPlayerGameMode.useItemOn`, including NeoForge right-click/protection events. Misses and entity hits do not use blocks. The caller must authenticate its source selection; world/ship access, loaded targets, exclusive control and repeated-use limits are checked again by the library.
+- Menus opened through this interaction retain reach only for their original target (including a connected double chest), source, player and menu. Vanilla block identity and other validity checks still run; Create smart-block menu reach uses the same authorization. Access ends when the menu/source/target is lost, permission is denied, or the player's body moves away.
+- First-person sessions continue their keepalive while a container screen is open and allow normal screen keyboard/mouse input.
+
+
+## Camera native interactions and feed layouts
+- `RaycastViewSource.interactionRange()` and `interactionFilter()` expose the lens sensor settings to native client interaction handlers; defaults preserve existing implementors.
+- `ViewInteractionTargets.register(BlockEntity, Picker)` registers projected controls on each logical side. The stateless picker returns world geometry, owning block reference and whether native block use should run. Removed entities are discarded and nearer obstructions win.
+- `ViewInteractionContext` exposes a server-authenticated camera cursor and exact-target reach for custom GUI and held-input handlers, plus lens eye, direction and fresh targeting. Access expires after source/target loss, permission changes, movement or inactivity. Player body coordinates do not change.
+- `ViewInteractionClient.register(InputHandler)` adapts raw native use, release, key, mouse and scroll handlers. Server acknowledgements replay client use while suppressing duplicate vanilla use packets. Configured interaction keys preserve held/released state.
+- `ViewControlLayout.overlay` stacks icon buttons on the left. `chin` and `ViewControlPanel.renderChin` reserve a separate control strip below feeds. `ViewSceneRenderer.fittedViewport` exposes the exact captured image rectangle for host overlays. `ViewFeedGrid` clips a separate viewfinder to each image, excluding feed headers and letterboxing.
+- `ViewRig.wrapPan` normalizes horizontal angles without imposing a stop; mouse and absolute aim can cross either ?180? boundary repeatedly. Tilt retains its hinge limits.
+
+- `ViewRaycast.traceInteraction` includes native interaction shapes (for example steering wheel rims) in camera use queries while ordinary sensor and lighting traces retain their existing shape rules.
+
+- `ViewfinderOverlay.render` supports status text insets independently of image framing. Compact feeds retain their grid, corners and reticle while suppressing labels that cannot fit.
+
+
+## First-person camera aim prediction
+
+`PredictedViewSource` optionally extends `ViewSource`. Implement `viewAim()` to return the current authoritative `ViewRig.State`, and `viewPose(float, ViewRig.State)` to compose a supplied aim with the current interpolated mount pose. This overload must not mutate the source. Existing providers remain supported.
+
+`ViewRig.state()` and `restore(State)` snapshot and restore manual pan, tilt and FOV. `ViewControlPrediction` previews unsent frame input and replays sequenced samples until acknowledged by the server. `RemoteViewInputPayload` and `RemoteViewAimPayload` carry these samples and acknowledgements; the existing input packet remains supported. The server shares the existing per-tick motion limits between flushed and regular samples.
+
+`RemoteViewClient.pose()` uses prediction only for the first-person lens. `flushInput()` orders pending aim before raycast/use actions. `ViewInteractionTargets.pick` also accepts an explicit `ViewPose` for matching client hit testing. ACC Display/CCTV captures continue to use the replicated source pose and their configured feed refresh rate. No player FPS or VSync setting is changed.

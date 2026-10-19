@@ -51,7 +51,7 @@ public final class SchematicMaterials{
                     && state.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.UPPER) continue;
             if(state.hasProperty(BlockStateProperties.BED_PART)
                     && state.getValue(BlockStateProperties.BED_PART) == BedPart.HEAD) continue;
-            BlockEntity be = SchematicBlockData.create(level, block.pos(), state, block.data());
+            BlockEntity be = SchematicBlockData.create(level, block.pos(), state, block.data(), true);
             ItemRequirement req = ItemRequirement.of(state, be);
             if(req.isInvalid()) throw new IllegalArgumentException("No survival schematic requirement exists for " + state.getBlock().getName().getString());
             for(var stack : req.getRequiredItems()){

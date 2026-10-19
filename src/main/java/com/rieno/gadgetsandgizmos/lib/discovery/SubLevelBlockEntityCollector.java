@@ -307,6 +307,21 @@ public final class SubLevelBlockEntityCollector {
         return findActorBlockEntity(plot, pos);
     }
 
+    // Promote pending configuration only inside an already loaded plot chunk
+    public static @Nullable BlockEntity getOrCreateBlockEntity(SubLevel body, BlockPos pos){
+        if(body == null || body.isRemoved() || pos == null) return null;
+        ServerLevel level = SableLevelApi.serverLevel(body);
+        if(level == null || !level.getServer().isSameThread())
+            throw new IllegalStateException("Block entity creation requires the server game thread");
+        BlockPos point = pos.immutable();
+        BlockEntity be = getBlockEntity(body, point);
+        if(be != null && !be.isRemoved()) return be;
+        LevelPlot plot = body.getPlot();
+        PlotChunkHolder holder = plot.getChunkHolder(plot.toLocal(new ChunkPos(point)));
+        LevelChunk chunk = holder == null ? null : holder.getChunk();
+        return chunk == null ? null : chunk.getBlockEntity(point, LevelChunk.EntityCreationType.IMMEDIATE);
+    }
+
     // Get the block entities
     public static List<BlockEntity> getBlockEntities(@Nullable Object subLevel) {
         Map<BlockPos, BlockEntity> blockEntities = new LinkedHashMap<>();

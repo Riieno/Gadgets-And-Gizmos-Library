@@ -92,11 +92,35 @@ public final class ViewRaycast{
     // Share the loaded-space walk without changing ordinary lens sample directions
     private static Result traceSegment(Level level, Vec3 start, Vec3 end, double range, Filter filter,
                                        @Nullable ViewReference excluded, boolean entities){
+        return traceSegment(level, start, end, range, filter, excluded, entities, null);
+    }
+
+    // Omit the entity carrying a lens so its eye does not raycast against its own bounds
+    public static Result trace(Level level, ViewPose pose, double length, Filter filter,
+                               @Nullable ViewReference excluded, int sample, int count, @Nullable UUID ignored){
+        double range = Double.isFinite(length) ? Math.clamp(length, 0, MAX_LENGTH) : 0;
+        Vec3 end = pose.position().add(sampleDirection(pose, sample, Math.clamp(count, 1, MAX_RAYS)).scale(range));
+        return traceSegment(level, pose.position(), end, range, filter, excluded, true, ignored);
+    }
+
+    private static Result traceSegment(Level level, Vec3 start, Vec3 end, double range, Filter filter,
+                                       @Nullable ViewReference excluded, boolean entities, @Nullable UUID ignored){
+        return traceSegment(level, start, end, range, filter, excluded, entities, ignored, false);
+    }
+    // Include native interaction shapes such as wheel rims without changing sensor or light rays
+    public static Result traceInteraction(Level level, ViewPose pose, double length, Filter filter,
+                                          @Nullable ViewReference excluded, @Nullable UUID ignored){
+        double range = Double.isFinite(length) ? Math.clamp(length, 0, MAX_LENGTH) : 0;
+        return traceSegment(level, pose.position(), pose.position().add(pose.forward().scale(range)), range,
+                filter, excluded, true, ignored, true);
+    }
+    private static Result traceSegment(Level level, Vec3 start, Vec3 end, double range, Filter filter,
+                                       @Nullable ViewReference excluded, boolean entities, @Nullable UUID ignored, boolean interaction){
         Result best = Result.miss(end, range);
         if(range == 0 || level == null) return best;
-        best = traceSpace(level, null, start, end, filter, excluded, best, entities);
+        best = traceSpace(level, null, start, end, filter, excluded, best, entities, ignored, interaction);
         for(SubLevel body : SableTransformApi.intersecting(level, new AABB(start, end).inflate(1))){
-            best = traceSpace(body.getLevel(), body, start, end, filter, excluded, best, entities);
+            best = traceSpace(body.getLevel(), body, start, end, filter, excluded, best, entities, ignored, interaction);
         }
         return best;
     }
@@ -114,7 +138,7 @@ public final class ViewRaycast{
 
     // Compare shape and entity hits in one loaded coordinate space
     private static Result traceSpace(Level level, @Nullable SubLevel body, Vec3 start, Vec3 end,
-                                     Filter filter, @Nullable ViewReference excluded, Result best, boolean entities){
+                                     Filter filter, @Nullable ViewReference excluded, Result best, boolean entities, @Nullable UUID ignored, boolean interaction){
         Vec3 from = SableTransformApi.toLocalPosition(body, start);
         Vec3 to = SableTransformApi.toLocalPosition(body, end);
         UUID id = body == null ? null : body.getUniqueId();
@@ -127,7 +151,9 @@ public final class ViewRaycast{
             if(body == null && SableLevelApi.containing(level, pos) != null) return null;
             BlockState state = access.blockState(pos);
             if(state == null || state.isAir() || !filter.accepts(state, id)) return null;
-            BlockHitResult hit = state.getShape(shapes, pos).clip(from, to, pos);
+            var shape = state.getShape(shapes, pos);
+            if(interaction) shape = net.minecraft.world.phys.shapes.Shapes.or(shape, state.getInteractionShape(shapes, pos));
+            BlockHitResult hit = shape.clip(from, to, pos);
             if(hit == null) return null;
             Vec3 world = SableTransformApi.toWorldPosition(body, hit.getLocation());
             return new Result("block", world, start.distanceTo(world), pos.immutable(), state,
@@ -137,6 +163,7 @@ public final class ViewRaycast{
         if(!entities) return best;
         for(Entity entity : level.getEntities((Entity) null, new AABB(from, to).inflate(1),
                 entity -> entity.isAlive() && entity.isPickable())){
+            if(entity.getUUID().equals(ignored)) continue;
             SubLevel owner = SableLevelApi.containing(entity);
             if(!java.util.Objects.equals(id, owner == null ? null : owner.getUniqueId())) continue;
             SubLevel tracked = owner == null ? SableLevelApi.tracking(entity) : owner;

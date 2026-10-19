@@ -10,6 +10,7 @@ import java.util.List;
 // Draw and select up to four independently captured sources on one GUI surface
 public final class ViewFeedGrid{
     private final List<Area> areas = new ArrayList<>();
+    private final long started = net.minecraft.Util.getMillis();
 
     // Fit one view or a four-view grid inside the host's content bounds
     public void render(GuiGraphics graphics, Font font, int x, int y, int width, int height,
@@ -32,6 +33,19 @@ public final class ViewFeedGrid{
             graphics.flush();
             if(!ready) graphics.drawCenteredString(font, entry.available() ? "Waiting for camera" : "Camera unavailable",
                     left + cellWidth / 2, top + cellHeight / 2, 0xFFB2C7D0);
+            if(ready){
+                var viewport = ViewSceneRenderer.fittedViewport(entry.source(), cellWidth, Math.max(1, cellHeight - 15));
+                int vx = left + Math.round(viewport.x()), vy = top + 15 + Math.round(viewport.y());
+                int vw = Math.round(viewport.width()), vh = Math.round(viewport.height());
+                graphics.enableScissor(vx, vy, vx + vw, vy + vh);
+                var source = entry.source().resolve(net.minecraft.client.Minecraft.getInstance().level);
+                var pose = source == null ? null : source.viewPose(0);
+                ViewfinderOverlay.render(RemoteViewHud.canvas(graphics), font, vx, vy, vw, vh,
+                        com.rieno.gadgetsandgizmos.lib.config.ViewfinderConfig.FRAME.get(),
+                        com.rieno.gadgetsandgizmos.lib.config.ViewfinderConfig.GRID.get(),
+                        pose == null ? 70 : pose.fov(), net.minecraft.Util.getMillis() - started);
+                graphics.disableScissor();
+            }
             graphics.fill(left, top, left + cellWidth, top + 15,
                     entry.key().equals(selected) ? 0xFF3D766D : 0xFF253B49);
             graphics.drawString(font, font.plainSubstrByWidth(entry.name(), Math.max(1, cellWidth - 8)),

@@ -32,7 +32,7 @@ public record GraphNodeDefinition(
             throw new IllegalArgumentException("A graph node definition requires an id");
         }
         category = category == null || category.isBlank() ? "core" : category;
-        inputs = Map.copyOf(inputs == null ? Map.of() : inputs);
-        outputs = Map.copyOf(outputs == null ? Map.of() : outputs);
+        inputs = GraphPortOrder.copy(inputs == null ? Map.of() : inputs);
+        outputs = GraphPortOrder.copy(outputs == null ? Map.of() : outputs);
     }
 }

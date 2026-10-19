@@ -100,10 +100,13 @@ public final class SubLevelSchematicArchive{
                 entities.put(block, be);
             }
             SubLevelSchematicSerializationContext.setCurrentContext(ctx);
+            var frames = captures.stream().map(body -> new SchematicConnectionData.BodyFrame(body.id(),
+                    ctx.getMapping(body.id()).newUUID(), body.min(), body.size(), anchor)).toList();
             for(Captured body : captures){
                 List<SubLevelSchematic.Block> blocks = new ArrayList<>();
                 for(var block : body.blocks()){
                     CompoundTag data = SchematicBlockData.safe(level, block.state(), entities.get(block));
+                    SchematicConnectionData.capture(level, entities.get(block), block.data(), data, body.id(), frames);
                     blocks.add(new SubLevelSchematic.Block(block.pos().subtract(body.min()), block.state(), data));
                 }
                 bodies.add(new SubLevelSchematic.Body(ctx.getMapping(body.id()).newUUID(), body.corner().subtract(anchor),

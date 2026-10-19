@@ -48,6 +48,8 @@ public final class GadgetsNGizmosLibraryConfigs {
     public static void register(ModContainer modContainer) {
         modContainer.registerConfig(ModConfig.Type.SERVER, SERVER_SPEC,
                 "gadgetsngizmos-server.toml");
+        modContainer.registerConfig(ModConfig.Type.CLIENT, ViewfinderConfig.SPEC,
+                "gadgetsngizmos-camera-client.toml");
     }
 
     /*--------------------------------------------------------##---------------------------------------------------------

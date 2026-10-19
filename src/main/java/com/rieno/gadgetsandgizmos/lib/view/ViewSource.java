@@ -12,6 +12,8 @@ public interface ViewSource{
     default void setViewControlled(boolean controlled){}
     // Refresh client effects even when a visible remote source is outside the ticking area
     default void updateViewEffects(float partialTick){}
+    // Identify the entity whose own head is omitted from its first-person capture
+    default net.minecraft.world.entity.Entity viewEntity(){ return null; }
     // Check whether the source can still provide a view
     boolean isViewAvailable();
 }

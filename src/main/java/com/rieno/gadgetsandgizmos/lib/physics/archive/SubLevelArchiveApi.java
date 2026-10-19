@@ -48,6 +48,22 @@ public final class SubLevelArchiveApi{
 
     // Capture every connected body before removing any of them
     public static UUID store(ServerPlayer player, ServerLevel level, UUID rootId, Limits limits) throws IOException{
+        return store(player, level, rootId, limits, limits.storeRange());
+    }
+
+    // Remote assembly management requires creative mode or operator permissions
+    public static boolean canStoreRemotely(ServerPlayer player){
+        return player != null && (player.isCreative() || player.hasPermissions(2));
+    }
+
+    // Reuse archive validation and transactions while allowing the configured locate range
+    public static UUID storeRemote(ServerPlayer player, ServerLevel level, UUID rootId, Limits limits) throws IOException{
+        if(!canStoreRemotely(player)) throw new IllegalArgumentException("Remote sublevel storage requires creative mode or operator permissions");
+        return store(player, level, rootId, limits, limits.locateRange());
+    }
+
+    private static UUID store(ServerPlayer player, ServerLevel level, UUID rootId, Limits limits,
+                              double range) throws IOException{
         checkThread(level);
         var topology = SableAssemblyTopologyApi.discover(level, rootId);
         List<ServerSubLevel> bodies = topology.loadedBodies();
@@ -59,7 +75,7 @@ public final class SubLevelArchiveApi{
         for(ServerSubLevel body : bodies){
             Vec3 point = position(body);
             if(SubLevelConstructionState.isBuilding(body)) throw new IllegalArgumentException("Wait for schematic construction to finish before storing this assembly");
-            if(point.distanceToSqr(player.position()) > limits.storeRange() * limits.storeRange()) throw new IllegalArgumentException("Assembly is outside storage range");
+            if(point.distanceToSqr(player.position()) > range * range) throw new IllegalArgumentException("Assembly is outside storage range");
             if(!ShipPermissionManager.get(player.server).allows(body.getUniqueId(), player.getUUID(), ShipPermission.STORE)) throw new IllegalArgumentException("Ship storage permission denied");
             if(!WorldAccessPolicy.canAccess(player, level, body.getUniqueId(), BlockPos.containing(point))) throw new IllegalArgumentException("Assembly contains protected sublevels");
             if(!body.getPlot().getContraptions().isEmpty()) throw new IllegalArgumentException("Disassemble moving Create contraptions before storing this assembly");

@@ -37,6 +37,15 @@ public interface ScmControlProbe {
     // Check whether this compatibility probe owns the target and suppresses generic fallbacks
     default boolean suppressesFallbackProbes() { return false; }
 
+    // Report a native physical force model instead of a measured redstone response
+    default boolean hasForceModel(){ return false; }
+
+    // Get full-output force in newtons for the current environment
+    default double maximumForce(){ return 0.0D; }
+
+    // Get the native force response time in seconds, or zero for immediate controls
+    default double responseTimeSeconds(){ return 0.0D; }
+
     // Get the minimum control
     double minControl();
 

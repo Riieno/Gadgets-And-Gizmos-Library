@@ -17,6 +17,7 @@ import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.player.Player;
 
 import java.util.Map;
@@ -33,6 +34,23 @@ public final class PhysicsStaffInteractionGuard {
     =======================================================================================================================
 
     ------------------------------------------------------------##-----------------------------------------------------*/
+
+    private static final Map<ResourceLocation, TargetAuthorization> TARGET_AUTHORIZATIONS = new java.util.LinkedHashMap<>();
+    private static volatile java.util.List<TargetAuthorization> targetAuthorizations = java.util.List.of();
+
+    // Let consuming mods retain their own protection policy alongside ship permissions
+    @FunctionalInterface
+    public interface TargetAuthorization{
+        boolean canAccess(ServerPlayer player, UUID subLevelId);
+    }
+
+    // Register one owning mod's protection policy without replacing an existing provider
+    public static synchronized void registerTargetAuthorization(ResourceLocation id, TargetAuthorization authorization){
+        if(id == null || authorization == null) throw new IllegalArgumentException("A protection provider requires an id and authorization");
+        if(TARGET_AUTHORIZATIONS.putIfAbsent(id, authorization) != null)
+            throw new IllegalStateException("Duplicate physics staff authorization: " + id);
+        targetAuthorizations = java.util.List.copyOf(TARGET_AUTHORIZATIONS.values());
+    }
 
     private static final long MESSAGE_COOLDOWN_MS = 1000L;
     private static final Map<UUID, Long> LAST_MESSAGE_TIME = new ConcurrentHashMap<>();
@@ -68,6 +86,14 @@ public final class PhysicsStaffInteractionGuard {
             showFailureMessage(player,
                     Component.literal("Ship control initialization is in progress"));
             return false;
+        }
+        if(targetSubLevelId != null){
+            for(TargetAuthorization authorization : targetAuthorizations){
+                if(!authorization.canAccess(player, targetSubLevelId)){
+                    showFailureMessage(player, "item.createthrusters.physics_staff.error.permission_denied");
+                    return false;
+                }
+            }
         }
         if (targetSubLevelId != null
                 && !ShipPermissionManager.get(player.server).allows(

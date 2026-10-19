@@ -11,7 +11,13 @@ package com.rieno.gadgetsandgizmos.lib.client.schematic;
 import com.rieno.gadgetsandgizmos.lib.GadgetsNGizmosLibrary;
 import com.rieno.gadgetsandgizmos.lib.physics.archive.SchematicClientFiles;
 import com.rieno.gadgetsandgizmos.lib.physics.archive.SubLevelSchematicFiles;
+import com.rieno.gadgetsandgizmos.lib.physics.archive.SchematicCatalogue;
+import com.rieno.gadgetsandgizmos.lib.physics.archive.SchematicProvenance;
+import com.rieno.gadgetsandgizmos.lib.physics.archive.SubLevelSchematic;
+import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceLocation;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -19,6 +25,7 @@ import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -36,6 +43,8 @@ public final class ClientSchematicFiles{
     private static Transfer transfer;
     private static String error = "";
     private static boolean initialized;
+    private static int maximumBodies = 128;
+    private static int maximumBlocks = 262144;
 
     private ClientSchematicFiles(){}
 
@@ -46,6 +55,21 @@ public final class ClientSchematicFiles{
     =======================================================================================================================
 
     ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Resolve the current player's schematic folder independently of the server's files
+    public static Path directory(){
+        return Minecraft.getInstance().gameDirectory.toPath().resolve("schematics").toAbsolutePath().normalize();
+    }
+
+    // Create the player folder if needed and open it through the operating system
+    public static void openDirectory(){
+        try{
+            Path dir = directory();
+            Files.createDirectories(dir);
+            Util.getPlatform().openFile(dir.toFile());
+            error = "";
+        }catch(IOException | RuntimeException err){ error = "Cannot open schematic directory: " + message(err); }
+    }
 
     // Read local schematic folders in the background when the browser first opens
     public static List<Entry> catalogue(){
@@ -58,20 +82,37 @@ public final class ClientSchematicFiles{
         return files;
     }
 
+    // Apply the connected server's limits before returning private compatible files
+    public static List<Entry> catalogue(int bodies, int blocks){
+        if(bodies < 1 || blocks < 1) return List.of();
+        if(maximumBodies != bodies || maximumBlocks != blocks){
+            maximumBodies = bodies; maximumBlocks = blocks;
+            if(scan != null) scan.cancel(false);
+            scan = null; files = List.of(); initialized = false;
+        }
+        return catalogue();
+    }
+
     // Refresh Create, Photomancy and Toolgun local folders without publishing their names
     public static void refresh(){
         if(scan != null && !scan.isDone()) return;
         initialized = true;
         error = "";
-        Path root = Minecraft.getInstance().gameDirectory.toPath();
+        var minecraft = Minecraft.getInstance();
+        if(minecraft.level == null){ files = List.of(); return; }
+        Path root = minecraft.gameDirectory.toPath();
+        var registry = minecraft.level.registryAccess().lookupOrThrow(Registries.BLOCK);
+        int bodies = maximumBodies, blocks = maximumBlocks;
         scan = CompletableFuture.supplyAsync(() -> {
             List<Entry> res = new ArrayList<>();
             for(String folder : List.of("schematics", "Sable-Schematics", "enxv_aeronautics_structures")){
                 Path dir = root.resolve(folder);
                 String prefix = "client:" + folder + "/";
                 try{
-                    for(var file : SubLevelSchematicFiles.catalogue(dir, prefix))
-                        res.add(new Entry(file.id(), folder + "/" + file.name(), dir, prefix));
+                    for(var inspected : SchematicCatalogue.catalogue(dir, prefix, registry, bodies, blocks)){
+                        var file = inspected.file();
+                        res.add(new Entry(file.id(), folder + "/" + file.name(), dir, prefix, inspected.format(), inspected.source()));
+                    }
                 }catch(IOException err){ throw new IllegalArgumentException("Cannot read " + folder + ": " + err.getMessage(), err); }
             }
             return List.copyOf(res);
@@ -153,7 +194,15 @@ public final class ClientSchematicFiles{
     }
 
     // Identify one private local file without sending its path to a server
-    public record Entry(UUID id, String name, Path directory, String idPrefix){}
+    public record Entry(UUID id, String name, Path directory, String idPrefix, SubLevelSchematic.Format format, ResourceLocation source){
+        public Entry(UUID id, String name, Path directory, String idPrefix, SubLevelSchematic.Format format){
+            this(id, name, directory, idPrefix, format, SchematicProvenance.source(new net.minecraft.nbt.CompoundTag(), format));
+        }
+        // Preserve callers which supply a native private schematic entry
+        public Entry(UUID id, String name, Path directory, String idPrefix){
+            this(id, name, directory, idPrefix, SubLevelSchematic.Format.NATIVE);
+        }
+    }
 
     // Carry one bounded byte slice to the consuming mod's network protocol
     public record Chunk(UUID id, int total, int offset, byte[] data){

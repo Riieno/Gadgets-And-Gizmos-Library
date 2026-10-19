@@ -212,6 +212,18 @@ public final class ScmAdaptiveStateModel{
             upper += Math.max(0.0D, projection * sign) * (1.0D - trim[idx])
                     + Math.max(0.0D, -projection * sign) * trim[idx];
         }
+        // Component bounds give a tighter starting interval than the summed projection.
+        // Allow the solver's existing ten-percent residual tolerance at the boundary.
+        int rowOffset = angular ? 3 : 0;
+        double scale = angular ? characteristicLength : 1.0D;
+        double[] components = {axis.x * sign * scale, axis.y * sign * scale, axis.z * sign * scale};
+        for(int row = 0; row < 3; row++){
+            double component = components[row];
+            double constrained = Math.abs(component) - scale * 0.1D;
+            if(constrained <= EPSILON) continue;
+            double bound = component > 0.0D ? maximum[rowOffset + row] : -minimum[rowOffset + row];
+            upper = Math.min(upper, bound / constrained);
+        }
         if(upper <= EPSILON) return 0.0D;
         double lower = 0.0D;
         for(int step = 0; step < 8; step++){
@@ -333,6 +345,16 @@ public final class ScmAdaptiveStateModel{
                 -frequency, -frequency, positive, negative);
     }
 
+    // Select recovery speed independently of the available propulsion force
+    public Response feedback(Vec3 axis, boolean angular, double error, double rate, double strength){
+        double positive = authority(axis, angular, true);
+        double negative = authority(axis, angular, false);
+        double acceleration = ScmStateFeedback.recoveryAcceleration(error, rate, strength,
+                tickSeconds, positive, negative);
+        double pole = -ScmControlInputs.strength(strength) / tickSeconds;
+        return new Response(acceleration, pole, pole, positive, negative);
+    }
+
     // Track a requested rate with the acceleration this ship can currently supply
     public double velocityFeedback(Vec3 axis, boolean angular,
                                    double desiredRate, double rate, double tolerance){
@@ -368,21 +390,33 @@ public final class ScmAdaptiveStateModel{
         return vectorFeedback(error, rate, true);
     }
 
-    // Preserve diagonal control directions and damp motion outside the target axis
+    // Recover attitude at an explicit speed while respecting directional torque capacity
+    public Vec3 angularFeedback(Vec3 error, Vec3 rate, double strength){
+        if(ScmControlInputs.strength(strength) == 0.0D) return Vec3.ZERO;
+        return vectorFeedback(error, rate, true, strength, true);
+    }
+
     private Vec3 vectorFeedback(Vec3 error, Vec3 rate, boolean angular){
+        return vectorFeedback(error, rate, angular, 1.0D, false);
+    }
+
+    // Preserve diagonal control directions and damp motion outside the target axis
+    private Vec3 vectorFeedback(Vec3 error, Vec3 rate, boolean angular, double strength, boolean recovery){
         Vec3 target = finite(error);
         Vec3 currentRate = finite(rate);
         Vec3 aim = target.subtract(currentRate.scale(tickSeconds));
         if(aim.lengthSqr() <= EPSILON) return Vec3.ZERO;
         Vec3 axis = aim.normalize();
-        Vec3 result = axis.scale(feedback(axis, angular,
-                target.dot(axis), currentRate.dot(axis)).acceleration());
+        Vec3 result = axis.scale((recovery
+                ? feedback(axis, angular, target.dot(axis), currentRate.dot(axis), strength)
+                : feedback(axis, angular, target.dot(axis), currentRate.dot(axis))).acceleration());
         Vec3 remainingRate = currentRate.subtract(
                 axis.scale(currentRate.dot(axis)));
         if(remainingRate.lengthSqr() > EPSILON){
             Vec3 dampingAxis = remainingRate.normalize();
-            result = result.add(dampingAxis.scale(feedback(dampingAxis, angular,
-                    0.0D, remainingRate.length()).acceleration()));
+            result = result.add(dampingAxis.scale((recovery
+                    ? feedback(dampingAxis, angular, 0.0D, remainingRate.length(), strength)
+                    : feedback(dampingAxis, angular, 0.0D, remainingRate.length())).acceleration()));
         }
         return result;
     }

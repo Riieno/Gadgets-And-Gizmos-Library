@@ -171,6 +171,15 @@ public final class ShipDockScheduler {
     }
 
     // Request one named ship resource channel
+    public Lease request(MinecraftServer server, RequestKey requester,
+            List<DockSlot> candidateDocks, Set<DockSlot> occupiedDocks,
+            @Nullable DockSlot ownedDock, RequestPriority priority, VesselEnvelope vessel){
+        if(server == null) return Lease.NONE;
+        return request(requester, candidateDocks, occupiedDocks, ownedDock,
+                priority, vessel, server.getTickCount());
+    }
+
+    // Request one named ship resource channel using a shared monotonic tick
     public synchronized Lease request(
             RequestKey requester,
             List<DockSlot> candidateDocks,

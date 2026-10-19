@@ -7,6 +7,11 @@ public final class KineticTargetSpeed {
     private KineticTargetSpeed() {
     }
 
+    // Convert a percentage to a reducing transmission ratio
+    public static float percentageRatio(double percentage){
+        return Double.isFinite(percentage) ? (float) Math.clamp(percentage / 100.0D, 0.0D, 1.0D) : 0.0f;
+    }
+
     public static float outputRatio(float inputRpm, double targetRpm) {
         if (Double.isNaN(targetRpm)) {
             return 1.0f;

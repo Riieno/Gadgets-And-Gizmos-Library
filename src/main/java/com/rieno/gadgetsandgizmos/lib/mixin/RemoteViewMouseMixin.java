@@ -1,7 +1,12 @@
 package com.rieno.gadgetsandgizmos.lib.mixin;
 
 import com.rieno.gadgetsandgizmos.lib.client.view.RemoteViewClient;
+import com.rieno.gadgetsandgizmos.lib.client.view.RemoteViewKeys;
 import net.minecraft.client.MouseHandler;
+import net.minecraft.client.player.LocalPlayer;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.rieno.gadgetsandgizmos.lib.client.view.ViewInteractionClient;
 import org.lwjgl.glfw.GLFW;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -12,25 +17,24 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 // Route raw mouse input into the active lens controls
 @Mixin(MouseHandler.class)
 public abstract class RemoteViewMouseMixin{
-    @Shadow private double accumulatedDX;
-    @Shadow private double accumulatedDY;
-    // Forward motion without changing the player's body rotation
-    @Inject(method = "turnPlayer", at = @At("HEAD"), cancellable = true)
-    private void turnLens(double movementTime, CallbackInfo ci){
-        if(!RemoteViewClient.isActive()) return;
-        RemoteViewClient.turn(accumulatedDX, accumulatedDY);
-        ci.cancel();
+    // Existing drag hooks consume motion first; unclaimed motion turns the lens
+    @WrapOperation(method = "turnPlayer", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/player/LocalPlayer;turn(DD)V"))
+    private void turnLens(LocalPlayer player, double yaw, double pitch, Operation<Void> original){
+        if(RemoteViewClient.isActive() && net.minecraft.client.Minecraft.getInstance().screen == null) RemoteViewClient.turnScaled(yaw, pitch);
+        else original.call(player, yaw, pitch);
     }
     // Forward scroll without selecting another hotbar item
     @Inject(method = "onScroll", at = @At("HEAD"), cancellable = true)
     private void zoomLens(long window, double horizontal, double vertical, CallbackInfo ci){
-        if(!RemoteViewClient.isActive()) return;
-        RemoteViewClient.zoom(vertical);
+        if(!RemoteViewClient.isActive() || net.minecraft.client.Minecraft.getInstance().screen != null) return;
+        if(!ViewInteractionClient.scrolling(horizontal, vertical)) RemoteViewClient.zoom(vertical);
         ci.cancel();
     }
-    // Suppress attack and use presses while allowing held buttons to release
+    // Match configurable mouse actions without attacking or using held items
     @Inject(method = "onPress", at = @At("HEAD"), cancellable = true)
     private void suppressButtons(long window, int button, int action, int modifiers, CallbackInfo ci){
-        if(RemoteViewClient.isActive() && action != GLFW.GLFW_RELEASE) ci.cancel();
+        if(!RemoteViewClient.isActive() || net.minecraft.client.Minecraft.getInstance().screen != null) return;
+        if(!RemoteViewKeys.mouse(button, action)) ViewInteractionClient.mouse(button, action, modifiers);
+        ci.cancel();
     }
 }

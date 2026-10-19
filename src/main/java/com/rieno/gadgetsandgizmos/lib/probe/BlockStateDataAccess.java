@@ -9,6 +9,7 @@ package com.rieno.gadgetsandgizmos.lib.probe;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.rieno.gadgetsandgizmos.lib.discovery.SubLevelBlockEntityCollector;
+import com.rieno.gadgetsandgizmos.lib.control.BlockStateControlReceiver;
 import com.rieno.gadgetsandgizmos.lib.graph.GraphValue;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -98,7 +99,7 @@ public final class BlockStateDataAccess {
 
     // Write a complete state data update
     public static boolean write(Level level, BlockPos pos, Map<String, GraphValue> values) {
-        if (level == null || pos == null || values == null || values.isEmpty()
+        if (level == null || level.isClientSide || pos == null || values == null || values.isEmpty()
                 || !SubLevelBlockEntityCollector.isTargetLoaded(level, null, pos)) {
             return false;
         }
@@ -114,7 +115,10 @@ public final class BlockStateDataAccess {
                 updated = candidate;
             }
         }
-        if (updated.equals(current) || !level.setBlock(pos, updated, 3)) {
+        if(updated.equals(current)) return false;
+        if(level.getBlockEntity(pos) instanceof BlockStateControlReceiver receiver)
+            return receiver.applyControlledBlockState(updated);
+        if (!level.setBlock(pos, updated, 3)) {
             return false;
         }
         level.updateNeighborsAt(pos, updated.getBlock());

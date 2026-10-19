@@ -196,6 +196,7 @@ public final class SablePathfinderDebugRenderer {
             return switch (result == null ? SablePathfinder.TraversalResult.BLOCKED : result) {
                 case CLEAR -> new RouteColor(0.30F, 0.95F, 0.35F);
                 case BLOCKED -> new RouteColor(1.0F, 0.12F, 0.12F);
+                case PENDING -> new RouteColor(0.35F, 0.65F, 1.0F);
                 case UNAVAILABLE -> new RouteColor(1.0F, 0.58F, 0.08F);
             };
         }

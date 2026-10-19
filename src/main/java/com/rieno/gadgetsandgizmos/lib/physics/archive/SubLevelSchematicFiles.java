@@ -21,6 +21,7 @@ import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtUtils;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -45,6 +46,8 @@ import java.util.UUID;
 
 // Read and write bounded Create and Sable structure files in the server's schematics directory
 public final class SubLevelSchematicFiles{
+    // Bound every source format and live export to the same supported body dimensions
+    public static final int MAXIMUM_BODY_SIDE = 512;
     private SubLevelSchematicFiles(){}
 
     /*--------------------------------------------------------##---------------------------------------------------------
@@ -90,6 +93,14 @@ public final class SubLevelSchematicFiles{
         return val.endsWith(".nbt") || val.endsWith(".excraft");
     }
 
+    // Show the schematic basename while retaining its full catalogue path as the file identity
+    public static String displayName(String name){
+        if(name == null) return "";
+        String val = name.replace('\\', '/');
+        val = val.substring(val.lastIndexOf('/') + 1);
+        return supportedName(val) ? val.substring(0, val.lastIndexOf('.')) : val;
+    }
+
     // Resolve catalogue identities again and reject files outside the selected folder
     public static byte[] read(Path directory, String idPrefix, UUID id) throws IOException{
         Entry entry = catalogue(directory, idPrefix).stream().filter(row -> row.id().equals(id)).findFirst()
@@ -115,6 +126,12 @@ public final class SubLevelSchematicFiles{
 
     // Decode compressed or raw NBT with the same limits for local files and client uploads
     public static SubLevelSchematic decode(HolderGetter<Block> registry, byte[] data, int maximumBodies, int maximumBlocks) throws IOException{
+        try{ return decode(registry, readTag(data), maximumBodies, maximumBlocks); }
+        catch(RuntimeException err){ throw new IOException("Cannot read schematic: " + err.getMessage(), err); }
+    }
+
+    // Read bounded source metadata before normalization changes its coordinate format
+    public static CompoundTag readTag(byte[] data) throws IOException{
         if(data == null || data.length == 0 || data.length > SchematicClientFiles.MAXIMUM_BYTES)
             throw new IOException("Schematic file is empty or exceeds the size limit");
         try(var input = new ByteArrayInputStream(data)){
@@ -122,7 +139,7 @@ public final class SubLevelSchematicFiles{
             CompoundTag tag = data.length >= 2 && (data[0] & 255) == 31 && (data[1] & 255) == 139
                     ? NbtIo.readCompressed(input, budget) : NbtIo.read(new DataInputStream(input), budget);
             if(tag == null) throw new IOException("Schematic NBT is empty");
-            return decode(registry, tag, maximumBodies, maximumBlocks);
+            return tag;
         }catch(RuntimeException err){ throw new IOException("Cannot read schematic: " + err.getMessage(), err); }
     }
 
@@ -141,6 +158,11 @@ public final class SubLevelSchematicFiles{
 
     // Export an independent template without replacing an existing schematic
     public static String save(MinecraftServer server, String name, SubLevelSchematic schematic) throws IOException{
+        return save(server, name, schematic, null);
+    }
+
+    // Encode the caller's producer identity without guessing from a native file layout
+    public static String save(MinecraftServer server, String name, SubLevelSchematic schematic, ResourceLocation source) throws IOException{
         if(name == null || !name.matches("[A-Za-z0-9_-]{1,64}")) throw new IllegalArgumentException("Use 1-64 letters, numbers, underscores or dashes for the schematic name");
         Path dir = directory(server);
         String next = name;
@@ -148,7 +170,7 @@ public final class SubLevelSchematicFiles{
         Path target = dir.resolve(next + ".nbt");
         Path temp = Files.createTempFile(dir, "schematic-", ".tmp");
         try{
-            NbtIo.writeCompressed(encode(schematic), temp);
+            NbtIo.writeCompressed(encode(schematic, source), temp);
             Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
         }finally{ Files.deleteIfExists(temp); }
         return target.getFileName().toString();
@@ -196,7 +218,13 @@ public final class SubLevelSchematicFiles{
 
     // Encode the native sub_levels extension while keeping the root structure empty
     public static CompoundTag encode(SubLevelSchematic schematic){
+        return encode(schematic, null);
+    }
+
+    // Mark a produced template while preserving foreign import frames
+    public static CompoundTag encode(SubLevelSchematic schematic, ResourceLocation source){
         CompoundTag res = structureTag(new BlockPos(1, 1, 1));
+        if(source != null) res.putString(SchematicProvenance.SOURCE_TAG, source.toString());
         ListTag children = new ListTag();
         for(var body : schematic.bodies()){
             CompoundTag tag = structureTag(body.size());
@@ -242,6 +270,8 @@ public final class SubLevelSchematicFiles{
         }
         var prev = SubLevelSchematicSerializationContext.getCurrentContext();
         List<SubLevelSchematic.Body> bodies = new ArrayList<>();
+        var frames = schematic.bodies().stream().map(val -> new SchematicConnectionData.BodyFrame(
+                val.importFrame().originalId(), val.id(), val.importFrame().origin(), val.size())).toList();
         try{
             for(var body : schematic.bodies()){
                 List<SubLevelSchematic.Block> blocks = new ArrayList<>();
@@ -250,7 +280,9 @@ public final class SubLevelSchematicFiles{
                     CompoundTag data = SchematicImportAdapters.prepare(schematic, body, block);
                     var be = SchematicBlockData.create(level, block.pos().offset(body.importFrame().origin()), block.state(), data);
                     SubLevelSchematicSerializationContext.setCurrentContext(ctx);
-                    blocks.add(new SubLevelSchematic.Block(block.pos(), block.state(), SchematicBlockData.safe(level, block.state(), be)));
+                    CompoundTag safe = SchematicBlockData.safe(level, block.state(), be);
+                    SchematicConnectionData.capture(level, be, data, safe, body.importFrame().originalId(), frames);
+                    blocks.add(new SubLevelSchematic.Block(block.pos(), block.state(), safe));
                 }
                 bodies.add(new SubLevelSchematic.Body(body.id(), body.corner(), body.orientation(), body.size(), blocks));
             }
@@ -296,7 +328,8 @@ public final class SubLevelSchematicFiles{
     private static SubLevelSchematic.Body decodeBody(HolderGetter<Block> registry, CompoundTag tag, UUID id, Vec3 corner, Quaterniond turn, int maximumBlocks){
         if(!tag.getList("entities", Tag.TAG_COMPOUND).isEmpty()) throw new IllegalArgumentException("Use a block-only schematic; entity templates are unsupported");
         BlockPos size = readCoordinates(tag.getList("size", Tag.TAG_INT));
-        if(size.getX() < 1 || size.getY() < 1 || size.getZ() < 1 || size.getX() > 512 || size.getY() > 512 || size.getZ() > 512) throw new IllegalArgumentException("Schematic dimensions exceed the limit");
+        if(size.getX() < 1 || size.getY() < 1 || size.getZ() < 1 || size.getX() > MAXIMUM_BODY_SIDE
+                || size.getY() > MAXIMUM_BODY_SIDE || size.getZ() > MAXIMUM_BODY_SIDE) throw new IllegalArgumentException("Schematic dimensions exceed the limit");
         ListTag states = tag.getList("palette", Tag.TAG_COMPOUND);
         if(states.isEmpty()){
             ListTag palettes = tag.getList("palettes", Tag.TAG_LIST);

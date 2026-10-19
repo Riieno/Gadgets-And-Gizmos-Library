@@ -50,8 +50,8 @@ public abstract class TextInputScreen extends Screen{
 
     // Submit the field value and return to the parent screen
     protected final void confirm(){
-        if(onConfirm != null) onConfirm.accept(input == null ? "" : input.getValue());
         onClose();
+        if(onConfirm != null) onConfirm.accept(input == null ? "" : input.getValue());
     }
 
     // Submit text with either Enter key

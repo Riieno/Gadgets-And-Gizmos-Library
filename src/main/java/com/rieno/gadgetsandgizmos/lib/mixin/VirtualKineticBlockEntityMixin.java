@@ -12,6 +12,7 @@ import com.rieno.gadgetsandgizmos.lib.kinetics.GadgetsNGizmosKineticGuard;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticHostBlock;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticPos;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticProvider;
+import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticSourceLink;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.simibubi.create.content.kinetics.base.GeneratingKineticBlockEntity;
@@ -32,7 +33,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 // Add virtual kinetic neighbours, source resolution and persistence to Create block entities
 @Mixin(KineticBlockEntity.class)
-public abstract class VirtualKineticBlockEntityMixin extends SmartBlockEntity {
+public abstract class VirtualKineticBlockEntityMixin extends SmartBlockEntity implements VirtualKineticSourceLink {
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================
@@ -67,6 +68,12 @@ public abstract class VirtualKineticBlockEntityMixin extends SmartBlockEntity {
     =======================================================================================================================
 
     ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Get the connected virtual source slot
+    @Override
+    public int ct$getConnectedVirtualKineticSlot(){
+        return ct$connectedVirtualKineticSlot;
+    }
 
     // Resolve the virtual validate
     @WrapOperation(method = "validateKinetics", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/Level;getBlockEntity(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/block/entity/BlockEntity;"))

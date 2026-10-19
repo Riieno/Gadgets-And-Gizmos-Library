@@ -38,7 +38,6 @@ public final class GadgetsNGizmosLibraryNeoForge {
         GadgetsNGizmosLibraryConfigs.register(modContainer);
         SableSubLevelResidency.bootstrap();
         com.rieno.gadgetsandgizmos.lib.item.TimedItemTransformations.register();
-        com.rieno.gadgetsandgizmos.lib.inventory.ContainerAutomationPolicies.register();
         NeoForge.EVENT_BUS.addListener(GadgetsNGizmosLibraryNeoForge::onTagsUpdated);
         NeoForge.EVENT_BUS.addListener(GadgetsNGizmosLibraryNeoForge::onServerStarted);
         NeoForge.EVENT_BUS.addListener(GadgetsNGizmosLibraryNeoForge::onServerStopped);

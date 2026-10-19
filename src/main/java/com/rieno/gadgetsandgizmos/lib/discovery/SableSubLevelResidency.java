@@ -106,6 +106,16 @@ public final class SableSubLevelResidency {
         return new Lease(owner);
     }
 
+    // Release this owner's restored tickets even before a new lease has adopted them
+    public static void release(String owner, Collection<? extends SubLevel> subLevels){
+        if(owner == null || owner.isBlank() || subLevels == null) return;
+        for(SubLevel subLevel : subLevels){
+            if(!(subLevel instanceof ServerSubLevel serverSubLevel)) continue;
+            invokeTicket(serverSubLevel, RESIDENCY_TICKET, owner, false);
+            invokeTicket(serverSubLevel, LEGACY_RESIDENCY_TICKET, owner, false);
+        }
+    }
+
     // Check restored plot chunks without waiting for unused reserved chunk slots
     public static boolean isFullyLoaded(SubLevel subLevel) {
         if (!(subLevel instanceof ServerSubLevel serverSubLevel) || serverSubLevel.isRemoved()) {

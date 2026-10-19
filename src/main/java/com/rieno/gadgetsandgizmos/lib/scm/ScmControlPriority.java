@@ -6,7 +6,7 @@ import net.minecraft.world.phys.Vec3;
 /** Keeps direct rotation responsive while altitude hold requests lift. */
 public final class ScmControlPriority {
     private static final Set<String> DIRECT_ROTATION = Set.of(
-            "ship_yaw", "ship_pan", "ship_yaw_left", "ship_yaw_right",
+            "ship_yaw", "ship_pan", "ship_yaw_left", "ship_yaw_right", "ship_hold_yaw",
             "ship_pitch", "ship_tilt", "ship_pitch_up", "ship_pitch_down",
             "ship_roll", "ship_roll_left", "ship_roll_right");
 
@@ -35,9 +35,21 @@ public final class ScmControlPriority {
         return res;
     }
 
+    // Remove a component owned by another control; a zero axis leaves the request unchanged
+    public static Vec3 remainingForce(Vec3 request, Vec3 controlledAxis){
+        if(controlledAxis.lengthSqr() <= 1.0E-12D) return request;
+        return removeAxis(request, controlledAxis);
+    }
+
+    // Use authored stabilization before the implicit leveling supplied by hover
+    public static double uprightRecoveryStrength(double hoverStrength, double stabilizationStrength){
+        double explicit = ScmControlInputs.strength(stabilizationStrength);
+        return explicit > 0.0D ? explicit : ScmControlInputs.strength(hoverStrength);
+    }
+
     public static Vec3 remainingTorque(Vec3 request, Set<String> primary, Vec3 forward, Vec3 up){
         Vec3 res = request;
-        if(primary.stream().anyMatch(val -> val.startsWith("ship_yaw") || val.equals("ship_pan"))) res = removeAxis(res, up);
+        if(primary.stream().anyMatch(val -> val.startsWith("ship_yaw") || val.equals("ship_pan") || val.equals("ship_hold_yaw"))) res = removeAxis(res, up);
         if(primary.stream().anyMatch(val -> val.startsWith("ship_pitch") || val.equals("ship_tilt"))) res = removeAxis(res, forward.cross(up));
         if(primary.stream().anyMatch(val -> val.startsWith("ship_roll"))) res = removeAxis(res, forward);
         return res;

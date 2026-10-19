@@ -41,10 +41,12 @@ public abstract class SubLevelConstructionMixin{
                 || bounds.minY() > bounds.maxY() || bounds.minZ() > bounds.maxZ())) ci.cancel();
     }
 
-    // Preserve temporarily empty plots until their scheduled layer is placed
+    // Preserve empty plots until their construction or block transfer finishes
     @Inject(method = "onPlotBoundsChanged", at = @At("HEAD"), cancellable = true)
     private void gadgetsngizmos$preserveConstruction(CallbackInfo ci){
-        if(SubLevelConstructionState.isBuilding((ServerSubLevel)(Object)this)) ci.cancel();
+        ServerSubLevel body = (ServerSubLevel)(Object)this;
+        if(SubLevelConstructionState.isBuilding(body)
+                || com.rieno.gadgetsandgizmos.lib.physics.SableSubLevelLifecycleApi.isTransferring(body)) ci.cancel();
     }
 
     // Delay splitting until all neighboring schematic blocks are present
