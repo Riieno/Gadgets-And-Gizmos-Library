@@ -1,6 +1,8 @@
 package com.rieno.gadgetsandgizmos.lib.compat.simulated;
 
 import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
+import com.rieno.gadgetsandgizmos.lib.discovery.SubLevelBlockEntityCollector;
+import com.rieno.gadgetsandgizmos.lib.probe.BlockEntityLookupApi;
 import dev.simulated_team.simulated.content.blocks.docking_connector.DockingConnectorBlockEntity;
 import dev.simulated_team.simulated.content.blocks.docking_connector.DockingConnectorPair;
 import net.minecraft.core.BlockPos;
@@ -22,8 +24,9 @@ public final class SimulatedDockingApi{
     }
 
     public static boolean isEndpointLoaded(@Nullable Level level, @Nullable UUID bodyId, BlockPos pos){
-        if(level == null || pos == null || !level.hasChunkAt(pos)) return false;
-        return bodyId == null || SableLevelApi.subLevel(level, bodyId) != null;
+        if(level == null || pos == null) return false;
+        if(bodyId == null) return level.hasChunkAt(pos);
+        return SubLevelBlockEntityCollector.isTargetLoaded(level, bodyId, pos);
     }
 
     public static boolean isAwaitingPeer(@Nullable BlockEntity endpoint){
@@ -36,7 +39,7 @@ public final class SimulatedDockingApi{
     public static boolean hasPhysicalConnection(@Nullable BlockEntity endpoint){
         if(!(endpoint instanceof DockingConnectorBlockEntity connector)
                 || connector.otherConnectorPosition == null || isAwaitingPeer(connector)) return false;
-        BlockEntity peer = connector.getLevel().getBlockEntity(connector.otherConnectorPosition);
+        BlockEntity peer = loadedPeer(connector);
         return peer instanceof DockingConnectorBlockEntity other
                 && Objects.equals(other.otherConnectorPosition, connector.getBlockPos())
                 && sameSavedBodies(connector, other)
@@ -48,7 +51,7 @@ public final class SimulatedDockingApi{
         if(!(endpoint instanceof DockingConnectorBlockEntity connector)
                 || connector.getLevel() == null || connector.getLevel().isClientSide
                 || connector.otherConnectorPosition == null || isAwaitingPeer(connector)) return false;
-        BlockEntity peer = connector.getLevel().getBlockEntity(connector.otherConnectorPosition);
+        BlockEntity peer = loadedPeer(connector);
         if(!(peer instanceof DockingConnectorBlockEntity other)
                 || !Objects.equals(other.otherConnectorPosition, connector.getBlockPos())
                 || !sameSavedBodies(connector, other)) return false;
@@ -65,6 +68,17 @@ public final class SimulatedDockingApi{
     private static boolean sameSavedBodies(DockingConnectorBlockEntity connector, DockingConnectorBlockEntity other){
         return Objects.equals(connector.otherConnectorSubLevelId, SableLevelApi.containingId(other))
                 && Objects.equals(other.otherConnectorSubLevelId, SableLevelApi.containingId(connector));
+    }
+
+    // Resolve native and actor-backed connector endpoints in already-loaded plots
+    public static @Nullable DockingConnectorBlockEntity loadedPeer(@Nullable BlockEntity endpoint){
+        if(!(endpoint instanceof DockingConnectorBlockEntity connector) || connector.getLevel() == null
+                || connector.otherConnectorPosition == null || isAwaitingPeer(connector)) return null;
+        BlockEntity peer = connector.otherConnectorSubLevelId == null
+                ? connector.getLevel().getBlockEntity(connector.otherConnectorPosition)
+                : BlockEntityLookupApi.findLoadedExact(connector.getLevel(), connector.otherConnectorSubLevelId,
+                        connector.otherConnectorPosition);
+        return peer instanceof DockingConnectorBlockEntity other && !other.isRemoved() ? other : null;
     }
 
     private static boolean isPending(BlockEntity endpoint){

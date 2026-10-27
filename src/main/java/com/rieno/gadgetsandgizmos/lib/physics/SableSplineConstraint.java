@@ -64,6 +64,8 @@ public final class SableSplineConstraint implements AutoCloseable{
     private Vec3 framePosition = Vec3.ZERO;
     private Vec3 frameDirection = Vec3.ZERO;
     private Quaterniond localFrame = new Quaterniond();
+    private boolean levelHeading;
+    private Vec3 headingFallback = new Vec3(0, 0, 1);
     private SplineConstraintFrame.AxisPolicy axes = SplineConstraintFrame.AxisPolicy.ALL;
     private WaypointSpline.Projection projection = WaypointSpline.Projection.notFound();
     private double handoffDistance;
@@ -170,6 +172,17 @@ public final class SableSplineConstraint implements AutoCloseable{
     ) throws ReflectiveOperationException{
         return queue(body, spline, projection, worldAnchor, localForward, localUp, axes,
                 capture, handoffDistance, clearance, false, true);
+    }
+
+    // Constrain the off-centre anchor without allowing its rail force to roll the body
+    public synchronized boolean updateLevelWorldAnchor(ServerSubLevel body, WaypointSpline spline,
+            WaypointSpline.Projection projection, Vec3 worldAnchor, Vec3 localForward, Vec3 localUp,
+            SplineConstraintFrame.AxisPolicy axes, CaptureSettings capture, double handoffDistance,
+            ClearancePredicate clearance) throws ReflectiveOperationException{
+        boolean accepted = updateWorldAnchor(body, spline, projection, worldAnchor, localForward, localUp,
+                axes, capture, handoffDistance, clearance);
+        if(accepted) requested = requested.withLevelHeading();
+        return accepted;
     }
 
     // Queue capture after the caller has certified live hull overlap
@@ -331,7 +344,10 @@ public final class SableSplineConstraint implements AutoCloseable{
             anchor = nextLocalAnchor;
             requestAnchor = nextRequest.anchor();
             requestAnchorWorld = nextRequest.worldAnchor();
+            if(levelHeading != nextRequest.levelHeading()) frameRefreshRequired = true;
+            levelHeading = nextRequest.levelHeading();
             localFrame = nextRequest.localFrame();
+            headingFallback = transform(pose, nextRequest.localForward());
             handoffDistance = nextRequest.handoffDistance();
             clearance = nextRequest.clearance();
             Vec3 position = pose.transformPosition(anchor);
@@ -499,11 +515,16 @@ public final class SableSplineConstraint implements AutoCloseable{
         handle = null;
         Quaterniond worldFrame = SplineConstraintFrame.orientation(
                 direction, new Vec3(0.0D, 1.0D, 0.0D));
-        Set<ConstraintJointAxis> locked = nextStage == Stage.RIGID
+        Set<ConstraintJointAxis> locked = new java.util.HashSet<>(nextStage == Stage.RIGID
                 ? axes == SplineConstraintFrame.AxisPolicy.HORIZONTAL ? GROUND_AXES : FLIGHT_AXES
-                : Set.of();
+                : Set.of());
+        Quaterniond bodyFrame = localFrame;
+        if(levelHeading){
+            locked.addAll(Set.of(ConstraintJointAxis.ANGULAR_X, ConstraintJointAxis.ANGULAR_Y, ConstraintJointAxis.ANGULAR_Z));
+            bodyFrame = SplineConstraintFrame.levelLocalFrame(localFrame, direction, headingFallback);
+        }
         Object config = SableConstraintApi.genericConfiguration(
-                vector(position), vector(anchor), worldFrame, localFrame,
+                vector(position), vector(anchor), worldFrame, bodyFrame,
                 locked);
         Object res = SableConstraintApi.addConstraint(
                 system.getPipeline(), null, body, config);
@@ -591,8 +612,21 @@ public final class SableSplineConstraint implements AutoCloseable{
             double handoffDistance,
             ClearancePredicate clearance,
             boolean overlapCertified,
-            boolean worldAnchor
-    ){}
+            boolean worldAnchor,
+            boolean levelHeading
+    ){
+        private AttachmentRequest(ServerSubLevel body, WaypointSpline spline, WaypointSpline.Projection projection,
+                Vec3 anchor, Vec3 localForward, Vec3 localUp, Quaterniond localFrame, SplineConstraintFrame.AxisPolicy axes,
+                SubLevelPhysicsSystem system, CaptureSettings capture, double handoffDistance, ClearancePredicate clearance,
+                boolean overlapCertified, boolean worldAnchor){
+            this(body, spline, projection, anchor, localForward, localUp, localFrame, axes, system, capture,
+                    handoffDistance, clearance, overlapCertified, worldAnchor, false);
+        }
+        private AttachmentRequest withLevelHeading(){
+            return new AttachmentRequest(body, spline, projection, anchor, localForward, localUp, localFrame, axes, system,
+                    capture, handoffDistance, clearance, overlapCertified, worldAnchor, true);
+        }
+    }
 
     // Expose immutable solver lifecycle counters for host diagnostics
     public record DebugState(

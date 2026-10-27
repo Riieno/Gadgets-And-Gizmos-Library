@@ -136,6 +136,21 @@ public final class SoftParticleRenderTypes {
         }
     };
 
+    private static final ParticleRenderType ADDITIVE_PARTICLE_SHEET = new ParticleRenderType(){
+        @Override
+        public BufferBuilder begin(Tesselator tesselator, TextureManager textureManager){
+            RenderSystem.setShader(GameRenderer::getParticleShader);
+            RenderSystem.setShaderTexture(0, TextureAtlas.LOCATION_PARTICLES);
+            RenderSystem.depthMask(false);
+            RenderSystem.enableBlend();
+            RenderSystem.blendFunc(GlStateManager.SourceFactor.SRC_ALPHA, GlStateManager.DestFactor.ONE);
+            return tesselator.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.PARTICLE);
+        }
+
+        @Override
+        public String toString(){ return "GADGETSNGIZMOS_ADDITIVE_PARTICLE_SHEET"; }
+    };
+
     // Scene depth snapshot shared by the particle batch
     private static final DepthTextureSnapshot DEPTH = new DepthTextureSnapshot();
     // Shader registered by the library client bootstrap
@@ -300,6 +315,11 @@ public final class SoftParticleRenderTypes {
     // Render particle-atlas smoke before translucent blocks
     public static ParticleRenderType earlyTranslucentParticleSheet() {
         return EARLY_TRANSLUCENT_PARTICLE_SHEET;
+    }
+
+    // Blend ordinary particle-atlas sprites additively without changing their lighting
+    public static ParticleRenderType additiveParticleSheet(){
+        return ADDITIVE_PARTICLE_SHEET;
     }
 
     // Create a textured particle layer that does not copy the scene depth

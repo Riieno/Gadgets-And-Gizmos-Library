@@ -27,18 +27,67 @@
 
   function defaults(def, supplied = {}) {
     const data = { ...copy(def?.defaultData || {}), ...copy(supplied) };
-    for (const key of ["Defaults", "InputOptions", "InputLabels", "OutputLabels"]) {
+    for (const key of ["Defaults", "InputOptions", "InputLabels", "OutputLabels", "InputOptionLabels"]) {
       data[key] = { ...copy(def?.defaultData?.[key] || {}), ...copy(supplied[key] || {}) };
     }
     for (const [key, entry] of Object.entries(data.Defaults)) {
       if (!owns(data, key)) data[key] = decode(entry);
     }
-    return data;
+    return synchronizeInputOptions(def, data);
   }
 
   function ordered(ports, preferred) {
     return Object.fromEntries([...new Set([...(preferred || []), ...Object.keys(ports)])]
       .filter((key) => owns(ports, key)).map((key) => [key, ports[key]]));
+  }
+
+  // Refresh dependent selectors without changing valid choices or the supplied document
+  function synchronizeInputOptions(def, supplied = {}) {
+    if (!def?.dependentInputOptions) return supplied;
+    const data = { ...supplied, Defaults: { ...def.defaultData?.Defaults, ...supplied.Defaults },
+      InputOptions: { ...def.defaultData?.InputOptions, ...supplied.InputOptions } };
+    for (const [selector, groups] of Object.entries(def.dependentInputOptions)) {
+      const selected = value(data, selector, decode(def.defaultData?.Defaults?.[selector]));
+      for (const [port, choices] of Object.entries(groups[selected] || {})) {
+        data.InputOptions[port] = [...choices];
+        if (!choices.includes(value(data, port))) {
+          const fallback = def.dependentInputDefaults?.[selector]?.[selected]?.[port] || choices[0];
+          data[port] = fallback;
+          data.Defaults[port] = { Type: "string", Payload: { Value: fallback } };
+        }
+      }
+    }
+    return data;
+  }
+
+  // Labels are presentation only; dropdown values retain their saved identifiers
+  function inputOptionLabel(def, data, port, id) {
+    return data?.InputOptionLabels?.[port]?.[id] ?? def?.defaultData?.InputOptionLabels?.[port]?.[id] ?? id;
+  }
+
+  // Use catalogue factors for browser previews so unit definitions have one source
+  function convertUnit(def, inputs = {}) {
+    const category = value(inputs, "unit_type", decode(def.defaultData?.Defaults?.unit_type));
+    const fallback = def.dependentInputDefaults?.unit_type?.[category] || {};
+    const inputUnit = value(inputs, "input_unit", fallback.input_unit), outputUnit = value(inputs, "output_unit", fallback.output_unit);
+    const from = def.unitConversions?.[inputUnit];
+    const to = def.unitConversions?.[outputUnit];
+    const val = value(inputs, "value", 0);
+    if (typeof val !== "number" || !Number.isFinite(val) || !from || !to || from.category !== category || to.category !== category) return { value: 0, valid: false };
+    if (inputUnit === outputUnit) return { value: val, valid: true };
+    if (!(from.factor > 0) || !(to.factor > 0)) return { value: 0, valid: false };
+    let ratio = from.factor / to.factor;
+    if (category === "power") {
+      for (const [port, exponent] of [["voltage", "voltageExponent"], ["duration", "durationExponent"]]) {
+        const difference = from[exponent] - to[exponent];
+        if (!difference) continue;
+        const context = value(inputs, port, decode(def.defaultData?.Defaults?.[port]) ?? 1);
+        if (typeof context !== "number" || !Number.isFinite(context) || context <= 0) return { value: 0, valid: false };
+        ratio *= difference > 0 ? context : 1 / context;
+      }
+    }
+    const result = val * ratio;
+    return Number.isFinite(result) ? { value: result, valid: true } : { value: 0, valid: false };
   }
 
   function accepts(data, rules, field, selector) {
@@ -73,7 +122,7 @@
     const variants = def?.variants || [];
     const controlled = new Set();
     for (const variant of variants) Object.keys(variant[direction] || {}).forEach((key) => controlled.add(key));
-    const selected = variants.filter((variant) => String(value(data, variant.selector,
+    const selected = variants.filter((variant) => owns(variant, direction) && String(value(data, variant.selector,
       decode(def?.defaultData?.Defaults?.[variant.selector]))) === variant.value);
     for (const variant of selected) base = { ...variant[direction] };
     let result = { ...base, ...(data[dynamicKey] || {}) };
@@ -131,6 +180,14 @@
     return { result, value: removed, removed: true };
   }
 
-  globalThis.GadgetsGraphNodes = Object.freeze({ copy, decode, defaults, value, ports, ordered, numeric, typeOf, collection,
+  // Retain saved-node lookup while excluding retired definitions from palette enumeration
+  function configureLibraryVisibility(definitions, catalog) {
+    for (const entry of catalog || []) {
+      if (owns(definitions, entry.id)) Object.defineProperty(definitions, entry.id, { enumerable: !entry.hiddenFromLibrary });
+    }
+    return definitions;
+  }
+
+  globalThis.GadgetsGraphNodes = Object.freeze({ copy, decode, defaults, value, ports, ordered, numeric, typeOf, collection, configureLibraryVisibility, synchronizeInputOptions, inputOptionLabel, convertUnit,
     format: (value, precise) => typeof value === "number" ? precise ? String(value) : Number.isInteger(value) ? String(value) : value.toFixed(2) : String(value ?? "") });
 })();

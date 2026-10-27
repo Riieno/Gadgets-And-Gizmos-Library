@@ -204,6 +204,22 @@ public final class WaypointSpline {
         return project(position, 0, 0.0D);
     }
 
+    // Measure separation without calculating an unused tangent or arc distance
+    public double distanceTo(Vec3 position){
+        if(segments.isEmpty() || !isFinite(position)) return Double.POSITIVE_INFINITY;
+        double best = Double.POSITIVE_INFINITY;
+        boolean found = false;
+        for(Segment segment : segments){
+            double fraction = segment.nearestFraction(position, 0.0D);
+            double distanceSqr = segment.pointAtFraction(fraction).distanceToSqr(position);
+            if(!found || distanceSqr + EPSILON < best * best){
+                best = Math.sqrt(distanceSqr);
+                found = true;
+            }
+        }
+        return best;
+    }
+
     // Project one position onto an ordered suffix of the curve
     public Projection project(Vec3 position, int firstSegment) {
         return project(position, firstSegment, 0.0D);
@@ -516,20 +532,28 @@ public final class WaypointSpline {
             double startTangentWeight = tCube - 2.0D * tSqr + t;
             double endWeight = -2.0D * tCube + 3.0D * tSqr;
             double endTangentWeight = tCube - tSqr;
-            return start.scale(startWeight)
-                    .add(startTangent.scale(startTangentWeight))
-                    .add(end.scale(endWeight))
-                    .add(endTangent.scale(endTangentWeight));
+            return new Vec3(start.x * startWeight + startTangent.x * startTangentWeight
+                    + end.x * endWeight + endTangent.x * endTangentWeight,
+                    start.y * startWeight + startTangent.y * startTangentWeight
+                    + end.y * endWeight + endTangent.y * endTangentWeight,
+                    start.z * startWeight + startTangent.z * startTangentWeight
+                    + end.z * endWeight + endTangent.z * endTangentWeight);
         }
 
         // Sample one normalized travel tangent along the segment
         public Vec3 tangentAtFraction(double fraction) {
             double t = clamp(fraction, 0.0D, 1.0D);
             double tSqr = t * t;
-            Vec3 derivative = start.scale(6.0D * tSqr - 6.0D * t)
-                    .add(startTangent.scale(3.0D * tSqr - 4.0D * t + 1.0D))
-                    .add(end.scale(-6.0D * tSqr + 6.0D * t))
-                    .add(endTangent.scale(3.0D * tSqr - 2.0D * t));
+            double first = 6.0D * tSqr - 6.0D * t;
+            double firstTangent = 3.0D * tSqr - 4.0D * t + 1.0D;
+            double last = -6.0D * tSqr + 6.0D * t;
+            double lastTangent = 3.0D * tSqr - 2.0D * t;
+            Vec3 derivative = new Vec3(start.x * first + startTangent.x * firstTangent
+                    + end.x * last + endTangent.x * lastTangent,
+                    start.y * first + startTangent.y * firstTangent
+                    + end.y * last + endTangent.y * lastTangent,
+                    start.z * first + startTangent.z * firstTangent
+                    + end.z * last + endTangent.z * lastTangent);
             return normalize(derivative, normalize(end.subtract(start), Vec3.ZERO));
         }
 

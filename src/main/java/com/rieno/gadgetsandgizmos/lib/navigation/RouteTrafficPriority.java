@@ -6,6 +6,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /** Resolves deterministic right-of-way between vehicles on retained routes. */
 public final class RouteTrafficPriority {
@@ -48,6 +50,33 @@ public final class RouteTrafficPriority {
                 : selectedConflict != null ? selectedConflict : Decision.clear();
     }
 
+    // Break circular yielding without changing ordinary pairwise right-of-way
+    public static Decision resolveCoordinated(Participant subject, Collection<Participant> traffic, Settings settings){
+        Decision res = resolve(subject, traffic, settings);
+        if(subject == null || !res.yield()) return res;
+        Settings resolved = settings == null ? Settings.DEFAULT : settings;
+        Map<UUID, Participant> fleet = new LinkedHashMap<>();
+        fleet.put(subject.vehicleId(), subject);
+        if(traffic != null) for(Participant other : traffic){
+            if(other != null && measuredDistance(subject.position(), other.position(), false)
+                    <= resolved.coordinationDistance()) fleet.put(other.vehicleId(), other);
+        }
+        List<UUID> chain = new ArrayList<>();
+        UUID current = subject.vehicleId();
+        while(current != null && !chain.contains(current)){
+            Participant participant = fleet.get(current);
+            if(participant == null) return res;
+            chain.add(current);
+            Decision next = current.equals(subject.vehicleId()) ? res : resolve(participant, fleet.values(), resolved);
+            current = next.yield() ? next.otherVehicleId() : null;
+        }
+        if(!subject.vehicleId().equals(current)) return res;
+        UUID first = chain.stream().min(RouteTrafficPriority::compareVehicleIds).orElse(subject.vehicleId());
+        if(!subject.vehicleId().equals(first)) return res;
+        return new Decision(res.conflict(), false, res.otherVehicleId(), res.encounter(), res.conflictPosition(),
+                res.distanceToConflict(), res.otherDistanceToConflict(), res.routeSeparation(), res.yieldDistance());
+    }
+
     /**
      * Check whether a yielding vehicle should clear an imminent crossing or
      * head-on encounter by retreating. The host remains responsible for
@@ -67,6 +96,21 @@ public final class RouteTrafficPriority {
                 ? Math.max(0.0D, liveTravelClearance) : Double.POSITIVE_INFINITY;
         double required = nonNegative(requiredClearance);
         return available + EPSILON < required;
+    }
+
+    // Score occupied candidate geometry without granting right-of-way or changing route ownership
+    public static double routeOccupancyCost(List<Vec3> controls, Collection<Participant> traffic, double clearance){
+        if(controls == null || controls.size() < 2 || traffic == null || traffic.isEmpty()) return 0.0D;
+        WaypointSpline spline = WaypointSpline.of(controls);
+        double cost = 0.0D;
+        for(Participant other : traffic){
+            if(other == null) continue;
+            WaypointSpline.Projection projection = spline.project(other.position());
+            double radius = Math.max(1.0D, clearance) + other.clearanceRadius() + 2.0D;
+            if(!projection.found() || projection.distance() >= radius) continue;
+            cost += (radius - projection.distance()) * 8.0D + 16.0D;
+        }
+        return cost;
     }
 
     // Begin a physical bypass before right-of-way braking parks both participants

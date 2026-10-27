@@ -81,7 +81,14 @@ public final class BlockEntityDataAdapterRegistry {
 
     // Get the revision for dynamic data ports
     public static long dataSchemaRevision(BlockEntity target) {
-        return target instanceof BlockEntityDataProvider provider ? provider.graphDataSchemaRevision() : 0L;
+        long revision = target instanceof BlockEntityDataProvider provider ? provider.graphDataSchemaRevision() : 0L;
+        long storageRevision = ContainerData.schemaRevision(target);
+        if(storageRevision != 0L) revision = 31L * revision + storageRevision;
+        for(BlockEntityDataAdapter<BlockEntity> adapter : findAdapters(target)){
+            long next = adapter.schemaRevision(target);
+            if(next != 0L) revision = 31L * revision + next;
+        }
+        return revision;
     }
 
     // Get the writable data options
@@ -185,8 +192,15 @@ public final class BlockEntityDataAdapterRegistry {
                 changed |= provider.writeGraphValues(Collections.unmodifiableMap(providerValues));
             }
         }
-        for (Map.Entry<String, GraphValue> entry : remaining.entrySet()) {
-            changed |= write(target, entry.getKey(), entry.getValue());
+        for(BlockEntityDataAdapter<BlockEntity> adapter : findAdapters(target)){
+            Map<String, GraphValue> batch = new LinkedHashMap<>();
+            for(BlockEntityDataPort port : adapter.ports(target)){
+                if(port.access().canWrite() && remaining.containsKey(port.id())
+                        && !BlockEntityDataAccessPolicy.isItemContentMutation(port.id(), port.type())){
+                    batch.put(port.id(), remaining.remove(port.id()));
+                }
+            }
+            if(!batch.isEmpty()) changed |= adapter.writeAll(target, Collections.unmodifiableMap(batch));
         }
         return changed;
     }

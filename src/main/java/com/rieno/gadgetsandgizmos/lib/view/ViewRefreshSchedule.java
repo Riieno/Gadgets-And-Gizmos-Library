@@ -5,6 +5,9 @@ public final class ViewRefreshSchedule{
     private long next;
     private int rate;
 
+    // Order due feeds by their existing deadline before spending the current frame's budget
+    public long deadline(){ return next; }
+
     // Apply rate changes immediately and retain a fixed cadence between frames
     public boolean ready(long now, int refreshRate){
         int val = Math.clamp(refreshRate, 1, 60);

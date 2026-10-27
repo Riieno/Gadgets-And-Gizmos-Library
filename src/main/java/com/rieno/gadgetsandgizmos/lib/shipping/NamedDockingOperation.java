@@ -22,6 +22,7 @@ public final class NamedDockingOperation<T>{
         boolean approachReached(T target);
         boolean dock(T target);
         boolean locked(T target);
+        default boolean waitingForClearance(T target){ return false; }
         void stopMovement();
         void release(T target, boolean disconnect);
     }
@@ -82,6 +83,7 @@ public final class NamedDockingOperation<T>{
         }
         if(phase == Phase.DOCKING){
             if(!host.dock(target)){ fail(); return; }
+            if(host.waitingForClearance(target)) dockingStarted = tick;
             if(host.locked(target)){
                 host.stopMovement();
                 phase = Phase.COMPLETE;

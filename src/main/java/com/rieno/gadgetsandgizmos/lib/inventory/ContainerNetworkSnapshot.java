@@ -32,6 +32,39 @@ import java.util.Set;
 public final class ContainerNetworkSnapshot{
     private ContainerNetworkSnapshot(){}
 
+    // Supply fluid choices independently of item pagination, using only the caller's permitted loaded storage
+    public static ListTag fluidChoices(Collection<? extends BlockEntity> targets){
+        Map<String, CompoundTag> fluids = new LinkedHashMap<>();
+        Set<Storage> seen = new HashSet<>();
+        Set<Object> handlers = Collections.newSetFromMap(new IdentityHashMap<>());
+        for(BlockEntity target : targets){
+            if(target == null || target.isRemoved() || !WorkerContainerAccess.isLoaded(target.getLevel(), target.getBlockPos())) continue;
+            var level = target.getLevel();
+            var pos = ContainerStorageIdentity.position(level, target.getBlockPos());
+            if(!WorkerContainerAccess.isLoaded(level, pos) || !seen.add(new Storage(level, pos))) continue;
+            for(var handler : WorkerContainerAccess.fluidHandlers(level, pos, null)){
+                if(!handlers.add(handler)) continue;
+                for(int idx = 0; idx < handler.getTanks(); idx++){
+                    var stack = handler.getFluidInTank(idx);
+                    if(stack.isEmpty()) continue;
+                    String id = BuiltInRegistries.FLUID.getKey(stack.getFluid()).toString();
+                    var row = fluids.computeIfAbsent(id, key -> {
+                        var entry = new CompoundTag();
+                        entry.putString("Id", key);
+                        String name = stack.getHoverName().getString();
+                        entry.putString("Name", name.substring(0, Math.min(128, name.length())));
+                        return entry;
+                    });
+                    row.putLong("Amount", sum(row.getLong("Amount"), stack.getAmount()));
+                }
+            }
+        }
+        ListTag rows = new ListTag();
+        fluids.values().stream().sorted(Comparator.comparing(row -> row.getString("Name"), String.CASE_INSENSITIVE_ORDER))
+                .limit(128).forEach(rows::add);
+        return rows;
+    }
+
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================
@@ -57,9 +90,9 @@ public final class ContainerNetworkSnapshot{
             BlockEntity root = level.getBlockEntity(pos);
             if(root == null) continue;
             var items = WorkerContainerAccess.itemHandlers(level, pos, null);
-            var combinedFluid = level.getCapability(Capabilities.FluidHandler.BLOCK, pos, null);
+            var combinedFluid = root instanceof LocalResourceStorage ? null : level.getCapability(Capabilities.FluidHandler.BLOCK, pos, null);
             var fluids = combinedFluid == null ? WorkerContainerAccess.fluidHandlers(level, pos, null) : List.of(combinedFluid);
-            var combinedEnergy = level.getCapability(Capabilities.EnergyStorage.BLOCK, pos, null);
+            var combinedEnergy = root instanceof LocalResourceStorage ? null : level.getCapability(Capabilities.EnergyStorage.BLOCK, pos, null);
             var energy = combinedEnergy == null ? WorkerContainerAccess.energyStorages(level, pos, null) : List.of(combinedEnergy);
             if(items.isEmpty() && fluids.isEmpty() && energy.isEmpty() && !(root instanceof LongEnergyStorage)) continue;
             containers++;

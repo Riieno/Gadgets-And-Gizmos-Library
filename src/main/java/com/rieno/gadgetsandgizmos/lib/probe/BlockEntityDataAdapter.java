@@ -31,6 +31,11 @@ public interface BlockEntityDataAdapter<T extends BlockEntity> {
     // Get the explicit data ports
     List<BlockEntityDataPort> ports(T target);
 
+    // Change the revision when an adapted target gains or loses ports
+    default long schemaRevision(T target){
+        return 0L;
+    }
+
     // Read one explicit data port
     default GraphValue read(T target, String port) {
         return null;
@@ -39,5 +44,12 @@ public interface BlockEntityDataAdapter<T extends BlockEntity> {
     // Write one explicit data port
     default boolean write(T target, String port, GraphValue value) {
         return false;
+    }
+
+    // Let related settings apply in a stable order within one graph write
+    default boolean writeAll(T target, java.util.Map<String, GraphValue> values){
+        boolean changed = false;
+        for(var entry : values.entrySet()) changed |= write(target, entry.getKey(), entry.getValue());
+        return changed;
     }
 }

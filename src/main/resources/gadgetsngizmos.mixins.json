@@ -6,8 +6,11 @@
   "compatibilityLevel": "JAVA_21",
   "refmap": "gadgetsngizmos.refmap.json",
   "mixins": [
+    "PowerGridDeviceConnectorMixin",
     "AeronauticsHotAirControlMixin",
     "CollisionBlockRevisionMixin",
+    "CreateDisplayLinkCaptureMixin",
+    "IndependentFluidConnectivityMixin",
     "TimedItemHandlerMixin",
     "TimedContainerBlockEntityMixin",
     "TimedSimpleContainerMixin",
@@ -46,6 +49,7 @@
     "SchematicConstructionBlockEntityMixin",
     "SubLevelLocatorRemovalMixin",
     "SimulatedDockingRestoreMixin",
+    "SimulatedBatteryBufferMixin",
     "SimulatedPhysicsStaffActionPacketMixin",
     "SimulatedPhysicsStaffDragPacketMixin",
     "SteeringWheelPreciseAngleOutputMixin",
@@ -57,8 +61,12 @@
     "WorkerChuteTransportMixin"
   ],
   "client": [
+    "SableClientPoseContextMixin",
+    "SubLevelBlockEntityFrustumMixin",
+    "SubLevelShaderBlockMetadataMixin",
     "OpenGlErrorTraceMixin",
-    "VeilLightRendererMixin",
+    "ShaderTextureReleaseMixin",
+    "MultiFluidTankRendererMixin",
     "BeltCasingModelDataMixin",
     "BeltCasingModelMixin",
     "SubLevelEntityLightingMixin",

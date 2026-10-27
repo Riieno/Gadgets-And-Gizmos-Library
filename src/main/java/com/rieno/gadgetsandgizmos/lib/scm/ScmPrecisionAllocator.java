@@ -5,6 +5,7 @@ import net.minecraft.world.phys.Vec3;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
+import java.util.Arrays;
 
 // Allocate physical force and torque while retaining small precision actuators
 public final class ScmPrecisionAllocator{
@@ -14,6 +15,9 @@ public final class ScmPrecisionAllocator{
     private static final int MAX_CACHED_UNITS = 16_384;
     private static final ThreadLocal<Map<AllocationKey, Allocation>> ALLOCATIONS =
             ThreadLocal.withInitial(() -> new LinkedHashMap<>(MAX_CACHED_ALLOCATIONS, 0.75F, true));
+    private static final ThreadLocal<Workspace> WORKSPACES = ThreadLocal.withInitial(() -> new Workspace(0));
+    private static final ThreadLocal<Map<List<Unit>, Geometry>> GEOMETRIES =
+            ThreadLocal.withInitial(() -> new LinkedHashMap<>(16, 0.75F, true));
 
     private ScmPrecisionAllocator(){}
 
@@ -143,12 +147,13 @@ public final class ScmPrecisionAllocator{
         }
         if(!excluded) return allocate(available, force, torque, previous, false);
         double[] target = components(finite(force), finite(torque));
-        double[] directed = solve(available, target, previous, false, false, allowed);
-        double directedError = residual(available, directed, target);
+        Geometry geometry = geometry(available);
+        double[] directed = solve(available, geometry, target, previous, false, false, allowed);
+        double directedError = residual(geometry, directed, target);
         // Every unrestricted residual is nonnegative, so this directed result already wins
         if(directedError <= 0.03D) return new Allocation(directed, false, directedError);
-        double[] all = solve(available, target, previous, false, false, null);
-        double allError = residual(available, all, target);
+        double[] all = solve(available, geometry, target, previous, false, false, null);
+        double allError = residual(geometry, all, target);
         return directedError <= allError + 0.03D
                 ? new Allocation(directed, false, directedError)
                 : new Allocation(all, false, allError);
@@ -159,29 +164,19 @@ public final class ScmPrecisionAllocator{
         List<Unit> available = units == null ? List.of() : List.copyOf(units);
         if(available.isEmpty()) return new Allocation(new double[0], false, 0.0D);
         double[] target = components(finite(force), finite(torque));
-        boolean hasPrecision = available.stream().anyMatch(unit ->
-                unit.precision() && powered(unit));
-        if(preferPrecision && hasPrecision && canMeetPrecisionDemand(available, target)){
-            double[] precise = solve(available, target, previous, true, true, null);
-            double error = residual(available, precise, target);
+        Geometry geometry = geometry(available);
+        if(preferPrecision && geometry.hasPrecision && canMeetPrecisionDemand(geometry, target)){
+            double[] precise = solve(available, geometry, target, previous, true, true, null);
+            double error = residual(geometry, precise, target);
             if(error <= 0.03D) return new Allocation(precise, true, error);
         }
-        double[] all = solve(available, target, previous, false, preferPrecision, null);
-        return new Allocation(all, false, residual(available, all, target));
+        double[] all = solve(available, geometry, target, previous, false, preferPrecision, null);
+        return new Allocation(all, false, residual(geometry, all, target));
     }
 
     // Reject a precision-only solve when an axis cannot reach the existing residual tolerance
-    private static boolean canMeetPrecisionDemand(List<Unit> units, double[] target){
-        double[] min = new double[AXES], max = new double[AXES], available = new double[AXES];
-        for(Unit unit : units){
-            for(int axis = 0; axis < AXES; axis++){
-                double val = axis < 3 ? component(unit.force(), axis) : component(unit.torque(), axis - 3);
-                available[axis] += Math.abs(val);
-                if(!unit.precision()) continue;
-                min[axis] += Math.min(0.0D, val);
-                max[axis] += Math.max(0.0D, val);
-            }
-        }
+    private static boolean canMeetPrecisionDemand(Geometry geometry, double[] target){
+        double[] min = geometry.minimum, max = geometry.maximum, available = geometry.available;
         for(int axis = 0; axis < AXES; axis++){
             double scale = Math.max(1.0E-6D, Math.max(Math.abs(target[axis]), available[axis] * 0.02D));
             double tolerance = 0.03D * scale + 1.0E-10D * Math.max(scale, available[axis]);
@@ -224,31 +219,35 @@ public final class ScmPrecisionAllocator{
     }
 
     // Refine bounded throttle levels without slowing every axis to the longest lever
-    private static double[] solve(List<Unit> units, double[] target,
+    private static double[] solve(List<Unit> units, Geometry geometry, double[] target,
                                   double[] previous, boolean precisionOnly,
                                   boolean preferPrecision, boolean[] allowed){
         int count = units.size();
-        boolean hasPrecision = false;
-        int poweredCount = 0;
-        for(Unit unit : units){
-            if(!powered(unit)) continue;
-            poweredCount++;
-            if(unit.precision()) hasPrecision = true;
+        boolean hasPrecision = geometry.hasPrecision;
+        double regularization = 1.0D / Math.max(1, geometry.poweredCount);
+        Workspace work = WORKSPACES.get();
+        if(work.control.length < count){
+            work = new Workspace(count);
+            if(count <= MAX_CACHED_UNITS) WORKSPACES.set(work);
         }
-        double regularization = 1.0D / Math.max(1, poweredCount);
-        double[][] columns = new double[count][AXES];
-        double[] scale = new double[AXES];
-        double[] control = new double[count];
-        boolean[] active = new boolean[count];
-        int[] activeIndices = new int[count];
+        double[][] columns = work.columns;
+        double[] scale = work.scale;
+        double[] control = work.control;
+        boolean[] active = work.active;
+        int[] activeIndices = work.activeIndices;
+        Arrays.fill(scale, 0.0D);
+        Arrays.fill(control, 0, count, 0.0D);
+        Arrays.fill(active, 0, count, false);
+        for(int idx = 0; idx < count; idx++) Arrays.fill(columns[idx], 0.0D);
         int activeCount = 0;
         for(int idx = 0; idx < count; idx++){
             Unit unit = units.get(idx);
-            if(!powered(unit) || precisionOnly && !unit.precision()
+            if(!geometry.powered[idx] || precisionOnly && !unit.precision()
                     || allowed != null && !allowed[idx]) continue;
             active[idx] = true;
             activeIndices[activeCount++] = idx;
-            columns[idx] = components(unit.force(), unit.torque());
+            double[] column = columns[idx];
+            System.arraycopy(geometry.columns[idx], 0, column, 0, AXES);
             control[idx] = previous != null && idx < previous.length
                     && (preferPrecision || !unit.precision())
                     ? component(previous[idx]) : 0.0D;
@@ -256,23 +255,25 @@ public final class ScmPrecisionAllocator{
         }
         for(int axis = 0; axis < AXES; axis++) scale[axis] = Math.max(1.0E-6D,
                 Math.max(Math.abs(target[axis]), scale[axis] * 0.1D));
-        for(double[] column : columns){
+        for(int idx = 0; idx < count; idx++){
+            double[] column = columns[idx];
             for(int axis = 0; axis < AXES; axis++){
                 column[axis] /= scale[axis];
             }
         }
-        double[] desired = new double[AXES];
+        double[] desired = work.desired;
         for(int axis = 0; axis < AXES; axis++) desired[axis] = target[axis] / scale[axis];
-        double[] achieved = new double[AXES];
+        double[] achieved = work.achieved;
+        Arrays.fill(achieved, 0.0D);
         for(int idx = 0; idx < count; idx++){
             for(int axis = 0; axis < AXES; axis++){
                 achieved[axis] += columns[idx][axis] * control[idx];
             }
         }
         // Reuse the fixed penalties and column magnitudes throughout the solve
-        double[] penalties = new double[count];
-        double[] magnitudes = new double[count];
-        double[] prevControls = new double[count];
+        double[] penalties = work.penalties;
+        double[] magnitudes = work.magnitudes;
+        double[] prevControls = work.prevControls;
         for(int idx = 0; idx < count; idx++){
             if(!active[idx]) continue;
             Unit unit = units.get(idx);
@@ -317,17 +318,40 @@ public final class ScmPrecisionAllocator{
             }
             if(largestChange <= 1.0E-8D) break;
         }
-        return control;
+        return Arrays.copyOf(control, count);
     }
 
-    private static double residual(List<Unit> units, double[] controls, double[] target){
+    // Reuse scratch arrays on one thread while returning detached allocation results
+    private static final class Workspace{
+        private final double[][] columns;
+        private final double[] scale = new double[AXES];
+        private final double[] desired = new double[AXES];
+        private final double[] achieved = new double[AXES];
+        private final double[] control;
+        private final boolean[] active;
+        private final int[] activeIndices;
+        private final double[] penalties;
+        private final double[] magnitudes;
+        private final double[] prevControls;
+
+        private Workspace(int count){
+            columns = new double[count][AXES];
+            control = new double[count];
+            active = new boolean[count];
+            activeIndices = new int[count];
+            penalties = new double[count];
+            magnitudes = new double[count];
+            prevControls = new double[count];
+        }
+    }
+
+    private static double residual(Geometry geometry, double[] controls, double[] target){
         double[] actual = new double[AXES];
-        double[] available = new double[AXES];
-        for(int idx = 0; idx < units.size(); idx++){
-            double[] column = components(units.get(idx).force(), units.get(idx).torque());
+        double[] available = geometry.available;
+        for(int idx = 0; idx < geometry.columns.length; idx++){
+            double[] column = geometry.columns[idx];
             for(int axis = 0; axis < AXES; axis++){
                 actual[axis] += column[axis] * controls[idx];
-                available[axis] += Math.abs(column[axis]);
             }
         }
         double largest = 0.0D;
@@ -337,6 +361,60 @@ public final class ScmPrecisionAllocator{
             largest = Math.max(largest, Math.abs(actual[axis] - target[axis]) / scale);
         }
         return largest;
+    }
+
+    // Reuse only immutable full-output geometry; requests and previous controls remain live
+    private static Geometry geometry(List<Unit> units){
+        Map<List<Unit>, Geometry> cached = GEOMETRIES.get();
+        Geometry res = cached.get(units);
+        if(res != null) return res;
+        res = new Geometry(units);
+        if(units.size() <= MAX_CACHED_UNITS){
+            int count = units.size();
+            for(List<Unit> key : cached.keySet()) count += key.size();
+            while(!cached.isEmpty() && (cached.size() >= 16 || count > MAX_CACHED_UNITS)){
+                List<Unit> oldest = cached.keySet().iterator().next();
+                count -= oldest.size();
+                cached.remove(oldest);
+            }
+            cached.put(List.copyOf(units), res);
+        }
+        return res;
+    }
+
+    private static final class Geometry{
+        private final double[][] columns;
+        private final boolean[] powered;
+        private final int poweredCount;
+        private final boolean hasPrecision;
+        private final double[] minimum = new double[AXES];
+        private final double[] maximum = new double[AXES];
+        private final double[] available = new double[AXES];
+
+        private Geometry(List<Unit> units){
+            columns = new double[units.size()][];
+            powered = new boolean[units.size()];
+            int count = 0;
+            boolean precision = false;
+            for(int idx = 0; idx < units.size(); idx++){
+                Unit unit = units.get(idx);
+                columns[idx] = components(unit.force(), unit.torque());
+                powered[idx] = powered(unit);
+                if(powered[idx]){
+                    count++;
+                    precision |= unit.precision();
+                }
+                for(int axis = 0; axis < AXES; axis++){
+                    double val = columns[idx][axis];
+                    available[axis] += Math.abs(val);
+                    if(!unit.precision()) continue;
+                    minimum[axis] += Math.min(0.0D, val);
+                    maximum[axis] += Math.max(0.0D, val);
+                }
+            }
+            poweredCount = count;
+            hasPrecision = precision;
+        }
     }
 
     private static double[] components(Vec3 force, Vec3 torque){

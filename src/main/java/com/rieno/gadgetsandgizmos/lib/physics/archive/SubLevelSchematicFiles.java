@@ -25,7 +25,6 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Quaterniond;
 
@@ -58,9 +57,9 @@ public final class SubLevelSchematicFiles{
 
     ------------------------------------------------------------##-----------------------------------------------------*/
 
-    // Keep integrated shared files in the world folder so host client files remain private
+    // Use the instance schematics folder for both hosted worlds and dedicated servers
     public static Path directory(MinecraftServer server) throws IOException{
-        Path root = server.isDedicatedServer() ? server.getServerDirectory() : server.getWorldPath(LevelResource.ROOT);
+        Path root = server.getServerDirectory();
         Path dir = root.resolve("schematics").toAbsolutePath().normalize();
         if(Files.isSymbolicLink(dir)) throw new IOException("The schematics directory must not be a symbolic link");
         Files.createDirectories(dir);

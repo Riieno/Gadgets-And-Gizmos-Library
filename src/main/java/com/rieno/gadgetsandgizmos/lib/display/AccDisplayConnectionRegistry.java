@@ -128,7 +128,7 @@ public final class AccDisplayConnectionRegistry {
                 if (predicate.test(blockEntity)) {
                     return true;
                 }
-            } catch (RuntimeException ignored) {
+            } catch (RuntimeException | LinkageError ignored) {
             }
         }
         return false;

@@ -8,6 +8,8 @@ public interface TabletAppClientUi{
     TabletAppClientUi NONE = new TabletAppClientUi(){};
 
     default boolean projected(){ return false; }
+    // Native slots, cursor synchronization and item transfers remain owned by the host menu
+    default TabletMenuInventory inventory(){ return null; }
     default void editText(String prompt, String initial, int maximumLength, Consumer<String> accept){}
     default void pickItem(ResourceLocation selected, Consumer<ResourceLocation> accept){}
     default void pickFluidContainer(ResourceLocation selected, ResourceLocation fluid,

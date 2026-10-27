@@ -65,6 +65,11 @@ public final class GadgetsNGizmosLibraryMixinConfigPlugin implements IMixinConfi
     // Check if this should apply mixin
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if(mixinClassName.endsWith(".SubLevelShaderBlockMetadataMixin"))
+            return MixinCompatibility.isModLoaded("sable") && MixinCompatibility.isModLoaded("iris");
+        if(targetClassName.startsWith("org.patryk3211.powergrid.")) return MixinCompatibility.canApply(targetClassName, "powergrid");
+        if(mixinClassName.endsWith(".SableClientPoseContextMixin")) return MixinCompatibility.isModLoaded("sable");
+        if(mixinClassName.endsWith(".SubLevelBlockEntityFrustumMixin")) return MixinCompatibility.canApply(targetClassName, "sable");
         if(mixinClassName.endsWith(".SablePhysicalConnectionMixin") || mixinClassName.endsWith(".SableConstraintRemovalMixin"))
             return MixinCompatibility.canApply(targetClassName, "sable");
         if("com.rieno.gadgetsandgizmos.lib.mixin.ViewSceneEntityCullingMixin".equals(mixinClassName)){

@@ -79,6 +79,29 @@ public final class SubLevelClientRenderApi {
         }
     }
 
+    // Resolve a block's interpolated world frame through nested sublevels
+    public static WorldFrame worldFrame(net.minecraft.world.level.block.entity.BlockEntity be, float partialTicks){
+        return worldFrame(be.getLevel(), be.getBlockPos().getCenter(),
+                com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi.containing(be), partialTicks);
+    }
+
+    public static WorldFrame worldFrame(net.minecraft.world.level.Level level, Vec3 point, SubLevel body, float partialTicks){
+        Quaterniond rotation = new Quaterniond();
+        Vector3d scale = new Vector3d(1);
+        for(int idx = 0; body != null && idx < 8; idx++){
+            Pose3dc pose = body instanceof ClientSubLevel client ? interpolatedPose(client, partialTicks) : body.logicalPose();
+            point = pose.transformPosition(point);
+            rotation.premul(pose.orientation());
+            scale.mul(pose.scale());
+            SubLevel next = com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi.containing(level, point);
+            if(next == body) break;
+            body = next;
+        }
+        return new WorldFrame(point, new Quaternionf(rotation), new Vec3(scale.x, scale.y, scale.z));
+    }
+
+    public record WorldFrame(Vec3 position, Quaternionf orientation, Vec3 scale){}
+
     // Get one SubLevel render position
     public static Vec3 renderPosition(ClientSubLevel subLevel, float partialTicks) {
         Vector3dc pos = subLevel.renderPose(partialTicks).position();

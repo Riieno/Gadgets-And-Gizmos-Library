@@ -71,7 +71,7 @@ public final class ScmCommandRouting {
         return !(completed && isMotionStop(commandType)) && isActiveManualControl(commandType, amount, strength);
     }
 
-    // Identify graph controls whose strength selects recovery speed rather than movement input
+    // Identify unsigned strength controls whose zero value releases the persistent request
     public static boolean usesRecoveryStrength(@Nullable String commandType){
         if(commandType == null) return false;
         return switch(commandType){
@@ -116,6 +116,26 @@ public final class ScmCommandRouting {
         boolean activeYaw = active.startsWith("ship_yaw") || "ship_pan".equals(active);
         return "ship_hold_yaw".equals(incoming) && (activeYaw || "ship_hold_yaw".equals(active))
                 || incomingYaw && "ship_hold_yaw".equals(active);
+    }
+
+    // Give a new angle hold or direct rotation exclusive control of its held axis
+    public static boolean supersededByMotionHold(String incoming, boolean incomingAngleHold,
+                                                 String active, boolean activeAngleHold){
+        if(supersededByMotionHold(incoming, active)) return true;
+        if(!incomingAngleHold && !activeAngleHold) return false;
+        ScmAngleControl.Axis axis = rotationAxis(incoming);
+        return axis != null && axis == rotationAxis(active);
+    }
+
+    // Group the signed and directional controls which rotate the same craft axis
+    private static @Nullable ScmAngleControl.Axis rotationAxis(String type){
+        if(type == null) return null;
+        return switch(type){
+            case "ship_yaw", "ship_yaw_left", "ship_yaw_right", "ship_pan" -> ScmAngleControl.Axis.YAW;
+            case "ship_pitch", "ship_pitch_up", "ship_pitch_down", "ship_tilt" -> ScmAngleControl.Axis.PITCH;
+            case "ship_roll", "ship_roll_left", "ship_roll_right" -> ScmAngleControl.Axis.ROLL;
+            default -> null;
+        };
     }
 
     private static boolean isMovementRequest(String type){

@@ -187,10 +187,11 @@ public final class ScmAdaptiveStateModel{
         Vec3 requested = direction;
         double[] capacity = authority.computeIfAbsent(
                 new AxisKey(requested.x, requested.y, requested.z, angular),
-                ignored -> new double[]{feasibleAuthority(requested, angular, false),
-                        feasibleAuthority(requested, angular, true)});
+                ignored -> new double[]{Double.NaN, Double.NaN});
+        int idx = positive ? 1 : 0;
+        if(Double.isNaN(capacity[idx])) capacity[idx] = feasibleAuthority(requested, angular, positive);
         if(authority.size() > MAX_CACHED_AXES) authority.remove(authority.keySet().iterator().next());
-        return capacity[positive ? 1 : 0];
+        return capacity[idx];
     }
 
     private record AxisKey(double x, double y, double z, boolean angular){}
@@ -226,12 +227,14 @@ public final class ScmAdaptiveStateModel{
         }
         if(upper <= EPSILON) return 0.0D;
         double lower = 0.0D;
-        for(int step = 0; step < 8; step++){
+        // Small holding throttles can leave a usable interval far below full engine output
+        for(int step = 0; step < 32; step++){
             double candidate = step == 0 ? upper : (lower + upper) * 0.5D;
             if(canProduce(axis, angular, sign * candidate)){
                 lower = candidate;
                 if(step == 0) break;
             }else upper = candidate;
+            if(upper <= EPSILON || lower > 0.0D && upper - lower <= upper / 128.0D) break;
         }
         return lower;
     }

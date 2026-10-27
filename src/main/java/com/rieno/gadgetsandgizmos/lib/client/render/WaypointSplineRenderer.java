@@ -89,7 +89,8 @@ public final class WaypointSplineRenderer {
             boolean selected = idx == route.selectedWaypoint();
             renderPoint(poseStack, lines, points.get(idx),
                     selected ? SELECTED_RADIUS : endpoint ? ENDPOINT_RADIUS : WAYPOINT_RADIUS,
-                    selected ? route.selectedColor()
+                    idx < route.pointColors().size() && route.pointColors().get(idx) != null
+                            ? route.pointColors().get(idx) : selected ? route.selectedColor()
                             : endpoint ? route.endpointColor() : route.waypointColor());
         }
     }
@@ -126,10 +127,17 @@ public final class WaypointSplineRenderer {
     // Store one renderable spline and its colors
     public record RouteVisual(WaypointSpline spline, int lineColor,
                               int waypointColor, int endpointColor,
-                              int selectedColor, int selectedWaypoint) {
+                              int selectedColor, int selectedWaypoint, List<Integer> pointColors) {
+        // Preserve existing route visuals for consumers without per-control colors
+        public RouteVisual(WaypointSpline spline, int lineColor, int waypointColor, int endpointColor,
+                int selectedColor, int selectedWaypoint){
+            this(spline, lineColor, waypointColor, endpointColor, selectedColor, selectedWaypoint, List.of());
+        }
+
         // Initialize one route visual
         public RouteVisual {
             spline = spline == null ? WaypointSpline.of(List.of()) : spline;
+            pointColors = pointColors == null ? List.of() : java.util.Collections.unmodifiableList(new java.util.ArrayList<>(pointColors));
         }
     }
 }

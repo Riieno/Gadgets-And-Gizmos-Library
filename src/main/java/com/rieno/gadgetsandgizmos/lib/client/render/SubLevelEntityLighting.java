@@ -51,7 +51,7 @@ public final class SubLevelEntityLighting{
 
     // Share guarded plot sampling between entity and particle lighting
     private static int sample(int packed, Vector3dc worldProbe, Iterable<? extends SubLevel> bodies, boolean render, boolean blockLight){
-        int sky = LightTexture.sky(packed), block = LightTexture.block(packed);
+        int sky = LightTexture.sky(packed) & 15, block = LightTexture.block(packed) & 15;
         if(!finite(worldProbe)) return packed;
         Vector3d local = new Vector3d();
         BlockPos.MutableBlockPos probe = new BlockPos.MutableBlockPos();
@@ -77,7 +77,8 @@ public final class SubLevelEntityLighting{
                 break;
             }
         }
-        return LightTexture.pack(block, sky);
+        // Retain colour payloads and fractional light while replacing only the sampled levels
+        return (packed & ~LightTexture.FULL_BRIGHT) | LightTexture.pack(block, sky);
     }
 
     /*--------------------------------------------------------##---------------------------------------------------------

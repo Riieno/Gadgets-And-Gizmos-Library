@@ -8,7 +8,9 @@ package com.rieno.gadgetsandgizmos.lib.client.ui;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.client.render.GuiTextureRegion;
 import net.minecraft.client.gui.Font;
+import net.minecraft.network.chat.Component;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.util.Mth;
 import org.lwjgl.glfw.GLFW;
@@ -70,6 +72,8 @@ public final class ColorPickerModal {
     private boolean open = true;
     // Latest rendered layout used for input.
     private Bounds bounds = Bounds.EMPTY;
+    private float pointerScale = 1;
+    private int pointerLeft, pointerTop;
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -109,6 +113,7 @@ public final class ColorPickerModal {
                        int mouseX, int mouseY) {
         if (!open || graphics == null || font == null) return;
         Chrome style = chrome == null ? Chrome.DEFAULT : chrome;
+        pointerScale = 1; pointerLeft = pointerTop = 0;
         bounds = layout(screenWidth, screenHeight);
         graphics.fill(0, 0, screenWidth, screenHeight, style.backdrop());
         graphics.fill(bounds.x(), bounds.y(), bounds.right(), bounds.bottom(), style.border());
@@ -147,6 +152,7 @@ public final class ColorPickerModal {
             render(graphics, font, screenWidth, screenHeight, Chrome.DEFAULT, mouseX, mouseY);
             return;
         }
+        pointerScale = 1; pointerLeft = pointerTop = 0;
         bounds = layout(screenWidth, screenHeight, true);
         graphics.fill(0, 0, screenWidth, screenHeight, appearance.backdrop());
         appearance.panel().draw(graphics, bounds.x(), bounds.y(), bounds.width(), bounds.height());
@@ -171,9 +177,80 @@ public final class ColorPickerModal {
                 bounds.buttonHeight(), "Apply", bounds.acceptContains(mouseX, mouseY));
     }
 
+    // Draw a host-owned texture layout while keeping rendering and pointer coordinates together
+    public void renderTextured(GuiGraphics graphics, Font font, int screenWidth, int screenHeight,
+                               TextureAppearance appearance, int mouseX, int mouseY){
+        if(!open || graphics == null || font == null) return;
+        if(appearance == null){
+            render(graphics, font, screenWidth, screenHeight, Chrome.DEFAULT, mouseX, mouseY);
+            return;
+        }
+        TextureLayout layout = appearance.layout();
+        pointerScale = Math.min(1, Math.min(Math.max(1, screenWidth - 16) / (float)appearance.panel().width(),
+                Math.max(1, screenHeight - 16) / (float)appearance.panel().height()));
+        pointerLeft = Math.round((screenWidth - appearance.panel().width() * pointerScale) / 2);
+        pointerTop = Math.round((screenHeight - appearance.panel().height() * pointerScale) / 2);
+        bounds = new Bounds(0, 0, appearance.panel().width(), appearance.panel().height(),
+                layout.colorArea().width(), false, layout);
+        double localX = (mouseX - pointerLeft) / pointerScale;
+        double localY = (mouseY - pointerTop) / pointerScale;
+        try(var layer = GuiRenderLayer.push(graphics, 1000)){
+            graphics.fill(0, 0, screenWidth, screenHeight, appearance.backdrop());
+            graphics.pose().pushPose();
+            try{
+                graphics.pose().translate(pointerLeft, pointerTop, 0);
+                graphics.pose().scale(pointerScale, pointerScale, 1);
+                appearance.panel().draw(graphics, 0, 0);
+                textureText(graphics, font, layout.title(), appearance.title().getString(), appearance.textColor());
+                Region color = layout.colorArea();
+                for(int column = 0; column < color.width(); column++){
+                    float saturation = column / (float)Math.max(1, color.width() - 1);
+                    graphics.fillGradient(color.x() + column, color.y(), color.x() + column + 1, color.bottom(),
+                            hsv(hue, saturation, 1, 0xFF), 0xFF000000);
+                }
+                Region strip = layout.hueBar();
+                for(int row = 0; row < strip.height(); row++){
+                    graphics.fill(strip.x(), strip.y() + row, strip.right(), strip.y() + row + 1,
+                            hsv(row / (float)Math.max(1, strip.height() - 1), 1, 1, 0xFF));
+                }
+                int cursorX = color.x() + Math.round(saturation * (color.width() - 1));
+                int cursorY = color.y() + Math.round((1 - value) * (color.height() - 1));
+                drawOutline(graphics, cursorX - 3, cursorY - 3, 7, 7, 0xFF202020);
+                drawOutline(graphics, cursorX - 2, cursorY - 2, 5, 5, appearance.cursorColor());
+                drawHueCursor(graphics, strip.x(), strip.y(), strip.width(), strip.height(), appearance.cursorColor());
+                Region preview = layout.preview();
+                graphics.fill(preview.x(), preview.y(), preview.right(), preview.bottom(), currentColor());
+                textureText(graphics, font, layout.hexLabel(), appearance.hexLabel().getString(), appearance.textColor());
+                textureText(graphics, font, layout.hexField(), hex.startsWith("#") ? hex.substring(1) : hex, appearance.textColor());
+                textureButton(graphics, appearance.cancel(), layout.cancelButton(), localX, localY);
+                textureText(graphics, font, layout.cancelButton(), appearance.cancelLabel().getString(), appearance.textColor());
+                textureButton(graphics, appearance.accept(), layout.acceptButton(), localX, localY);
+            }finally{ graphics.pose().popPose(); }
+        }
+    }
+
+    private static void textureButton(GuiGraphics graphics, GuiTextureRegion sprite, Region region, double mouseX, double mouseY){
+        sprite.draw(graphics, region.x(), region.y(), region.width(), region.height());
+        if(region.contains(mouseX, mouseY)) graphics.fill(region.x() + 1, region.y() + 1,
+                region.right() - 1, region.bottom() - 1, 0x22FFFFFF);
+    }
+
+    private static void textureText(GuiGraphics graphics, Font font, Region region, String text, int color){
+        int width = font.width(text);
+        float factor = Math.min(1, Math.min(region.width() / (float)Math.max(1, width), region.height() / (float)font.lineHeight));
+        graphics.pose().pushPose();
+        try{
+            graphics.pose().translate(region.x() + region.width() / 2F, region.y() + (region.height() - font.lineHeight * factor) / 2, 0);
+            graphics.pose().scale(factor, factor, 1);
+            graphics.drawString(font, text, -width / 2, 0, color, false);
+        }finally{ graphics.pose().popPose(); }
+    }
+
     // Handle a mouse press inside this modal.
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (!open || button != GLFW.GLFW_MOUSE_BUTTON_LEFT) return open;
+        mouseX = (mouseX - pointerLeft) / pointerScale;
+        mouseY = (mouseY - pointerTop) / pointerScale;
         if (bounds.colorContains(mouseX, mouseY)) {
             draggingColor = true;
             updateColor(mouseX, mouseY);
@@ -205,6 +282,8 @@ public final class ColorPickerModal {
     // Handle a color-area drag.
     public boolean mouseDragged(double mouseX, double mouseY, int button) {
         if (!open) return false;
+        mouseX = (mouseX - pointerLeft) / pointerScale;
+        mouseY = (mouseY - pointerTop) / pointerScale;
         if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && draggingColor) {
             updateColor(mouseX, mouseY);
         } else if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && draggingHue) {
@@ -364,7 +443,7 @@ public final class ColorPickerModal {
 
     // Update hue from a hue-bar position.
     private void updateHue(double mouseY) {
-        hue = Mth.clamp((float) ((mouseY - bounds.colorY()) / Math.max(1, bounds.colorSize() - 1)),
+        hue = Mth.clamp((float) ((mouseY - bounds.hueY()) / Math.max(1, bounds.hueHeight() - 1)),
                 0.0F, 1.0F);
         updateLiveColor();
     }
@@ -477,6 +556,47 @@ public final class ColorPickerModal {
         graphics.fill(x + width - 1, y + 1, x + width, y + height - 1, color);
     }
 
+    // Pixel coordinates within a texture panel, shared by painting and interaction
+    public record Region(int x, int y, int width, int height){
+        public Region{
+            if(x < 0 || y < 0 || width <= 0 || height <= 0) throw new IllegalArgumentException("Picker regions must have positive bounds");
+        }
+        public int right(){ return x + width; }
+        public int bottom(){ return y + height; }
+        public boolean contains(double px, double py){ return px >= x && px < right() && py >= y && py < bottom(); }
+    }
+
+    public record TextureLayout(Region title, Region colorArea, Region hueBar, Region hexLabel, Region hexField,
+                                Region preview, Region cancelButton, Region acceptButton){
+        public TextureLayout{
+            for(Region region : java.util.List.of(title, colorArea, hueBar, hexLabel, hexField, preview, cancelButton, acceptButton)){
+                java.util.Objects.requireNonNull(region);
+            }
+            if(colorArea.width() != colorArea.height()) throw new IllegalArgumentException("The picker color area must be square");
+        }
+    }
+
+    // Texture resources and text belong to the consuming mod, independently of the picker logic
+    public record TextureAppearance(GuiTextureRegion panel, GuiTextureRegion cancel, GuiTextureRegion accept,
+                                    TextureLayout layout, Component title, Component hexLabel, Component cancelLabel,
+                                    int backdrop, int textColor, int cursorColor){
+        public TextureAppearance{
+            java.util.Objects.requireNonNull(panel);
+            java.util.Objects.requireNonNull(cancel);
+            java.util.Objects.requireNonNull(accept);
+            java.util.Objects.requireNonNull(layout);
+            java.util.Objects.requireNonNull(title);
+            java.util.Objects.requireNonNull(hexLabel);
+            java.util.Objects.requireNonNull(cancelLabel);
+            for(Region region : java.util.List.of(layout.title(), layout.colorArea(), layout.hueBar(), layout.hexLabel(),
+                    layout.hexField(), layout.preview(), layout.cancelButton(), layout.acceptButton())){
+                if(region.right() > panel.width() || region.bottom() > panel.height()){
+                    throw new IllegalArgumentException("Picker regions must fit inside the texture panel");
+                }
+            }
+        }
+    }
+
     // Theme-neutral modal colors supplied by the host screen.
     public record Chrome(int backdrop, int panel, int title, int raised, int hovered, int border,
                          int primary, int secondary, int accent, int actionText) {
@@ -512,7 +632,10 @@ public final class ColorPickerModal {
     }
 
     // Store the computed picker hit regions.
-    private record Bounds(int x, int y, int width, int height, int colorSize, boolean styled) {
+    private record Bounds(int x, int y, int width, int height, int colorSize, boolean styled, TextureLayout texture) {
+        private Bounds(int x, int y, int width, int height, int colorSize, boolean styled){
+            this(x, y, width, height, colorSize, styled, null);
+        }
         private static final Bounds EMPTY = new Bounds(0, 0, 0, 0, 0, false);
 
         private int right() {
@@ -524,38 +647,49 @@ public final class ColorPickerModal {
         }
 
         private int colorX() {
+            if(texture != null) return x + texture.colorArea().x();
             return styled ? x + (width - colorSize - 10 - HUE_BAR_WIDTH) / 2 : x + 14;
         }
 
         private int colorY() {
+            if(texture != null) return y + texture.colorArea().y();
             return y + 34;
         }
 
         private int hueX() {
+            if(texture != null) return x + texture.hueBar().x();
             return colorX() + colorSize + 10;
         }
 
         private int hueWidth() {
+            if(texture != null) return texture.hueBar().width();
             return HUE_BAR_WIDTH;
         }
+
+        private int hueY(){ return texture == null ? colorY() : y + texture.hueBar().y(); }
+        private int hueHeight(){ return texture == null ? colorSize : texture.hueBar().height(); }
 
         private int hexLabelX() {
             return x + (styled ? 12 : 14);
         }
 
         private int hexX() {
+            if(texture != null) return x + texture.hexField().x();
             return x + 38;
         }
 
         private int hexY() {
+            if(texture != null) return y + texture.hexField().y();
             return colorY() + colorSize + 12;
         }
 
         private int hexRight() {
+            if(texture != null) return x + texture.hexField().right();
             return x + width - 68;
         }
 
         private int hexBottom() {
+            if(texture != null) return y + texture.hexField().bottom();
             return hexY() + (styled ? 20 : 18);
         }
 
@@ -596,7 +730,7 @@ public final class ColorPickerModal {
 
         private boolean hueContains(double mouseX, double mouseY) {
             return mouseX >= hueX() && mouseX < hueX() + hueWidth()
-                    && mouseY >= colorY() && mouseY < colorY() + colorSize;
+                    && mouseY >= hueY() && mouseY < hueY() + hueHeight();
         }
 
         private boolean hexContains(double mouseX, double mouseY) {
@@ -604,11 +738,13 @@ public final class ColorPickerModal {
         }
 
         private boolean acceptContains(double mouseX, double mouseY) {
+            if(texture != null) return texture.acceptButton().contains(mouseX - x, mouseY - y);
             return mouseX >= acceptX() && mouseX < acceptX() + acceptWidth()
                     && mouseY >= buttonY() && mouseY < buttonY() + buttonHeight();
         }
 
         private boolean cancelContains(double mouseX, double mouseY) {
+            if(texture != null) return texture.cancelButton().contains(mouseX - x, mouseY - y);
             return mouseX >= cancelX() && mouseX < cancelX() + cancelWidth()
                     && mouseY >= buttonY() && mouseY < buttonY() + buttonHeight();
         }

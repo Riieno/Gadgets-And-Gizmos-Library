@@ -9,39 +9,35 @@ package com.rieno.gadgetsandgizmos.lib.client.ui;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.IdentityHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
-// Pick registered items and block items with the same searchable icon rows used by graph resource selectors
+// Share the painted selector across registry item, block, container and inventory pickers
 public final class ItemPickerScreen extends Screen{
+    private static PaintedSelectionModal.Appearance defaultAppearance = PaintedSelectionModal.Appearance.standard("gadgetsngizmos");
     private final Screen parent;
     private final ResourceLocation selected;
     private final Consumer<ResourceLocation> accept;
     private final Predicate<ItemStack> allowed;
-    private List<ItemStack> all;
-    private List<ItemStack> choices;
-    private final Map<ItemStack, ItemSearchQuery.Entry> searchable = new IdentityHashMap<>();
-    private EditBox search;
-    private int left;
-    private int top;
-    private int panelWidth;
-    private int rows;
-    private int scroll;
+    private List<ItemStack> inventory;
+    private ItemStack initialStack = ItemStack.EMPTY;
+    private Consumer<ItemStack> acceptStack;
+    private PaintedSelectionModal modal;
+    private final Map<String, ItemStack> stacks = new LinkedHashMap<>();
 
-    // Return one selected registry item to the caller
     public ItemPickerScreen(Screen parent, ResourceLocation selected, Consumer<ResourceLocation> accept){
         this(parent, selected, accept, stack -> true, "Select Item / Block");
     }
@@ -51,8 +47,15 @@ public final class ItemPickerScreen extends Screen{
         super(Component.literal(title));
         this.parent = parent;
         this.selected = selected;
-        this.accept = accept;
-        this.allowed = allowed;
+        this.accept = Objects.requireNonNull(accept);
+        this.allowed = Objects.requireNonNull(allowed);
+    }
+
+    private ItemPickerScreen(Screen parent, List<ItemStack> inventory, ItemStack selected, Consumer<ItemStack> accept, String title){
+        this(parent, null, ignored -> {}, stack -> true, title);
+        this.inventory = inventory.stream().filter(stack -> !stack.isEmpty()).map(stack -> stack.copyWithCount(1)).toList();
+        initialStack = selected.copy();
+        acceptStack = Objects.requireNonNull(accept);
     }
 
     /*--------------------------------------------------------##---------------------------------------------------------
@@ -63,88 +66,71 @@ public final class ItemPickerScreen extends Screen{
 
     ------------------------------------------------------------##-----------------------------------------------------*/
 
-    // Fit the modal to the current window and focus its search field
+    // Let the owning mod supply its established picker artwork for every shared item screen
+    public static void setDefaultAppearance(PaintedSelectionModal.Appearance appearance){ defaultAppearance = Objects.requireNonNull(appearance); }
+    public static PaintedSelectionModal.Appearance defaultAppearance(){ return defaultAppearance; }
+
+    // Keep inventory-only restrictions and item components when choosing frequency items
+    public static ItemPickerScreen inventory(Screen parent, List<ItemStack> choices, ItemStack selected, Consumer<ItemStack> accept, String title){
+        return new ItemPickerScreen(parent, choices, selected, accept, title);
+    }
+
+    // Share inventory-backed choices with embedded hosts while keeping component variants separate
+    public static List<PaintedSelectionModal.Entry> inventoryEntries(List<ItemStack> choices){
+        List<ItemStack> unique = new ArrayList<>();
+        for(ItemStack stack : choices){
+            if(!stack.isEmpty() && unique.stream().noneMatch(prev -> ItemStack.isSameItemSameComponents(prev, stack))) unique.add(stack.copyWithCount(1));
+        }
+        unique.sort(Comparator.comparing(stack -> stack.getHoverName().getString(), String.CASE_INSENSITIVE_ORDER));
+        List<PaintedSelectionModal.Entry> entries = new ArrayList<>();
+        for(int idx = 0; idx < unique.size(); idx++) entries.add(PaintedSelectionModal.Entry.item("inventory:" + idx, unique.get(idx)));
+        return List.copyOf(entries);
+    }
+
+    public static List<String> inventorySelection(List<PaintedSelectionModal.Entry> entries, ItemStack selected){
+        return entries.stream().filter(entry -> ItemStack.isSameItemSameComponents(entry.icon(), selected))
+                .map(PaintedSelectionModal.Entry::id).limit(1).toList();
+    }
+
+    // Keep a single modal alive across window resizes so pending edits and searches survive
     @Override protected void init(){
-        panelWidth = Math.min(440, width - 24);
-        rows = Math.max(1, Math.min(12, (height - 100) / 24));
-        left = (width - panelWidth) / 2;
-        top = (height - (70 + rows * 24)) / 2;
-        all = BuiltInRegistries.ITEM.stream().filter(item -> item != Items.AIR).map(ItemStack::new)
-                .filter(allowed)
-                .sorted(Comparator.comparing(stack -> stack.getHoverName().getString(), String.CASE_INSENSITIVE_ORDER)).toList();
-        choices = all;
-        searchable.clear();
-        for(ItemStack stack : all){
-            ResourceLocation id = BuiltInRegistries.ITEM.getKey(stack.getItem());
-            searchable.put(stack, ItemSearchQuery.item(id, stack));
-        }
-        search = new EditBox(font, left + 17, top + 34, panelWidth - 34, 12, Component.literal("Search items"));
-        search.setBordered(false);
-        search.setTextColor(0xFFEAF3FC);
-        search.setTextColorUneditable(0xFF96ACBF);
-        search.setMaxLength(128);
-        search.setHint(Component.literal("Search name, @mod, #tag / -exclude / | or"));
-        search.setResponder(query -> {
-            var filter = ItemSearchQuery.compile(query);
-            choices = all.stream().filter(stack -> filter.test(searchable.get(stack))).toList();
-            scroll = 0;
-        });
-        addRenderableWidget(search);
-        setInitialFocus(search);
+        if(modal != null) return;
+        List<PaintedSelectionModal.Entry> entries = inventory == null ? BuiltInRegistries.ITEM.stream().filter(item -> item != Items.AIR)
+                .map(ItemStack::new).filter(allowed)
+                .sorted(Comparator.comparing(stack -> stack.getHoverName().getString(), String.CASE_INSENSITIVE_ORDER))
+                .map(stack -> PaintedSelectionModal.Entry.item(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(), stack)).toList()
+                : inventoryEntries(inventory);
+        entries.forEach(entry -> stacks.put(entry.id(), entry.icon().copyWithCount(1)));
+        List<String> initial = inventory == null ? selected == null ? List.of() : List.of(selected.toString()) : inventorySelection(entries, initialStack);
+        modal = new PaintedSelectionModal(defaultAppearance, font, title, entries, initial, false, ids -> {
+            if(ids.isEmpty()) return;
+            ItemStack stack = stacks.get(ids.getFirst());
+            if(stack == null) return;
+            if(acceptStack != null) acceptStack.accept(stack.copyWithCount(1));
+            else accept.accept(BuiltInRegistries.ITEM.getKey(stack.getItem()));
+        }, () -> {});
     }
 
-    // The modal draws its own background without the vanilla menu blur pass
-    @Override public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick){
-    }
+    @Override public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick){}
+    @Override public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick){ modal.render(graphics, font, width, height, mouseX, mouseY); }
 
-    // Draw item icons, names and IDs before the search widget in the same sharp GUI pass
-    @Override public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick){
-        graphics.fill(0, 0, width, height, 0xBD080D13);
-        graphics.fill(left, top, left + panelWidth, top + 70 + rows * 24, 0xFF152334);
-        graphics.drawString(font, title, left + 12, top + 10, 0xFFCDE7C5, false);
-        graphics.drawString(font, "X", left + panelWidth - 20, top + 10, 0xFFEAF3FC, false);
-        graphics.fill(left + 12, top + 28, left + panelWidth - 12, top + 48,
-                search.isFocused() ? 0xFF8ABD7A : 0xFF304D66);
-        graphics.fill(left + 13, top + 29, left + panelWidth - 13, top + 47, 0xFF22394D);
-        for(int idx = 0; idx < rows && scroll + idx < choices.size(); idx++){
-            ItemStack stack = choices.get(scroll + idx);
-            ResourceLocation id = BuiltInRegistries.ITEM.getKey(stack.getItem());
-            int y = top + 53 + idx * 24;
-            boolean hover = mouseX >= left + 10 && mouseX < left + panelWidth - 10 && mouseY >= y && mouseY < y + 23;
-            graphics.fill(left + 10, y, left + panelWidth - 10, y + 23, hover ? 0xFF365572 : 0xFF22394D);
-            LayeredItemRenderer.renderVisible(graphics, stack, left + 13, y + 3);
-            graphics.drawString(font, font.plainSubstrByWidth(stack.getHoverName().getString(), panelWidth - 60),
-                    left + 35, y + 3, id.equals(selected) ? 0xFFA9E68D : 0xFFEAF3FC, false);
-            graphics.drawString(font, font.plainSubstrByWidth(id.toString(), panelWidth - 60), left + 35, y + 13, 0xFF96ACBF, false);
-        }
-        if(choices.isEmpty()) graphics.drawString(font, "No matching items", left + 12, top + 58, 0xFF96ACBF, false);
-        super.render(graphics, mouseX, mouseY, partialTick);
-    }
-
-    // Select a row or close the modal without changing the previous selection
     @Override public boolean mouseClicked(double x, double y, int button){
-        if(button != 0) return true;
-        if(x < left || x >= left + panelWidth || y < top || y >= top + 70 + rows * 24
-                || x >= left + panelWidth - 26 && y < top + 25){ onClose(); return true; }
-        if(x >= left + 12 && x < left + panelWidth - 12 && y >= top + 28 && y < top + 48){
-            setFocused(search);
-            if(search.isMouseOver(x, y)) search.mouseClicked(x, y, button);
-            return true;
-        }
-        int idx = (int) ((y - top - 53) / 24);
-        if(y >= top + 53 && idx < rows && scroll + idx < choices.size()){
-            accept.accept(BuiltInRegistries.ITEM.getKey(choices.get(scroll + idx).getItem()));
-            onClose();
-            return true;
-        }
-        return super.mouseClicked(x, y, button);
-    }
-
-    @Override public boolean mouseScrolled(double x, double y, double sx, double sy){
-        scroll = Mth.clamp(scroll - (int) Math.signum(sy), 0, Math.max(0, choices.size() - rows));
+        modal.mouseClicked(width, height, x, y, button);
+        returnIfClosed();
         return true;
     }
-
-    @Override public void onClose(){ minecraft.setScreen(parent); }
+    @Override public boolean mouseDragged(double x, double y, int button, double dx, double dy){ return modal.mouseDragged(width, height, y, button); }
+    @Override public boolean mouseReleased(double x, double y, int button){ return modal.mouseReleased(); }
+    @Override public boolean mouseScrolled(double x, double y, double sx, double sy){ return modal.mouseScrolled(sy); }
+    @Override public boolean charTyped(char ch, int modifiers){ return modal.charTyped(ch, modifiers); }
+    @Override public boolean keyPressed(int key, int scan, int modifiers){
+        modal.keyPressed(key, scan, modifiers);
+        returnIfClosed();
+        return true;
+    }
+    @Override public void onClose(){ if(modal != null) modal.close(); minecraft.setScreen(parent); }
+    @Override public void removed(){ if(modal != null) modal.close(); super.removed(); }
     @Override public boolean isPauseScreen(){ return false; }
+
+    private void returnIfClosed(){ if(!modal.isOpen()) minecraft.setScreen(parent); }
 }

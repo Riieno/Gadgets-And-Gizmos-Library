@@ -1,6 +1,10 @@
 package com.rieno.gadgetsandgizmos.lib.power;
 
 import net.neoforged.neoforge.energy.IEnergyStorage;
+import net.neoforged.neoforge.capabilities.Capabilities;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.Level;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -12,6 +16,19 @@ import java.util.Set;
 // Transfer FE according to receiver demand and each storage's own transfer limits
 public final class EnergyTransfer{
     private EnergyTransfer(){}
+
+    // Supply adjacent consumers without circulating FE between bidirectional storage blocks
+    public static long supplyAdjacent(Level level, BlockPos pos, IEnergyStorage source){
+        if(level == null || level.isClientSide || source == null || !source.canExtract()) return 0;
+        List<IEnergyStorage> targets = new ArrayList<>();
+        for(Direction face : Direction.values()){
+            var targetPos = pos.relative(face);
+            if(!level.isLoaded(targetPos)) continue;
+            var target = level.getCapability(Capabilities.EnergyStorage.BLOCK, targetPos, face.getOpposite());
+            if(target != null && target != source && target.canReceive() && !target.canExtract()) targets.add(target);
+        }
+        return transfer(List.of(source), targets);
+    }
 
     // Supply machines before charging shared storage, without a network-wide FE budget
     public static long transfer(List<? extends IEnergyStorage> sources, List<? extends IEnergyStorage> targets){

@@ -27,4 +27,47 @@ public record GuiTextureRegion(ResourceLocation texture, int textureWidth, int t
         graphics.blit(texture, x, y, drawWidth, drawHeight,
                 (float)u, (float)v, width, height, textureWidth, textureHeight);
     }
+
+    // Fit the complete region with one scale for both axes
+    public void drawFitted(GuiGraphics graphics, int x, int y, int drawWidth, int drawHeight){
+        if(drawWidth <= 0 || drawHeight <= 0) return;
+        float scale = Math.min(drawWidth / (float)width, drawHeight / (float)height);
+        graphics.pose().pushPose();
+        try{
+            graphics.pose().translate(x + (drawWidth - width * scale) / 2, y + (drawHeight - height * scale) / 2, 0);
+            graphics.pose().scale(scale, scale, 1);
+            draw(graphics, 0, 0);
+        }finally{ graphics.pose().popPose(); }
+    }
+
+    // Keep the end caps intact and repeat the middle at the same scale as the height
+    public void drawHorizontallyTiled(GuiGraphics graphics, int x, int y, int drawWidth, int drawHeight,
+                                      int leftWidth, int rightWidth){
+        if(leftWidth < 0 || rightWidth < 0 || leftWidth + rightWidth >= width){
+            throw new IllegalArgumentException("GUI end caps must leave a repeatable middle");
+        }
+        if(drawWidth <= 0 || drawHeight <= 0) return;
+        float scale = drawHeight / (float)height;
+        if(drawWidth < (leftWidth + rightWidth) * scale){
+            throw new IllegalArgumentException("GUI width must fit both end caps");
+        }
+        graphics.pose().pushPose();
+        try{
+            graphics.pose().translate(x, y, 0);
+            graphics.pose().scale(scale, scale, 1);
+            int total = Math.round(drawWidth / scale);
+            drawStrip(graphics, 0, 0, leftWidth);
+            int middle = width - leftWidth - rightWidth;
+            for(int pos = leftWidth; pos < total - rightWidth; pos += middle){
+                drawStrip(graphics, pos, leftWidth, Math.min(middle, total - rightWidth - pos));
+            }
+            drawStrip(graphics, total - rightWidth, width - rightWidth, rightWidth);
+        }finally{ graphics.pose().popPose(); }
+    }
+
+    private void drawStrip(GuiGraphics graphics, int x, int sourceX, int stripWidth){
+        if(stripWidth <= 0) return;
+        graphics.blit(texture, x, 0, stripWidth, height, (float)(u + sourceX), (float)v,
+                stripWidth, height, textureWidth, textureHeight);
+    }
 }

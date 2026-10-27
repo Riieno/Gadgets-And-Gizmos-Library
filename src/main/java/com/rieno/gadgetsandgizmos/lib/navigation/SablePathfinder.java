@@ -927,6 +927,13 @@ public final class SablePathfinder {
     // Permit safe departure from existing padding contact without changing later route clearance
     public static Validator compoundCollisionValidator(CollisionOptions options,
             java.util.function.Function<Query, List<AABB>> boundsAtStart, double initialContactAllowance){
+        return compoundCollisionValidator(options, boundsAtStart, initialContactAllowance, query -> false);
+    }
+
+    // Allow outward overlap recovery only on segments selected by the host
+    public static Validator compoundCollisionValidator(CollisionOptions options,
+            java.util.function.Function<Query, List<AABB>> boundsAtStart, double initialContactAllowance,
+            java.util.function.Predicate<Query> allowDeparture){
         CollisionOptions resolved = options == null ? CollisionOptions.DEFAULT : options;
         return query -> {
             if(query == null || query.rootLevel() == null || boundsAtStart == null
@@ -945,7 +952,16 @@ public final class SablePathfinder {
                 if(resolved.includeRootLevel() && !rootLoaded(query.rootLevel(), swept)) return Traversal.unavailable();
                 if(!loaded(query.rootLevel(), query.start(), query.end(), query.safety(),
                         swept, resolved.excludedSubLevelIds())) return Traversal.unavailable();
-                double clearance = initialContactAllowance > 0.0D
+                double clearance;
+                if(allowDeparture.test(query)){
+                    SubLevelParticleOcclusion.SweptBoundsScan scan =
+                            SubLevelParticleOcclusion.beginDepartureBoundsBlockingDistanceScan(
+                            query.rootLevel(), null, query.start(), delta, distance, bounds,
+                            resolved.includeRootLevel(), resolved.excludedSubLevelIds(),
+                            resolved.includeTaggedTransparentBlocks(), initialContactAllowance);
+                    scan.advance(Integer.MAX_VALUE, Long.MAX_VALUE);
+                    clearance = scan.result();
+                }else clearance = initialContactAllowance > 0.0D
                         ? SubLevelParticleOcclusion.findSweptBoundsBlockingDistance(
                         query.rootLevel(), null, query.start(), delta, distance, bounds,
                         resolved.includeRootLevel(), resolved.excludedSubLevelIds(),
@@ -964,8 +980,16 @@ public final class SablePathfinder {
     public static Validator budgetedCompoundCollisionValidator(CollisionOptions options,
             java.util.function.Function<Query, List<AABB>> boundsAtStart, double initialContactAllowance,
             CollisionBudget budget){
+        return budgetedCompoundCollisionValidator(options, boundsAtStart, initialContactAllowance, budget, query -> false);
+    }
+
+    // Retain exact departure scans under the same fleet-wide collision budget
+    public static Validator budgetedCompoundCollisionValidator(CollisionOptions options,
+            java.util.function.Function<Query, List<AABB>> boundsAtStart, double initialContactAllowance,
+            CollisionBudget budget, java.util.function.Predicate<Query> allowDeparture){
         return new BudgetedCompoundValidator(options == null ? CollisionOptions.DEFAULT : options,
-                boundsAtStart, Math.max(0.0D, initialContactAllowance), Objects.requireNonNull(budget));
+                boundsAtStart, Math.max(0.0D, initialContactAllowance), Objects.requireNonNull(budget),
+                Objects.requireNonNull(allowDeparture));
     }
 
     // Limit actual block visits and elapsed scan work rather than only counting A* nodes.
@@ -1009,11 +1033,14 @@ public final class SablePathfinder {
         private final java.util.function.Function<Query, List<AABB>> bounds;
         private final double contactAllowance;
         private final CollisionBudget budget;
+        private final java.util.function.Predicate<Query> allowDeparture;
         private final Map<Query, SubLevelParticleOcclusion.SweptBoundsScan> scans = new java.util.LinkedHashMap<>();
         private final Map<Query, Traversal> results = new java.util.LinkedHashMap<>();
         private BudgetedCompoundValidator(CollisionOptions options, java.util.function.Function<Query, List<AABB>> bounds,
-                                          double contactAllowance, CollisionBudget budget){
+                                          double contactAllowance, CollisionBudget budget,
+                                          java.util.function.Predicate<Query> allowDeparture){
             this.options = options; this.bounds = bounds; this.contactAllowance = contactAllowance; this.budget = budget;
+            this.allowDeparture = allowDeparture;
         }
         @Override public boolean incremental(){ return true; }
         @Override public void release(){ budget.release(this); scans.clear(); results.clear(); }
@@ -1037,7 +1064,11 @@ public final class SablePathfinder {
                     if(options.includeRootLevel() && !rootLoaded(query.rootLevel(), swept)
                             || !loaded(query.rootLevel(), query.start(), query.end(), query.safety(), swept,
                             options.excludedSubLevelIds())) return Traversal.unavailable();
-                    scan = SubLevelParticleOcclusion.beginSweptBoundsBlockingDistanceScan(query.rootLevel(), null,
+                    scan = allowDeparture.test(query)
+                            ? SubLevelParticleOcclusion.beginDepartureBoundsBlockingDistanceScan(query.rootLevel(), null,
+                            query.start(), delta, delta.length(), boxes, options.includeRootLevel(),
+                            options.excludedSubLevelIds(), options.includeTaggedTransparentBlocks(), contactAllowance)
+                            : SubLevelParticleOcclusion.beginSweptBoundsBlockingDistanceScan(query.rootLevel(), null,
                             query.start(), delta, delta.length(), boxes, options.includeRootLevel(),
                             options.excludedSubLevelIds(), options.includeTaggedTransparentBlocks(), contactAllowance);
                     scans.put(query, scan);

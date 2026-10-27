@@ -29,6 +29,7 @@ public final class ViewControlPanel{
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     private Consumer<ViewControlInput> sender = input -> {};
+    private com.rieno.gadgetsandgizmos.lib.view.ViewReference source;
     private Runnable takeControlAction;
     private Runnable interactAction;
     private final long viewStarted = net.minecraft.Util.getMillis();
@@ -51,6 +52,13 @@ public final class ViewControlPanel{
     =======================================================================================================================
 
     ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Bind viewfinder buttons to the source currently shown by this host
+    public void setSource(com.rieno.gadgetsandgizmos.lib.view.ViewReference source){
+        if(java.util.Objects.equals(this.source, source)) return;
+        mouseReleased();
+        this.source = source;
+    }
 
     // Let the host authorize first-person takeover from the floating icon row
     public void setTakeControlAction(Runnable action){ takeControlAction = action; }
@@ -108,10 +116,18 @@ public final class ViewControlPanel{
     public void renderOverlay(Canvas graphics, Font font, int x, int y, int width, int height,
                               ViewControlState state, Consumer<ViewControlInput> sender){
         var layout = ViewControlLayout.overlay(x, y, width, height);
-        ViewfinderOverlay.render(graphics, font, x, y, width, height, ViewfinderConfig.FRAME.get(), ViewfinderConfig.GRID.get(),
+        ViewfinderOverlay.render(graphics, font, x, y, width, height, ViewfinderConfig.frame(source), ViewfinderConfig.grid(source),
                 state.fov(), net.minecraft.Util.getMillis() - viewStarted, 0,
                 layout.flashlight().x() + layout.flashlight().width() - x + 4, layout.radius() * 2 + 12);
         renderControls(graphics, font, width, height, layout, state, sender);
+    }
+    // Share the floating controls with GUI hosts while preserving their transforms
+    public void renderOverlay(GuiGraphics graphics, Font font, int x, int y, int width, int height,
+                              ViewControlState state, Consumer<ViewControlInput> sender){
+        renderOverlay(new Canvas(){
+            @Override public void fill(int left, int top, int right, int bottom, int color){ graphics.fill(left, top, right, bottom, color); }
+            @Override public void drawString(Font font, String text, int x, int y, int color, boolean shadow){ graphics.drawString(font, text, x, y, color, shadow); }
+        }, font, x, y, width, height, state, sender);
     }
     public void renderChin(Canvas graphics, Font font, int x, int y, int width, int height,
                            ViewControlState state, Consumer<ViewControlInput> sender){
@@ -163,8 +179,8 @@ public final class ViewControlPanel{
         trackingIcon(graphics, layout.tracking(), state.autoTracking());
         targetLockIcon(graphics, layout.targetLock(), state.lockTarget());
         if(takeControlAction != null) takeControlIcon(graphics, layout.takeControl());
-        viewfinderIcon(graphics, layout.frame(), false, ViewfinderConfig.FRAME.get());
-        viewfinderIcon(graphics, layout.grid(), true, ViewfinderConfig.GRID.get());
+        viewfinderIcon(graphics, layout.frame(), false, ViewfinderConfig.frame(source));
+        viewfinderIcon(graphics, layout.grid(), true, ViewfinderConfig.grid(source));
         if(interactAction != null) interactIcon(graphics, layout.interact());
         tick();
     }
@@ -183,8 +199,8 @@ public final class ViewControlPanel{
             takeControlAction.run();
             return true;
         }
-        if(layout.frame().contains(x, y)){ ViewfinderConfig.toggleFrame(); return true; }
-        if(layout.grid().contains(x, y)){ ViewfinderConfig.toggleGrid(); return true; }
+        if(layout.frame().contains(x, y)){ ViewfinderConfig.toggleFrame(source); return true; }
+        if(layout.grid().contains(x, y)){ ViewfinderConfig.toggleGrid(source); return true; }
         if(interactAction != null && layout.interact().contains(x, y)){
             mouseReleased();
             interactAction.run();
@@ -228,6 +244,8 @@ public final class ViewControlPanel{
         drag(x, y);
         return true;
     }
+    // Let hosts release pointer capture when the stick or zoom control is no longer held
+    public boolean isDragging(){ return !dragging.isEmpty(); }
     // Return the analogue stick to its centre when the host loses pointer capture
     public boolean mouseReleased(){
         boolean active = !dragging.isEmpty();
@@ -260,10 +278,8 @@ public final class ViewControlPanel{
         }
     }
     private static void circle(Canvas graphics, int x, int y, int radius, int color){
-        for(int row = -radius; row <= radius; row++){
-            int half = (int) Math.sqrt(radius * radius - row * row);
-            graphics.fill(x - half, y + row, x + half + 1, y + row + 1, color);
-        }
+        com.rieno.gadgetsandgizmos.lib.client.ui.RasterRectangles.circle(x, y, radius,
+                (left, top, right, bottom) -> graphics.fill(left, top, right, bottom, color));
     }
     // Draw a targeting reticle whose background shows whether acquisition is enabled
     private static void trackingIcon(Canvas graphics, ViewControlLayout.Bounds bounds, boolean enabled){
@@ -352,11 +368,8 @@ public final class ViewControlPanel{
         for(int idx = size / 2; idx < size; idx++) graphics.fill(x + idx, y + idx, x + idx + line, y + idx + line, 0xFFF0F6FA);
     }
     private static void rounded(Canvas graphics, ViewControlLayout.Bounds bounds, int radius, int color){
-        for(int row = 0; row < bounds.height(); row++){
-            int dy = row < radius ? radius - row - 1 : row >= bounds.height() - radius ? row - bounds.height() + radius : 0;
-            int inset = radius - (int) Math.sqrt(Math.max(0, radius * radius - dy * dy));
-            graphics.fill(bounds.x() + inset, bounds.y() + row, bounds.x() + bounds.width() - inset, bounds.y() + row + 1, color);
-        }
+        com.rieno.gadgetsandgizmos.lib.client.ui.RasterRectangles.rounded(bounds.x(), bounds.y(), bounds.width(), bounds.height(), radius,
+                (left, top, right, bottom) -> graphics.fill(left, top, right, bottom, color));
     }
     // Let a host retain its own depth, projection and buffer state
     public interface Canvas{

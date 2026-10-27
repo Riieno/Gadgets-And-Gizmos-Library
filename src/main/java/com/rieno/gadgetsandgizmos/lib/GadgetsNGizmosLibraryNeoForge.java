@@ -14,6 +14,8 @@ import com.rieno.gadgetsandgizmos.lib.discovery.SableSubLevelResidency;
 import com.rieno.gadgetsandgizmos.lib.worker.WorkerRecipeCatalog;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.TagsUpdatedEvent;
+import net.neoforged.neoforge.event.level.ChunkEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
@@ -42,6 +44,9 @@ public final class GadgetsNGizmosLibraryNeoForge {
         NeoForge.EVENT_BUS.addListener(GadgetsNGizmosLibraryNeoForge::onServerStarted);
         NeoForge.EVENT_BUS.addListener(GadgetsNGizmosLibraryNeoForge::onServerStopped);
         NeoForge.EVENT_BUS.addListener(GadgetsNGizmosLibraryNeoForge::onPlayerLoggedOut);
+        NeoForge.EVENT_BUS.addListener(GadgetsNGizmosLibraryNeoForge::onChunkUnloaded);
+        NeoForge.EVENT_BUS.addListener(net.neoforged.bus.api.EventPriority.LOWEST,
+                GadgetsNGizmosLibraryNeoForge::onServerTick);
     }
 
     // Drop resolved tag members whenever datapacks update them
@@ -58,10 +63,22 @@ public final class GadgetsNGizmosLibraryNeoForge {
     private static void onServerStopped(ServerStoppedEvent evt){
         WorkerRecipeCatalog.invalidate();
         ProtectionBypass.clear(evt.getServer());
+        com.rieno.gadgetsandgizmos.lib.inventory.ContainerStorageNetworks.clear(evt.getServer());
+        com.rieno.gadgetsandgizmos.lib.network.BlockEntityDataSync.clear(evt.getServer());
     }
 
     // Reconnecting players must enable the bypass again
     private static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent evt){
         if(evt.getEntity() instanceof ServerPlayer player) ProtectionBypass.clear(player);
+    }
+
+    // Reject cached storage access before a world or Sable plot chunk unloads
+    private static void onChunkUnloaded(ChunkEvent.Unload evt){
+        if(!evt.getLevel().isClientSide()) com.rieno.gadgetsandgizmos.lib.inventory.ContainerStorageNetworks.invalidate();
+    }
+
+    // Coalesce state changes without delaying them beyond the issuing server tick
+    private static void onServerTick(ServerTickEvent.Post evt){
+        com.rieno.gadgetsandgizmos.lib.network.BlockEntityDataSync.flush(evt.getServer());
     }
 }

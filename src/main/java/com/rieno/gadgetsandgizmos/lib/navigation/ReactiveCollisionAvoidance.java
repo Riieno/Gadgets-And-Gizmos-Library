@@ -106,6 +106,31 @@ public final class ReactiveCollisionAvoidance {
                 hazard.clearance(), escape != null);
     }
 
+    // Rank nearby escapes using the same complete hull clearance used to execute them
+    public static ProximityEscape resolveVerifiedProximity(ProximityHazard hazard, List<Vec3> directions,
+            Function<Vec3, EscapeCandidate> probe, Function<EscapeCandidate, Double> verify){
+        if(hazard == null || !hazard.available()) return new ProximityEscape(Response.clear(0.0D), 0.0D);
+        List<EscapeCandidate> candidates = directions.stream().map(probe)
+                .filter(candidate -> candidate.clearance() > 0.25D)
+                .sorted(Comparator.<EscapeCandidate>comparingInt(candidate ->
+                        candidate.direction().dot(hazard.direction()) < -0.01D ? 0 : 1)
+                        .thenComparing(Comparator.comparingDouble((EscapeCandidate candidate) ->
+                                proximityScore(hazard, candidate)).reversed())).toList();
+        for(EscapeCandidate candidate : candidates){
+            double clearance = nonNegative(Math.min(candidate.clearance(), verify.apply(candidate)));
+            if(clearance <= 0.25D) continue;
+            EscapeCandidate verified = new EscapeCandidate(candidate.direction(), clearance);
+            return new ProximityEscape(resolveProximity(hazard, List.of(verified)), clearance);
+        }
+        return new ProximityEscape(resolveProximity(hazard, List.of()), 0.0D);
+    }
+
+    private static double proximityScore(ProximityHazard hazard, EscapeCandidate candidate){
+        double outward = -candidate.direction().dot(hazard.direction());
+        return outward > 0.01D ? outward * Math.min(candidate.clearance(), hazard.requiredClearance() + 1D)
+                : candidate.clearance();
+    }
+
     // Stop probing when the direct departure already has the greatest possible escape score
     public static ProximityEscape resolveProximity(ProximityHazard hazard, List<Vec3> directions,
             Function<Vec3, EscapeCandidate> probe){

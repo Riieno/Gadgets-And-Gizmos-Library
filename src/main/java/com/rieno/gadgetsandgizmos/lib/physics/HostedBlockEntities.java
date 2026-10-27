@@ -150,9 +150,7 @@ public final class HostedBlockEntities{
     private static boolean notifyHost(BlockEntity component, boolean sync, boolean dataOnly){
         BlockEntity owner = null;
         synchronized(HostedBlockEntities.class){
-            for(var entry : COMPONENTS.entrySet()){
-                if(entry.getValue().containsValue(component)){ owner = entry.getKey(); break; }
-            }
+            owner = HOSTS.get(component);
         }
         if(owner == null) return false;
         if(owner.isRemoved()) return true;

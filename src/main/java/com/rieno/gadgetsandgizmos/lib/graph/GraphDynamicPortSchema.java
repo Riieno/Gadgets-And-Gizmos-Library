@@ -31,4 +31,27 @@ public final class GraphDynamicPortSchema {
         }
         return result;
     }
+
+    // Restore nested MAP fields after their parent ports, independently of saved key order
+    public static Map<String, String> resolveInlinePorts(Map<String, String> base, Map<String, InlinePort> fields){
+        Map<String, String> res = new LinkedHashMap<>(base);
+        boolean changed;
+        do{
+            changed = false;
+            for(var entry : fields.entrySet()){
+                String port = entry.getKey();
+                var field = entry.getValue();
+                if(port == null || port.isBlank() || field == null || res.containsKey(port)
+                        || field.source() == null || field.source().isBlank() || port.equals(field.source())
+                        || !"map".equals(res.get(field.source())) || field.type() == null
+                        || field.type().isBlank() || "exec".equals(field.type())) continue;
+                res.put(port, field.type());
+                changed = true;
+            }
+        }while(changed);
+        return GraphPortOrder.copy(res);
+    }
+
+    // Describe the parent MAP and retained type of one inline field
+    public record InlinePort(String source, String type){}
 }

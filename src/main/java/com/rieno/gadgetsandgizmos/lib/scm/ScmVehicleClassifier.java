@@ -9,6 +9,15 @@ public final class ScmVehicleClassifier {
         return liftingSurfaces ? "plane" : wheels ? "car" : "airship";
     }
 
+    // Identify ground running gear without matching kinetic or steering wheels
+    public static boolean isGroundRunningGear(String blockPath){
+        if(blockPath == null) return false;
+        return switch(blockPath){
+            case "wheel", "small_wheel", "medium_wheel", "large_wheel", "wheel_mount" -> true;
+            default -> blockPath.endsWith("_wheel_mount") || blockPath.contains("track_sprocket");
+        };
+    }
+
     public static boolean isSelection(String selection) {
         return "auto".equals(selection) || "airship".equals(selection)
                 || "car".equals(selection) || "plane".equals(selection) || "ik".equals(selection)

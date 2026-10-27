@@ -24,6 +24,13 @@ public final class ScmControlPriority {
         return !requestedFinalHeading && !assemblyTranslation;
     }
 
+    // Keep the SCM forward vector on the lane until a separate docking command takes ownership
+    public static boolean navigationOwnsYaw(boolean groundVehicle, boolean requestedFinalHeading,
+            boolean finalApproach, boolean assemblyTranslation, boolean followingSpline){
+        if(followingSpline) return true;
+        return navigationOwnsYaw(groundVehicle, requestedFinalHeading, finalApproach, assemblyTranslation);
+    }
+
     // Retain optional control requests only on axes that the primary SCM commands leave free
     public static Vec3 remainingForce(Vec3 request, Set<String> primary, Vec3 forward, Vec3 up){
         Vec3 res = request;
