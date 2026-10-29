@@ -86,6 +86,7 @@ public final class ViewSceneRenderer{
     private static @Nullable net.minecraft.world.entity.Entity viewEntity;
     private static long frame;
     private static long nextId;
+    private static @Nullable ViewReference retiring;
 
 /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -210,13 +211,13 @@ public final class ViewSceneRenderer{
         if(HologramRenderScope.isActive()) return;
         Capture capture = CAPTURES.get(ref);
         if(capture == null) return;
-        capture.requested = frame;
+        capture.request();
         capture.visibleRequested = frame;
     }
     static void keepRetained(ViewReference ref){
         if(HologramRenderScope.isActive()) return;
         Capture capture = CAPTURES.get(ref);
-        if(capture != null) capture.requested = frame;
+        if(capture != null) capture.request();
     }
     // World surfaces rely on their actual depth-tested draw rather than a render callback alone
     private static @Nullable ResourceLocation request(ViewReference ref, int width, int height, boolean visible){
@@ -225,13 +226,19 @@ public final class ViewSceneRenderer{
         if(ClientViewOwnership.isReserved()){
             Capture capture = CAPTURES.get(ref);
             if(capture == null) return null;
-            capture.requested = frame;
+            capture.request();
             return capture.ready ? capture.texture : null;
         }
         if(isCapturing() || mc.level == null || ref.resolve(mc.level) == null) return null;
         Capture capture = CAPTURES.get(ref);
         if(capture == null){
-            if(CAPTURES.size() >= MAX_SOURCES) return null;
+            if(CAPTURES.size() >= MAX_SOURCES){
+                var oldest = CAPTURES.entrySet().stream()
+                        .filter(entry -> frame - entry.getValue().requested > 2)
+                        .min(Comparator.comparingLong(entry -> entry.getValue().requested)).orElse(null);
+                if(oldest != null) retiring = oldest.getKey();
+                return null;
+            }
             // Displays can request new feeds inside the player's world or GUI draw
             Runnable restore = ViewSceneEnvironment.save();
             try{
@@ -241,7 +248,7 @@ public final class ViewSceneRenderer{
             }
             CAPTURES.put(ref, capture);
         }
-        capture.requested = frame;
+        capture.request();
         if(visible) capture.visibleRequested = frame;
         ViewSceneRequests.requested(ref);
         int pixels = Math.clamp(resolution.getAsInt(), 64, 2048);
@@ -316,15 +323,24 @@ public final class ViewSceneRenderer{
             owningLevel = mc.level;
         }
         if(mc.level != null && ClientViewOwnership.isReserved()) return;
+        // Retire idle feeds before drawing, after checking whether the previous frame renewed them
+        if(retiring != null){
+            Capture prev = CAPTURES.get(retiring);
+            if(prev != null && frame - prev.requested > 2){
+                CAPTURES.remove(retiring);
+                prev.close();
+            }
+            retiring = null;
+        }
+        long now = System.nanoTime();
         CAPTURES.entrySet().removeIf(entry -> {
-            if(frame - entry.getValue().requested <= 120 && entry.getKey().resolve(mc.level) != null) return false;
+            if(!entry.getValue().retention.isExpired(now) && entry.getKey().resolve(mc.level) != null) return false;
             entry.getValue().close();
             return true;
         });
         if(mc.level == null || mc.player == null || mc.gameMode == null
                 || VeilLevelPerspectiveRenderer.isRenderingPerspective()) return;
         int rate = Math.clamp(minimumRefreshRate.getAsInt(), 1, 60);
-        long now = System.nanoTime();
         var visible = new ArrayList<Map.Entry<ViewReference, Capture>>();
         var due = new ArrayList<PendingCapture>();
         for(var entry : CAPTURES.entrySet()){
@@ -447,11 +463,14 @@ public final class ViewSceneRenderer{
     public static void clear(){
         CAPTURES.values().forEach(Capture::close);
         CAPTURES.clear();
+        retiring = null;
         BUDGET.reset();
     }
     private record PendingCapture(ViewReference ref, Capture capture, long phase){}
     // Retain one source's world renderer, ship meshes and framebuffer
     private static final class Capture{
+        private final com.rieno.gadgetsandgizmos.lib.util.ResourceLease retention =
+                new com.rieno.gadgetsandgizmos.lib.util.ResourceLease(5_000_000_000L);
         private final RenderBuffers buffers = new RenderBuffers(1);
         private TextureTarget target = SceneRenderTargets.createPreciseLike(
                 Minecraft.getInstance().getMainRenderTarget(), 16, 16, Minecraft.ON_OSX);
@@ -476,6 +495,7 @@ public final class ViewSceneRenderer{
         private long rendered = -100;
         private boolean ready;
         private boolean reload;
+        private void request(){ requested = frame; retention.renew(System.nanoTime()); }
         // Register a texture wrapper that leaves framebuffer ownership with this capture
         private Capture(){
             Minecraft.getInstance().getTextureManager().register(texture, new AbstractTexture(){

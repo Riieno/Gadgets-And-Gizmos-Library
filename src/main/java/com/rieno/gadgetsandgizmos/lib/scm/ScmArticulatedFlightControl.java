@@ -9,11 +9,13 @@ package com.rieno.gadgetsandgizmos.lib.scm;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.rieno.gadgetsandgizmos.lib.physics.SableAssemblyDynamicsApi.Tensor;
+import com.rieno.gadgetsandgizmos.lib.util.ParallelTasks;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 // Balance a flying assembly without treating its free joints as one rigid body
 public final class ScmArticulatedFlightControl{
@@ -87,11 +89,19 @@ public final class ScmArticulatedFlightControl{
             transferred = transferred.subtract(up.scale(transferred.dot(up)));
             torques.set(support, torques.get(support).add(transferred));
         }
+        boolean parallel = carriages.size() > 1
+                && carriages.stream().mapToInt(carriage -> carriage.units().size()).sum() >= 64;
+        List<Supplier<ScmPrecisionAllocator.Allocation>> jobs = new ArrayList<>();
         for(int idx = 0; idx < carriages.size(); idx++){
-            double[] prev = previous != null && idx < previous.size() ? previous.get(idx) : null;
-            res.add(allocate(carriages.get(idx).units(), requests.get(idx).force(),
-                    torques.get(idx), cruiseDirection, prev));
+            Carriage carriage = carriages.get(idx);
+            Vec3 force = requests.get(idx).force();
+            Vec3 torque = torques.get(idx);
+            double[] prev = previous != null && idx < previous.size() && previous.get(idx) != null
+                    ? previous.get(idx).clone() : null;
+            if(parallel) jobs.add(() -> allocate(carriage.units(), force, torque, cruiseDirection, prev));
+            else res.add(allocate(carriage.units(), force, torque, cruiseDirection, prev));
         }
+        if(parallel) res.addAll(ParallelTasks.evaluate(jobs));
         // Share missing force while retaining each carriage's own attitude target.
         double previousError = Double.POSITIVE_INFINITY;
         for(int pass = 0; pass < 8; pass++){
@@ -120,11 +130,22 @@ public final class ScmArticulatedFlightControl{
                 total += reserve[idx];
             }
             if(total <= 1.0E-9D) break;
+            jobs.clear();
+            List<Integer> revised = new ArrayList<>();
             for(int idx = 0; idx < carriages.size(); idx++){
                 if(reserve[idx] <= 1.0E-9D) continue;
-                res.set(idx, allocate(carriages.get(idx).units(),
-                        achieved.get(idx).add(error.scale(reserve[idx] / total)), torques.get(idx),
-                        cruiseDirection, res.get(idx).controls()));
+                Carriage carriage = carriages.get(idx);
+                Vec3 force = achieved.get(idx).add(error.scale(reserve[idx] / total));
+                Vec3 torque = torques.get(idx);
+                double[] prev = res.get(idx).controls();
+                if(parallel){
+                    revised.add(idx);
+                    jobs.add(() -> allocate(carriage.units(), force, torque, cruiseDirection, prev));
+                }else res.set(idx, allocate(carriage.units(), force, torque, cruiseDirection, prev));
+            }
+            if(parallel){
+                var allocations = ParallelTasks.evaluate(jobs);
+                for(int idx = 0; idx < revised.size(); idx++) res.set(revised.get(idx), allocations.get(idx));
             }
         }
         return List.copyOf(res);

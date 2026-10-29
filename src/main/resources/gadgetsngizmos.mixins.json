@@ -6,6 +6,9 @@
   "compatibilityLevel": "JAVA_21",
   "refmap": "gadgetsngizmos.refmap.json",
   "mixins": [
+    "BlockEntitySchematicSnapshotMixin",
+    "CreateSchematicPlacementMixin",
+    "StructureSchematicPlacementMixin",
     "PowerGridDeviceConnectorMixin",
     "AeronauticsHotAirControlMixin",
     "CollisionBlockRevisionMixin",
@@ -43,6 +46,8 @@
     "SableConstraintRemovalMixin",
     "SableCollisionPhysicsFrameMixin",
     "SubLevelArchiveAllocationMixin",
+    "SableBoundsPacketMixin",
+    "SableEmptyPlotBoundsMixin",
     "SubLevelConstructionMixin",
     "SubLevelConstructionPhysicsMixin",
     "SubLevelConstructionRemovalMixin",
@@ -61,6 +66,9 @@
     "WorkerChuteTransportMixin"
   ],
   "client": [
+    "ContraptionLightsBeaconDiscoveryMixin",
+    "SingleQuadParticleColorEffectMixin",
+    "CreateSchematicAndQuillSnapshotMixin",
     "SableClientPoseContextMixin",
     "SubLevelBlockEntityFrustumMixin",
     "SubLevelShaderBlockMetadataMixin",

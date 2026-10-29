@@ -11,6 +11,17 @@ import net.minecraft.world.phys.Vec3;
 public final class ClientRenderDistance{
     private ClientRenderDistance(){}
 
+    // Measure physical distance for displays on both world blocks and moving sublevels
+    public static double distanceSquared(BlockEntity owner){
+        Minecraft mc = Minecraft.getInstance();
+        if(owner == null || owner.isRemoved() || mc.level == null || owner.getLevel() == null) return Double.POSITIVE_INFINITY;
+        var body = SableLevelApi.containing(owner);
+        if(body != null && body.isRemoved()) return Double.POSITIVE_INFINITY;
+        if((body == null ? owner.getLevel() : body.getLevel()) != mc.level) return Double.POSITIVE_INFINITY;
+        Vec3 pos = SableTransformApi.toWorldPosition(body, owner.getBlockPos().getCenter());
+        return mc.gameRenderer.getMainCamera().getPosition().distanceToSqr(pos);
+    }
+
     public static boolean within(BlockEntity owner, double maximum){
         Minecraft mc = Minecraft.getInstance();
         if(owner == null || owner.isRemoved() || mc.level == null || owner.getLevel() == null) return false;

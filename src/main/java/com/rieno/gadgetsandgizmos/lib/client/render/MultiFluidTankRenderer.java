@@ -10,12 +10,27 @@ import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
 import net.neoforged.neoforge.fluids.FluidStack;
 
 // Render every stored fluid through Create's normal texture, tint, luminosity and translucent buffer handling
-public class MultiFluidTankRenderer extends FluidTankRenderer{
+public class MultiFluidTankRenderer extends FluidTankRenderer implements HologramRendererProvider{
     private static final float HULL = 9F / 128;
     private static final float BOTTOM = 5F / 16;
     private static final float TOP = 1F / 4;
 
     public MultiFluidTankRenderer(BlockEntityRendererProvider.Context ctx){ super(ctx); }
+
+    @Override public RetainedHologramRenderer createHologramRenderer(net.minecraft.world.level.block.entity.BlockEntity entity){
+        if(getClass() != MultiFluidTankRenderer.class || !(entity instanceof FluidTankBlockEntity tank)) return null;
+        return createRetainedTankRenderer(tank);
+    }
+
+    // Subclasses opt in when their additional geometry uses the same tank invalidation rules
+    protected final RetainedHologramRenderer createRetainedTankRenderer(FluidTankBlockEntity tank){
+        return createRetainedTankRenderer(tank, () -> 0L);
+    }
+
+    protected final RetainedHologramRenderer createRetainedTankRenderer(FluidTankBlockEntity tank, java.util.function.LongSupplier revision){
+        return new RetainedTankRenderer(tank, (target, partial, poses, buffers, light, overlay) ->
+                renderSafe(target, partial, poses, buffers, light, overlay), revision);
+    }
 
     @Override protected void renderSafe(FluidTankBlockEntity tank, float partial, PoseStack poses,
                                         MultiBufferSource buffers, int light, int overlay){

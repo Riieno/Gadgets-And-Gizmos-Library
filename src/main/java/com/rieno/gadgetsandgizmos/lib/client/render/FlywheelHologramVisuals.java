@@ -30,6 +30,10 @@ import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
+import com.simibubi.create.content.kinetics.base.SingleAxisRotatingVisual;
+import com.simibubi.create.content.kinetics.base.KineticBlockEntity;
+import dev.ryanhcode.sable.sublevel.SubLevel;
 import org.joml.Matrix3f;
 import org.joml.Matrix3fc;
 import org.joml.Matrix4f;
@@ -79,7 +83,11 @@ public final class FlywheelHologramVisuals implements AutoCloseable{
 ------------------------------------------------------------##-----------------------------------------------------*/
 
     public FlywheelHologramVisuals(ClientLevel level, Function<Float, HologramProjectionFrame> frame){
-        effect = new Scene(level, frame);
+        this(level, frame, true);
+    }
+
+    public FlywheelHologramVisuals(ClientLevel level, Function<Float, HologramProjectionFrame> frame, boolean animated){
+        effect = new Scene(level, frame, animated);
     }
 
     public void beginFrame(){ requested.clear(); }
@@ -94,7 +102,7 @@ public final class FlywheelHologramVisuals implements AutoCloseable{
     }
 
     public void endFrame(){
-        effect.desired = Map.copyOf(requested);
+        if(!requested.equals(effect.desired)) effect.desired = Map.copyOf(requested);
         effect.lastVisible = System.nanoTime();
     }
 
@@ -126,14 +134,40 @@ public final class FlywheelHologramVisuals implements AutoCloseable{
         };
     }
 
+    // Leave stable GPU instance data alone and restore the projection tint after native updates
+    static void hologramLighting(Instance instance){
+        if(instance instanceof ColoredLitInstance colored && (colored.red != (byte)90 || colored.green != (byte)210
+                || colored.blue != (byte)255 || colored.alpha != (byte)190 || colored.light != LightTexture.FULL_BRIGHT)){
+            colored.color(90, 210, 255, 190).light(LightTexture.FULL_BRIGHT);
+            colored.setChanged();
+        }
+    }
+
+    // Stop shader-driven movement on the projection's own instances, never on the source visual
+    static void freeze(Instance instance){
+        boolean changed = false;
+        if(instance instanceof com.simibubi.create.content.kinetics.base.RotatingInstance rotating && rotating.rotationalSpeed != 0){
+            rotating.rotationalSpeed = 0; changed = true;
+        }
+        if(instance instanceof com.simibubi.create.content.processing.burner.ScrollInstance scroll && (scroll.speedU != 0 || scroll.speedV != 0)){
+            scroll.speedU = scroll.speedV = 0; changed = true;
+        }
+        if(instance instanceof com.simibubi.create.content.processing.burner.ScrollTransformedInstance scroll && (scroll.speedU != 0 || scroll.speedV != 0)){
+            scroll.speedU = scroll.speedV = 0; changed = true;
+        }
+        if(instance instanceof com.simibubi.create.content.contraptions.actors.ActorInstance actor && actor.speed != 0){ actor.speed = 0; changed = true; }
+        if(changed) instance.setChanged();
+    }
+
     private static final class Scene implements Effect{
         private final ClientLevel level;
         private final Function<Float, HologramProjectionFrame> frame;
+        private final boolean animated;
         private final Set<BlockEntity> failed = ConcurrentHashMap.newKeySet();
         private volatile Map<BlockEntity, BlockState> desired = Map.of();
         private volatile long lastVisible;
         private volatile boolean closed;
-        private Scene(ClientLevel level, Function<Float, HologramProjectionFrame> frame){ this.level = level; this.frame = frame; }
+        private Scene(ClientLevel level, Function<Float, HologramProjectionFrame> frame, boolean animated){ this.level = level; this.frame = frame; this.animated = animated; }
         @Override public LevelAccessor level(){ return level; }
         @Override public EffectVisual<?> visualize(VisualizationContext ctx, float partialTick){ return new SceneVisual(this, ctx); }
     }
@@ -148,9 +182,10 @@ public final class FlywheelHologramVisuals implements AutoCloseable{
         @Override public Plan<DynamicVisual.Context> planFrame(){ return SimplePlan.of(this::frame); }
         @Override public Plan<TickableVisual.Context> planTick(){
             return SimplePlan.of(tick -> {
+                if(!scene.animated) return;
                 try(var scope = HologramRenderScope.enter()){
                     children.values().forEach(child -> {
-                        if(child.visual instanceof TickableVisual tickable) tickable.planTick().execute(DIRECT, tick);
+                        if(child.tickPlan != null) child.tickPlan.execute(DIRECT, tick);
                     });
                 }
             });
@@ -161,7 +196,7 @@ public final class FlywheelHologramVisuals implements AutoCloseable{
             }
         }
         private void renderFrame(DynamicVisual.Context frame){
-            Map<BlockEntity, BlockState> desired = scene.closed || System.nanoTime() - scene.lastVisible > 250_000_000L ? Map.of() : scene.desired;
+            Map<BlockEntity, BlockState> desired = scene.closed || System.nanoTime() - scene.lastVisible > 5_000_000_000L ? Map.of() : scene.desired;
             children.entrySet().removeIf(entry -> {
                 if(desired.get(entry.getKey()) == entry.getValue().state && !entry.getKey().isRemoved()) return false;
                 entry.getValue().close();
@@ -189,21 +224,47 @@ public final class FlywheelHologramVisuals implements AutoCloseable{
                         return;
                     }
                 }
-                var source = SubLevelClientRenderApi.worldFrame(entity, frame.partialTick());
+                long tick = scene.level.getGameTime();
+                boolean newTick = child.lastTick != tick;
+                if(newTick) child.source = SableLevelApi.containing(entity);
+                var source = SubLevelClientRenderApi.worldFrame(entity.getLevel(), entity.getBlockPos().getCenter(), child.source, frame.partialTick());
                 Matrix4f pose = projection.blockTransform(ctx.renderOrigin(), source);
-                child.embedding.transforms(pose, pose.normal(new Matrix3f()));
-                child.visual.update(frame.partialTick());
-                if(child.visual instanceof DynamicVisual dynamic) dynamic.planFrame().execute(DIRECT, frame);
-                child.owned.forEach(instance -> {
-                    if(instance instanceof ColoredLitInstance colored){ colored.color(90, 210, 255, 190).light(LightTexture.FULL_BRIGHT); colored.setChanged(); }
-                });
+                if(child.pose == null || !child.pose.equals(pose)){
+                    child.embedding.transforms(pose, pose.normal(new Matrix3f()));
+                    child.pose = pose;
+                }
+                float speed = entity instanceof KineticBlockEntity kinetic ? kinetic.getSpeed() : 0;
+                if(scene.animated && (child.visual.getClass() != SingleAxisRotatingVisual.class || newTick || speed != child.speed)
+                        || !scene.animated && !child.initialized) child.visual.update(frame.partialTick());
+                child.lastTick = tick; child.speed = speed;
+                if(scene.animated || !child.initialized){
+                    if(child.framePlan != null) child.framePlan.execute(DIRECT, frame);
+                    child.owned.forEach(instance -> { hologramLighting(instance); if(!scene.animated) freeze(instance); });
+                    child.initialized = true;
+                }
             });
         }
         @Override public void update(float partialTick){}
         @Override public void delete(){ children.values().forEach(Child::close); children.clear(); materials.clear(); }
     }
 
-    private record Child(BlockState state, BlockEntityVisual<?> visual, VisualEmbedding embedding, Set<Instance> owned){
+    private static final class Child{
+        private final BlockState state;
+        private final BlockEntityVisual<?> visual;
+        private final VisualEmbedding embedding;
+        private final Set<Instance> owned;
+        private final Plan<DynamicVisual.Context> framePlan;
+        private final Plan<TickableVisual.Context> tickPlan;
+        private SubLevel source;
+        private long lastTick = Long.MIN_VALUE;
+        private float speed;
+        private Matrix4f pose;
+        private boolean initialized;
+        private Child(BlockState state, BlockEntityVisual<?> visual, VisualEmbedding embedding, Set<Instance> owned){
+            this.state = state; this.visual = visual; this.embedding = embedding; this.owned = owned;
+            framePlan = visual instanceof DynamicVisual dynamic ? dynamic.planFrame() : null;
+            tickPlan = visual instanceof TickableVisual tickable ? tickable.planTick() : null;
+        }
         private void close(){ visual.delete(); embedding.delete(); owned.clear(); }
     }
 

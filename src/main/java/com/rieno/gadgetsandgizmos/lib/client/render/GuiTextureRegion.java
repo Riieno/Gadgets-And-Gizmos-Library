@@ -65,6 +65,20 @@ public record GuiTextureRegion(ResourceLocation texture, int textureWidth, int t
         }finally{ graphics.pose().popPose(); }
     }
 
+    // Repeat a region at the requested tile size and crop the final row and column
+    public void drawTiled(GuiGraphics graphics, int x, int y, int drawWidth, int drawHeight,
+                          int tileWidth, int tileHeight){
+        if(tileWidth <= 0 || tileHeight <= 0) throw new IllegalArgumentException("GUI tile dimensions must be positive");
+        if(drawWidth <= 0 || drawHeight <= 0) return;
+        try(var clip = GuiPoseScissor.push(graphics, x, y, x + drawWidth, y + drawHeight)){
+            for(int row = 0; row < drawHeight; row += tileHeight){
+                for(int col = 0; col < drawWidth; col += tileWidth){
+                    draw(graphics, x + col, y + row, tileWidth, tileHeight);
+                }
+            }
+        }
+    }
+
     private void drawStrip(GuiGraphics graphics, int x, int sourceX, int stripWidth){
         if(stripWidth <= 0) return;
         graphics.blit(texture, x, 0, stripWidth, height, (float)(u + sourceX), (float)v,

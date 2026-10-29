@@ -6,6 +6,7 @@ import com.rieno.gadgetsandgizmos.lib.inventory.SharedCapacityFluidTank;
 import com.rieno.gadgetsandgizmos.lib.inventory.TransferMeter;
 import com.rieno.gadgetsandgizmos.lib.inventory.TransferTrackedStorage;
 import com.rieno.gadgetsandgizmos.lib.worker.WorkerContainerAccess;
+import com.rieno.gadgetsandgizmos.lib.access.LoadedBlockEntities;
 import com.simibubi.create.content.fluids.tank.FluidTankBlockEntity;
 import com.simibubi.create.foundation.fluid.SmartFluidTank;
 import net.minecraft.core.BlockPos;
@@ -54,6 +55,20 @@ public abstract class MultiFluidTankBlockEntity extends FluidTankBlockEntity imp
     }
 
     public SharedCapacityFluidTank localTank(){ return (SharedCapacityFluidTank)tankInventory; }
+
+    // Apply window models only after the controller's saved members are installed
+    public boolean trySetWindows(boolean visible){
+        if(level == null || level.isClientSide || !isController() || width < 1 || height < 1) return false;
+        for(int y = 0; y < height; y++) for(int x = 0; x < width; x++) for(int z = 0; z < width; z++){
+            var member = LoadedBlockEntities.get(level, worldPosition.offset(x, y, z));
+            if(!(member instanceof MultiFluidTankBlockEntity tank) || tank.getType() != getType()
+                    || !tank.getController().equals(worldPosition)) return false;
+        }
+        setWindows(visible && !boiler.isActive());
+        setChanged();
+        sendData();
+        return true;
+    }
 
     @Override public MultiFluidTankBlockEntity getControllerBE(){
         if(!isController() && (level == null || !WorkerContainerAccess.isLoaded(level, getController()))) return null;

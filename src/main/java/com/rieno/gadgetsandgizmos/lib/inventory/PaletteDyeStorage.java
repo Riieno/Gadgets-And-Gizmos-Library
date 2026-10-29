@@ -1,11 +1,14 @@
 package com.rieno.gadgetsandgizmos.lib.inventory;
 
+import com.rieno.gadgetsandgizmos.lib.color.WeightedColorGradient;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.item.DyeItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.Items;
+
+import java.util.ArrayList;
 
 // Store large dye counts without exceeding vanilla item-stack serialization or cursor limits
 public final class PaletteDyeStorage{
@@ -16,6 +19,16 @@ public final class PaletteDyeStorage{
     private final int[] counts = new int[16];
 
     public int count(int color){ return color == GLOW_SLOT ? glowInkSacs : color >= 0 && color < 16 ? counts[color] : 0; }
+
+    // Represent stored dyes as proportional color bands; glow ink does not add a dye color
+    public WeightedColorGradient gradient(){
+        var colors = new ArrayList<WeightedColorGradient.Color>();
+        for(int idx = 0; idx < counts.length; idx++){
+            if(counts[idx] > 0) colors.add(new WeightedColorGradient.Color(DyeColor.byId(idx).getTextureDiffuseColor(), counts[idx]));
+        }
+        return new WeightedColorGradient(colors);
+    }
+
     public boolean loaded(){
         for(int count : counts) if(count < 1) return false;
         return true;

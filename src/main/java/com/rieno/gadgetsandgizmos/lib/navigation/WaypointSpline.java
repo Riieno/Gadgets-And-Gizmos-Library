@@ -634,7 +634,7 @@ public final class WaypointSpline {
         if(distances != null) return distances;
         distances = new double[ARC_DISTANCE_SAMPLES];
         Arrays.fill(distances, Double.NaN);
-        if(cached.size() >= 8) cached.remove(cached.keySet().iterator().next());
+        if(cached.size() >= 128) cached.remove(cached.keySet().iterator().next());
         cached.put(segment, distances);
         return distances;
     }

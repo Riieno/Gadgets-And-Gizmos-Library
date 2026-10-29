@@ -30,6 +30,8 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
     private ResourceRouting.Pool combined;
     private int slots;
     private int tanks;
+    private ItemPort lastItem;
+    private FluidPort lastFluid;
 
     public ContainerNetworkAccess(BlockEntity entry){
         this.entry = entry;
@@ -52,11 +54,12 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
 
     private boolean refresh(){
         if(entry == null || entry.getLevel() == null) return false;
-        long time = entry.getLevel().getGameTime();
+        Level current = entry.getLevel();
+        long time = current.getGameTime();
         long version = ContainerStorageNetworks.revision();
-        if(!entryAvailability.available(entry.getLevel(), time, version)) return false;
-        if(tick == time && revision == version && routedLevel == entry.getLevel()
-                && entry.getBlockPos().equals(routedPos)) return true;
+        if(tick == time && revision == version && routedLevel == current
+                && entry.getBlockPos().equals(routedPos) && !entry.isRemoved() && !current.isClientSide) return true;
+        if(!entryAvailability.available(current, time, version)) return false;
         List<Endpoint> next = new ArrayList<>();
         List<ItemPort> nextItems = new ArrayList<>();
         List<FluidPort> nextFluids = new ArrayList<>();
@@ -85,6 +88,8 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
         items = List.copyOf(nextItems);
         fluids = List.copyOf(nextFluids);
         combined = null;
+        lastItem = null;
+        lastFluid = null;
         slots = nextSlots;
         tanks = nextTanks;
         tick = time;
@@ -110,26 +115,40 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
 
     private ItemPort item(int slot){
         if(slot < 0 || !refresh() || slot >= slots) return null;
+        ItemPort prev = lastItem;
+        if(prev != null && slot >= prev.start() && slot < prev.end()){
+            return prev.availability().available(routedLevel, tick, revision) ? prev : null;
+        }
         int low = 0, high = items.size() - 1;
         while(low <= high){
             int idx = (low + high) >>> 1;
             ItemPort port = items.get(idx);
             if(slot < port.start()) high = idx - 1;
             else if(slot >= port.end()) low = idx + 1;
-            else return port.availability().available(routedLevel, tick, revision) ? port : null;
+            else{
+                lastItem = port;
+                return port.availability().available(routedLevel, tick, revision) ? port : null;
+            }
         }
         return null;
     }
 
     private FluidPort fluid(int tank){
         if(tank < 0 || !refresh() || tank >= tanks) return null;
+        FluidPort prev = lastFluid;
+        if(prev != null && tank >= prev.start() && tank < prev.end()){
+            return prev.availability().available(routedLevel, tick, revision) ? prev : null;
+        }
         int low = 0, high = fluids.size() - 1;
         while(low <= high){
             int idx = (low + high) >>> 1;
             FluidPort port = fluids.get(idx);
             if(tank < port.start()) high = idx - 1;
             else if(tank >= port.end()) low = idx + 1;
-            else return port.availability().available(routedLevel, tick, revision) ? port : null;
+            else{
+                lastFluid = port;
+                return port.availability().available(routedLevel, tick, revision) ? port : null;
+            }
         }
         return null;
     }

@@ -11,7 +11,7 @@ public final class HologramRenderTypes extends RenderStateShard{
     private static final RenderType TERRAIN = RenderType.create("gadgetsngizmos_hologram_terrain",
             DefaultVertexFormat.BLOCK, VertexFormat.Mode.QUADS, 262144, false, false,
             RenderType.CompositeState.builder().setShaderState(RENDERTYPE_TRANSLUCENT_SHADER)
-                    .setTextureState(new TextureStateShard(TextureAtlas.LOCATION_BLOCKS, false, false))
+                    .setTextureState(new TextureStateShard(TextureAtlas.LOCATION_BLOCKS, false, true))
                     .setTransparencyState(TRANSLUCENT_TRANSPARENCY).setCullState(CULL)
                     .setDepthTestState(LEQUAL_DEPTH_TEST).setWriteMaskState(COLOR_DEPTH_WRITE)
                     .setLightmapState(LIGHTMAP).createCompositeState(false));

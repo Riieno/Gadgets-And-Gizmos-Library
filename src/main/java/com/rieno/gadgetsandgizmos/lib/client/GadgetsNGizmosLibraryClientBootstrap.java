@@ -34,6 +34,7 @@ public final class GadgetsNGizmosLibraryClientBootstrap {
 
     // Register the Gadgets & Gizmos client bootstrap
     public static void register(IEventBus modEventBus) {
+        com.rieno.gadgetsandgizmos.lib.client.render.ColorEffectParticleRendering.register(modEventBus);
         com.rieno.gadgetsandgizmos.lib.client.view.RemoteViewClient.bootstrap();
         modEventBus.addListener((RegisterClientTooltipComponentFactoriesEvent evt) ->
                 evt.register(ColorEffectTooltip.class, ClientColorEffectTooltip::new));

@@ -42,6 +42,8 @@ public final class ResourceRouting{
     }
 
     public static Pool combine(List<Pool> pools){
+        if(pools.isEmpty()) return Pool.EMPTY;
+        if(pools.size() == 1) return java.util.Objects.requireNonNull(pools.getFirst());
         List<IItemHandler> items = new ArrayList<>();
         List<IFluidHandler> fluids = new ArrayList<>();
         List<IEnergyStorage> energy = new ArrayList<>();
@@ -77,6 +79,11 @@ public final class ResourceRouting{
     }
 
     public static <T> List<T> distinct(List<T> handlers){
+        if(handlers.isEmpty()) return List.of();
+        if(handlers.size() == 1){
+            T handler = handlers.getFirst();
+            return handler == null ? List.of() : List.of(handler);
+        }
         Set<T> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         List<T> res = new ArrayList<>();
         for(T handler : handlers) if(handler != null && seen.add(handler)) res.add(handler);

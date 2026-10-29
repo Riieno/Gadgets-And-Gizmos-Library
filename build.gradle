@@ -171,6 +171,8 @@ def validateMixinConfig = tasks.register('validateMixinConfig') {
 }
 
 dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher:1.11.4'
     compileOnly 'cc.tweaked:cc-tweaked-1.21.1-core-api:1.118.0'
     compileOnly files(powerGridJar)
     ['commonmark', 'commonmark-ext-autolink', 'commonmark-ext-gfm-tables',
@@ -209,6 +211,16 @@ tasks.withType(JavaCompile).configureEach {
 tasks.named('check') {
     dependsOn validateLibraryBoundary
     dependsOn validateMixinConfig
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// Exercise the numerical APIs against the same Minecraft and optional API classes as production
+sourceSets.test {
+    compileClasspath += sourceSets.main.compileClasspath
+    runtimeClasspath += sourceSets.main.compileClasspath
 }
 
 tasks.named('jar', Jar) {

@@ -35,6 +35,13 @@ public record HologramChunk(ChunkPos pos, int grassColor, int foliageColor, int 
         if(blocks.size() > MAX_BLOCKS) throw new IllegalArgumentException("Surface snapshot is too large");
     }
 
+    // Compare the baked surface independently of live kinetic animation snapshots
+    public boolean hasSameSurface(HologramChunk other){
+        return other != null && (this == other || pos.equals(other.pos)
+                && grassColor == other.grassColor && foliageColor == other.foliageColor
+                && waterColor == other.waterColor && blocks.equals(other.blocks));
+    }
+
     // Positions are local to the chunk on X/Z and use world height on Y
     public record SurfaceBlock(BlockPos pos, BlockState state, int faces){
         public SurfaceBlock{

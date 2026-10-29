@@ -172,14 +172,25 @@ public final class RouteTrafficPriority {
         }
         if (!selected.found()) return Decision.clear();
 
+        // Short centreline corrections do not change the order of a following queue
+        Vec3 subjectHeading = sustainedDirection(subjectPath);
+        Vec3 otherHeading = sustainedDirection(otherPath);
+        Vec3 between = measured(other.position().subtract(subject.position()), ground);
+        double along = between.dot(subjectHeading);
+        if(subjectHeading.dot(otherHeading) >= 0.75D && Math.abs(along) > EPSILON
+                && between.subtract(subjectHeading.scale(along)).length() <= requiredSeparation){
+            selected = new Conflict(selected.position(), Math.max(0, along), Math.max(0, -along),
+                    selected.separation(), Encounter.SAME_DIRECTION, true);
+        }
+
         double subjectSpeed = subject.travelSpeed(settings.minimumTravelSpeed());
         double otherSpeed = other.travelSpeed(settings.minimumTravelSpeed());
         double subjectDistance = selected.subjectDistance();
         double otherDistance = selected.otherDistance();
         boolean mustYield;
         if (selected.encounter() == Encounter.SAME_DIRECTION) {
-            boolean subjectBehind = subjectDistance > otherDistance + settings.distanceTieTolerance();
-            boolean otherBehind = otherDistance > subjectDistance + settings.distanceTieTolerance();
+            boolean subjectBehind = subjectDistance > otherDistance + EPSILON;
+            boolean otherBehind = otherDistance > subjectDistance + EPSILON;
             if (subjectBehind) {
                 double closingSpeed = Math.max(
                         subject.measuredSpeed() - other.measuredSpeed(),
@@ -245,6 +256,19 @@ public final class RouteTrafficPriority {
             direction = horizontal(direction);
         }
         return normalize(direction, participant.velocity());
+    }
+
+    // Measure the retained lane heading across small transverse corrections
+    private static Vec3 sustainedDirection(Path path){
+        Vec3 travel = Vec3.ZERO;
+        double remaining = 8.0D;
+        for(PathSegment segment : path.segments()){
+            double length = Math.min(remaining, segment.length());
+            travel = travel.add(segment.direction().scale(length));
+            remaining -= length;
+            if(remaining <= EPSILON) break;
+        }
+        return normalize(travel, Vec3.ZERO);
     }
 
     // Compare stable vehicle ids without depending on registration order.

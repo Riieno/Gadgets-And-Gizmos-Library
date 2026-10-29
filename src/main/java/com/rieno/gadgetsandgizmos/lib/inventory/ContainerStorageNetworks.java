@@ -121,7 +121,7 @@ public final class ContainerStorageNetworks{
     private static BlockEntity root(BlockEntity target){
         var pos = ContainerStorageIdentity.position(target.getLevel(), target.getBlockPos());
         if(!WorkerContainerAccess.isLoaded(target.getLevel(), pos)) return target;
-        var root = target.getLevel().getBlockEntity(pos);
+        var root = com.rieno.gadgetsandgizmos.lib.access.LoadedBlockEntities.get(target.getLevel(), pos);
         return root == null ? target : root;
     }
 

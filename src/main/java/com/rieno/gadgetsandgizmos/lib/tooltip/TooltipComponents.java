@@ -12,6 +12,8 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.block.state.BlockState;
 
+import java.util.List;
+
 // Build reusable tooltip components from block identity and boolean state
 public final class TooltipComponents {
     // Prevent instantiation of the tooltip component helper
@@ -27,5 +29,10 @@ public final class TooltipComponents {
     public static Component status(boolean active, Component activeText, Component inactiveText) {
         return (active ? activeText : inactiveText).copy()
                 .withStyle(active ? ChatFormatting.GREEN : ChatFormatting.RED);
+    }
+
+    // Add a shared tooltip line once while preserving existing descriptions and formatting
+    public static void appendOnce(List<Component> lines, Component line){
+        if(!lines.contains(line)) lines.add(line);
     }
 }

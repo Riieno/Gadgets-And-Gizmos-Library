@@ -5,6 +5,7 @@ import net.neoforged.neoforge.capabilities.Capabilities;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
+import com.rieno.gadgetsandgizmos.lib.access.LoadedBlockEntities;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -24,7 +25,10 @@ public final class EnergyTransfer{
         for(Direction face : Direction.values()){
             var targetPos = pos.relative(face);
             if(!level.isLoaded(targetPos)) continue;
-            var target = level.getCapability(Capabilities.EnergyStorage.BLOCK, targetPos, face.getOpposite());
+            var state = level.getBlockState(targetPos);
+            var entity = LoadedBlockEntities.get(level, targetPos);
+            if(state.hasBlockEntity() && entity == null) continue;
+            var target = level.getCapability(Capabilities.EnergyStorage.BLOCK, targetPos, state, entity, face.getOpposite());
             if(target != null && target != source && target.canReceive() && !target.canExtract()) targets.add(target);
         }
         return transfer(List.of(source), targets);

@@ -6,14 +6,22 @@ import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 // Place decorative panels on multiblock surfaces without creating blocks or collision shapes
 public final class MultiblockPanelLayout{
+    private static final Map<Layout, List<Panel>> CACHE = new LinkedHashMap<>();
     private MultiblockPanelLayout(){}
 
     public static List<Panel> panels(BlockPos origin, int sizeX, int sizeY, int sizeZ,
                                      Direction.Axis axis, boolean allSides, boolean lowMounted){
         int x = Math.max(1, sizeX), y = Math.max(1, sizeY), z = Math.max(1, sizeZ);
+        var key = new Layout(origin.immutable(), x, y, z, axis, allSides, lowMounted);
+        synchronized(CACHE){
+            var prev = CACHE.get(key);
+            if(prev != null) return prev;
+        }
         double height = lowMounted ? Math.min(y - .5D, 1.5D) : y / 2.0D;
         List<Panel> panels = new ArrayList<>();
         for(Direction face : Direction.Plane.HORIZONTAL){
@@ -24,8 +32,17 @@ public final class MultiblockPanelLayout{
             BlockPos owner = BlockPos.containing(center.add(-face.getStepX() * .01D, 0, -face.getStepZ() * .01D));
             panels.add(new Panel(owner, center, face));
         }
-        return List.copyOf(panels);
+        var res = List.copyOf(panels);
+        synchronized(CACHE){
+            var prev = CACHE.get(key);
+            if(prev != null) return prev;
+            if(CACHE.size() >= 2048) CACHE.remove(CACHE.keySet().iterator().next());
+            CACHE.put(key, res);
+        }
+        return res;
     }
+
+    private record Layout(BlockPos origin, int x, int y, int z, Direction.Axis axis, boolean allSides, boolean lowMounted){}
 
     public record Panel(BlockPos owner, Vec3 center, Direction facing){
         // Include the housing thickness so its front, sides and edges share the same interaction

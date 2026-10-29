@@ -11,7 +11,7 @@ import java.util.Arrays;
 public final class ScmPrecisionAllocator{
     private static final int AXES = 6;
     private static final int ITERATIONS = 320;
-    private static final int MAX_CACHED_ALLOCATIONS = 8;
+    private static final int MAX_CACHED_ALLOCATIONS = 64;
     private static final int MAX_CACHED_UNITS = 16_384;
     private static final ThreadLocal<Map<AllocationKey, Allocation>> ALLOCATIONS =
             ThreadLocal.withInitial(() -> new LinkedHashMap<>(MAX_CACHED_ALLOCATIONS, 0.75F, true));
@@ -372,7 +372,7 @@ public final class ScmPrecisionAllocator{
         if(units.size() <= MAX_CACHED_UNITS){
             int count = units.size();
             for(List<Unit> key : cached.keySet()) count += key.size();
-            while(!cached.isEmpty() && (cached.size() >= 16 || count > MAX_CACHED_UNITS)){
+            while(!cached.isEmpty() && (cached.size() >= 64 || count > MAX_CACHED_UNITS)){
                 List<Unit> oldest = cached.keySet().iterator().next();
                 count -= oldest.size();
                 cached.remove(oldest);

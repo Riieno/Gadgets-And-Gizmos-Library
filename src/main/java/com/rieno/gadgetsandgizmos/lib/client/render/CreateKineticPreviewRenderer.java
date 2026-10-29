@@ -558,38 +558,6 @@ final class CreateKineticPreviewRenderer {
             String name,
             Object... arguments
     ) {
-        for (Class<?> type = renderer.getClass(); type != null; type = type.getSuperclass()) {
-            for (Method method : type.getDeclaredMethods()) {
-                if (!method.getName().equals(name)
-                        || method.getParameterCount() != arguments.length) {
-                    continue;
-                }
-                Class<?>[] parameterTypes = method.getParameterTypes();
-                boolean compatible = true;
-                for (int index = 0; index < arguments.length; index++) {
-                    if (arguments[index] != null
-                            && !isParameterCompatible(parameterTypes[index], arguments[index])) {
-                        compatible = false;
-                        break;
-                    }
-                }
-                if (!compatible) continue;
-                return method;
-            }
-        }
-        return null;
-    }
-
-    /** Check reflection parameters while retaining Java's primitive-wrapper compatibility. */
-    private static boolean isParameterCompatible(Class<?> parameterType, Object argument) {
-        if (!parameterType.isPrimitive()) return parameterType.isInstance(argument);
-        return parameterType == boolean.class && argument instanceof Boolean
-                || parameterType == byte.class && argument instanceof Byte
-                || parameterType == char.class && argument instanceof Character
-                || parameterType == short.class && argument instanceof Short
-                || parameterType == int.class && argument instanceof Integer
-                || parameterType == long.class && argument instanceof Long
-                || parameterType == float.class && argument instanceof Float
-                || parameterType == double.class && argument instanceof Double;
+        return com.rieno.gadgetsandgizmos.lib.util.CompatibleMethods.find(renderer.getClass(), name, arguments);
     }
 }

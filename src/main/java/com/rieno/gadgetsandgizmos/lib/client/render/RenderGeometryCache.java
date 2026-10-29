@@ -4,6 +4,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
+import org.joml.Vector3f;
 
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -13,6 +14,8 @@ import java.util.function.Consumer;
 // Retain local vertices without flattening depth layers or changing the original render types
 public final class RenderGeometryCache{
     private final Map<RenderType, Vertices> batches = new LinkedHashMap<>();
+
+    public void clear(){ batches.clear(); }
 
     // The callback supplies local geometry; the caller's current pose is applied on every presentation
     public void render(PoseStack poses, MultiBufferSource buffers, boolean refresh, Consumer<MultiBufferSource> draw){
@@ -50,11 +53,24 @@ public final class RenderGeometryCache{
         }
 
         private void draw(PoseStack poses, VertexConsumer target){
+            var pose = poses.last();
+            var pos = new Vector3f();
+            var normal = new Vector3f();
             for(int i = 0; i < count * STRIDE; i += STRIDE){
-                target.addVertex(poses.last().pose(), data[i], data[i + 1], data[i + 2])
-                        .setColor(Float.floatToRawIntBits(data[i + 3])).setUv(data[i + 4], data[i + 5])
-                        .setUv1((int)data[i + 6], (int)data[i + 7]).setUv2((int)data[i + 8], (int)data[i + 9])
-                        .setNormal(poses.last(), data[i + 10], data[i + 11], data[i + 12]);
+                pose.pose().transformPosition(data[i], data[i + 1], data[i + 2], pos);
+                pose.transformNormal(data[i + 10], data[i + 11], data[i + 12], normal);
+                int overlayU = (int)data[i + 6], overlayV = (int)data[i + 7];
+                int lightU = (int)data[i + 8], lightV = (int)data[i + 9];
+                if(((overlayU | overlayV | lightU | lightV) & ~0xFFFF) != 0){
+                    target.addVertex(pos.x, pos.y, pos.z).setColor(Float.floatToRawIntBits(data[i + 3]))
+                            .setUv(data[i + 4], data[i + 5]).setUv1(overlayU, overlayV).setUv2(lightU, lightV)
+                            .setNormal(normal.x, normal.y, normal.z);
+                    continue;
+                }
+                int overlay = overlayU | overlayV << 16;
+                int light = lightU | lightV << 16;
+                target.addVertex(pos.x, pos.y, pos.z, Float.floatToRawIntBits(data[i + 3]),
+                        data[i + 4], data[i + 5], overlay, light, normal.x, normal.y, normal.z);
             }
         }
     }

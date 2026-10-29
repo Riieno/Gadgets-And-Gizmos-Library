@@ -2,6 +2,7 @@ package com.rieno.gadgetsandgizmos.lib.navigation;
 
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import com.rieno.gadgetsandgizmos.lib.physics.SubLevelParticleOcclusion;
 
 import java.util.Collection;
 import java.util.List;
@@ -249,6 +250,33 @@ public final class DockTrafficGeometry{
     }
 
     private record RouteFraction(double first, double second){}
+
+    // Measure braking room along the ordered lane using the vessel's actual hull
+    public static double clearance(List<Vec3> route, double range, List<AABB> relativeHull, Collection<Obstacle> obstacles){
+        double res = Double.isFinite(range) ? Math.max(0, range) : 0;
+        double distance = 0;
+        for(int idx = 0; idx < route.size() && distance < res; idx++){
+            Vec3 start = route.get(idx), end = route.get(Math.min(idx + 1, route.size() - 1));
+            double length = start.distanceTo(end);
+            if(length <= 1.0E-9D && route.size() > 1) continue;
+            if(length > res - distance) end = start.lerp(end, (res - distance) / length);
+            for(Obstacle obstacle : obstacles) for(AABB fixed : obstacle.bounds()) for(AABB hull : relativeHull){
+                AABB expanded = new AABB(fixed.minX - hull.maxX, fixed.minY - hull.maxY, fixed.minZ - hull.maxZ,
+                        fixed.maxX - hull.minX, fixed.maxY - hull.minY, fixed.maxZ - hull.minZ).inflate(0.25D);
+                if(expanded.contains(start)){
+                    // A follower behind the hull cannot veto translation away from it
+                    Vec3 delta = end.subtract(start);
+                    if(SubLevelParticleOcclusion.allowsOverlapDeparture(List.of(hull.move(start).inflate(0.25D)),
+                            fixed, delta.normalize(), delta.length())) continue;
+                    return distance;
+                }
+                var hit = expanded.clip(start, end);
+                if(hit.isPresent()) res = Math.min(res, distance + start.distanceTo(hit.get()));
+            }
+            distance += length;
+        }
+        return res;
+    }
 
     // Measure stopping room before another vessel's reserved docking sweep
     public static double clearance(Vec3 position, Vec3 direction, double range, List<AABB> relativeHull, Collection<Obstacle> obstacles){

@@ -36,6 +36,7 @@ public final class CompactCheckbox extends AbstractButton{
     private final BooleanSupplier selected;
     private final Consumer<Boolean> changed;
     private final Appearance appearance;
+    private boolean rightAligned;
 
 /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -61,6 +62,8 @@ public final class CompactCheckbox extends AbstractButton{
     }
 
     public boolean selected(){ return selected.getAsBoolean(); }
+    // Anchor a painted checkbox to the right edge with its label on the left
+    public void setRightAligned(boolean val){ rightAligned = val; }
     @Override public void onPress(){ changed.accept(!selected()); }
 
     @Override protected void renderWidget(GuiGraphics graphics, int mouseX, int mouseY, float partialTick){
@@ -90,9 +93,11 @@ public final class CompactCheckbox extends AbstractButton{
     private void renderPainted(GuiGraphics graphics){
         GuiTextureRegion box = selected() ? appearance.checked() : appearance.unchecked();
         int top = getY() + (height - box.height()) / 2;
-        box.draw(graphics, getX(), top);
-        if(isHoveredOrFocused()) graphics.fill(getX() + 1, top + 1, getX() + box.width() - 1, top + box.height() - 1, 0x22FFFFFF);
-        graphics.drawString(font, getMessage(), getX() + box.width() + appearance.gap(),
+        int left = rightAligned ? getX() + width - box.width() : getX();
+        int label = rightAligned ? left - appearance.gap() - font.width(getMessage()) : left + box.width() + appearance.gap();
+        box.draw(graphics, left, top);
+        if(isHoveredOrFocused()) graphics.fill(left + 1, top + 1, left + box.width() - 1, top + box.height() - 1, 0x22FFFFFF);
+        graphics.drawString(font, getMessage(), label,
                 getY() + (height - font.lineHeight) / 2, active ? 0xE2E2E2 : 0xA0A0A0, true);
     }
 

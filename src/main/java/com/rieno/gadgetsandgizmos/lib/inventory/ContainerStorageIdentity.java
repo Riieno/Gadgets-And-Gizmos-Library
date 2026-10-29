@@ -12,7 +12,7 @@ public final class ContainerStorageIdentity{
 
     public static BlockPos position(Level level, BlockPos pos){
         if(level == null || !level.isLoaded(pos)) return pos;
-        var be = level.getBlockEntity(pos);
+        var be = com.rieno.gadgetsandgizmos.lib.access.LoadedBlockEntities.get(level, pos);
         if(be instanceof IMultiBlockEntityContainer multi && multi.getController() != null) return multi.getController().immutable();
         var state = level.getBlockState(pos);
         if(state.getBlock() instanceof ChestBlock && state.getValue(ChestBlock.TYPE) != ChestType.SINGLE){

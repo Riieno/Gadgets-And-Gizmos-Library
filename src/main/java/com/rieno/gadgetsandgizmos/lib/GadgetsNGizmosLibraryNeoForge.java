@@ -37,6 +37,7 @@ public final class GadgetsNGizmosLibraryNeoForge {
 
     // Initialize the Gadgets & Gizmos library on NeoForge
     public GadgetsNGizmosLibraryNeoForge(IEventBus modEventBus, ModContainer modContainer) {
+        com.rieno.gadgetsandgizmos.lib.color.ColorEffectParticles.register(modEventBus);
         GadgetsNGizmosLibraryConfigs.register(modContainer);
         SableSubLevelResidency.bootstrap();
         com.rieno.gadgetsandgizmos.lib.item.TimedItemTransformations.register();

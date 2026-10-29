@@ -1,6 +1,7 @@
 package com.rieno.gadgetsandgizmos.lib.scm;
 
 import net.minecraft.world.phys.Vec3;
+import com.rieno.gadgetsandgizmos.lib.util.ParallelTasks;
 
 import java.util.List;
 import java.util.Map;
@@ -12,11 +13,12 @@ public final class ScmAdaptiveStateModel{
     private static final int AXES = 6;
     private static final int STATES = 12;
     private static final double EPSILON = 1.0E-12D;
-    private static final int MAX_CACHED_MODELS = 8;
+    private static final int MAX_CACHED_MODELS = 64;
     private static final int MAX_CACHED_ACTUATORS = 16_384;
     private static final int MAX_CACHED_AXES = 128;
     private static final ThreadLocal<Map<ModelKey, ScmAdaptiveStateModel>> MODELS =
             ThreadLocal.withInitial(() -> new LinkedHashMap<>(MAX_CACHED_MODELS, 0.75F, true));
+    private static final ThreadLocal<Workspace> WORKSPACES = ThreadLocal.withInitial(() -> new Workspace(0));
 
     private final double[][] inputMatrix;
     private final double[] trim;
@@ -25,9 +27,6 @@ public final class ScmAdaptiveStateModel{
     private final double[] lowerLimits;
     private final double[] magnitudes;
     private final int[] activeColumns;
-    private final double[] controls;
-    private final double[] achieved = new double[AXES];
-    private final double[] target = new double[AXES];
     private final double[] minimum = new double[AXES];
     private final double[] maximum = new double[AXES];
     private final boolean available;
@@ -63,7 +62,6 @@ public final class ScmAdaptiveStateModel{
         limits = new double[columns.length];
         lowerLimits = new double[columns.length];
         magnitudes = new double[columns.length];
-        controls = new double[columns.length];
         int[] active = new int[columns.length];
         int count = 0;
         for(int idx = 0; idx < trim.length; idx++){
@@ -200,9 +198,50 @@ public final class ScmAdaptiveStateModel{
     private record ModelKey(List<Actuator> actuators, double tickSeconds, double linearTolerance,
             double angularTolerance, double characteristicLength){}
 
+    // Calculate independent signs together without sharing solver scratch arrays or deferring a control tick
+    private synchronized void prepareAuthorities(Vec3 axis, boolean angular){
+        if(ParallelTasks.parallelism() == 0 || activeColumns.length < 16) return;
+        Vec3 direction = finite(axis);
+        if(direction.lengthSqr() <= EPSILON) return;
+        Vec3 requested = direction.normalize();
+        AxisKey key = new AxisKey(requested.x, requested.y, requested.z, angular);
+        double[] capacity = authority.get(key);
+        if(capacity != null && (!Double.isNaN(capacity[0]) || !Double.isNaN(capacity[1]))) return;
+        if(authorityLimit(requested, angular, false) <= EPSILON
+                || authorityLimit(requested, angular, true) <= EPSILON) return;
+        List<Double> values = ParallelTasks.evaluate(List.of(
+                () -> feasibleAuthority(requested, angular, false),
+                () -> feasibleAuthority(requested, angular, true)));
+        authority.put(key, new double[]{values.get(0), values.get(1)});
+        if(authority.size() > MAX_CACHED_AXES) authority.remove(authority.keySet().iterator().next());
+    }
+
     // Find thrust headroom that accelerates the requested axis without unwanted motion
     private double feasibleAuthority(Vec3 axis, boolean angular, boolean positive){
         if(trim.length == 0) return 0.0D;
+        double upper = authorityLimit(axis, angular, positive);
+        if(upper <= EPSILON) return 0.0D;
+        Workspace work = WORKSPACES.get();
+        if(work.controls.length < trim.length){
+            work = new Workspace(trim.length);
+            if(trim.length <= MAX_CACHED_ACTUATORS) WORKSPACES.set(work);
+        }
+        double sign = positive ? 1.0D : -1.0D;
+        double lower = 0.0D;
+        // Small holding throttles can leave a usable interval far below full engine output
+        for(int step = 0; step < 32; step++){
+            double candidate = step == 0 ? upper : (lower + upper) * 0.5D;
+            if(canProduce(axis, angular, sign * candidate, work)){
+                lower = candidate;
+                if(step == 0) break;
+            }else upper = candidate;
+            if(upper <= EPSILON || lower > 0.0D && upper - lower <= upper / 128.0D) break;
+        }
+        return lower;
+    }
+
+    // Keep one-sided and unsupported directions on the caller when no paired solve is needed
+    private double authorityLimit(Vec3 axis, boolean angular, boolean positive){
         double sign = positive ? 1.0D : -1.0D;
         double upper = 0.0D;
         for(int idx = 0; idx < trim.length; idx++){
@@ -225,22 +264,14 @@ public final class ScmAdaptiveStateModel{
             double bound = component > 0.0D ? maximum[rowOffset + row] : -minimum[rowOffset + row];
             upper = Math.min(upper, bound / constrained);
         }
-        if(upper <= EPSILON) return 0.0D;
-        double lower = 0.0D;
-        // Small holding throttles can leave a usable interval far below full engine output
-        for(int step = 0; step < 32; step++){
-            double candidate = step == 0 ? upper : (lower + upper) * 0.5D;
-            if(canProduce(axis, angular, sign * candidate)){
-                lower = candidate;
-                if(step == 0) break;
-            }else upper = candidate;
-            if(upper <= EPSILON || lower > 0.0D && upper - lower <= upper / 128.0D) break;
-        }
-        return lower;
+        return upper;
     }
 
     // Solve one signed throttle change per actuator against all six acceleration axes
-    private boolean canProduce(Vec3 axis, boolean angular, double amount){
+    private boolean canProduce(Vec3 axis, boolean angular, double amount, Workspace work){
+        double[] controls = work.controls;
+        double[] target = work.target;
+        double[] achieved = work.achieved;
         Arrays.fill(target, 0.0D);
         int offset = angular ? 3 : 0;
         double scale = angular ? characteristicLength : 1.0D;
@@ -259,7 +290,7 @@ public final class ScmAdaptiveStateModel{
             boundedError += error * error;
         }
         if(boundedError > tolerance + Math.max(boundedError, tolerance) * 1.0E-10D) return false;
-        Arrays.fill(controls, 0.0D);
+        Arrays.fill(controls, 0, trim.length, 0.0D);
         Arrays.fill(achieved, 0.0D);
         double x = 0.0D, y = 0.0D, z = 0.0D;
         double rx = 0.0D, ry = 0.0D, rz = 0.0D;
@@ -300,7 +331,7 @@ public final class ScmAdaptiveStateModel{
             }
             // Coordinate updates only reduce error, so an accepted wrench needs no further refinement
             if(squaredError <= tolerance) return true;
-            if((iteration & 3) == 0 && infeasible(target, squaredError, tolerance)) return false;
+            if((iteration & 3) == 0 && infeasible(target, achieved, controls, squaredError, tolerance)) return false;
             if(largestChange <= EPSILON) break;
         }
         double squaredError = 0.0D;
@@ -311,7 +342,7 @@ public final class ScmAdaptiveStateModel{
     }
 
     // Bound the best possible residual before spending more iterations on an impossible wrench
-    private boolean infeasible(double[] target, double squaredError, double tolerance){
+    private boolean infeasible(double[] target, double[] achieved, double[] controls, double squaredError, double tolerance){
         double lower = squaredError;
         double x = achieved[0] - target[0], y = achieved[1] - target[1], z = achieved[2] - target[2];
         double rx = achieved[3] - target[3], ry = achieved[4] - target[4], rz = achieved[5] - target[5];
@@ -332,6 +363,7 @@ public final class ScmAdaptiveStateModel{
 
     // Place repeated stable poles from the ship's available acceleration and error
     public Response feedback(Vec3 axis, boolean angular, double error, double rate){
+        prepareAuthorities(axis, angular);
         double positive = authority(axis, angular, true);
         double negative = authority(axis, angular, false);
         double balanced = positive > EPSILON && negative > EPSILON
@@ -350,6 +382,7 @@ public final class ScmAdaptiveStateModel{
 
     // Select recovery speed independently of the available propulsion force
     public Response feedback(Vec3 axis, boolean angular, double error, double rate, double strength){
+        prepareAuthorities(axis, angular);
         double positive = authority(axis, angular, true);
         double negative = authority(axis, angular, false);
         double acceleration = ScmStateFeedback.recoveryAcceleration(error, rate, strength,
@@ -361,6 +394,7 @@ public final class ScmAdaptiveStateModel{
     // Track a requested rate with the acceleration this ship can currently supply
     public double velocityFeedback(Vec3 axis, boolean angular,
                                    double desiredRate, double rate, double tolerance){
+        prepareAuthorities(axis, angular);
         double error = finite(desiredRate) - finite(rate);
         double available = authority(axis, angular, error >= 0.0D);
         if(available <= EPSILON) return 0.0D;
@@ -370,6 +404,13 @@ public final class ScmAdaptiveStateModel{
                 1.0D / (4.0D * tickSeconds));
         return clamp(error * frequency, -authority(axis, angular, false),
                 authority(axis, angular, true));
+    }
+
+    private static final class Workspace{
+        private final double[] controls;
+        private final double[] target = new double[AXES];
+        private final double[] achieved = new double[AXES];
+        private Workspace(int count){ controls = new double[count]; }
     }
 
     // Apply the model to all three world-frame linear axes

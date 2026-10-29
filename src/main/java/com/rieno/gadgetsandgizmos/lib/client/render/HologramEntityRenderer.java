@@ -35,6 +35,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.BiPredicate;
 
 // Render isolated miniature entity models without adding them to the client level
 public final class HologramEntityRenderer{
@@ -50,13 +51,19 @@ public final class HologramEntityRenderer{
     // Let a consumer hide categories immediately while fresh server snapshots are in flight
     public void render(PoseStack poses, MultiBufferSource buffers, Vec3 origin, List<HologramEntity> snapshots,
                        float partialTicks, java.util.function.Predicate<Entity> visible){
+        render(poses, buffers, origin, snapshots, partialTicks, (snapshot, entity) -> visible.test(entity));
+    }
+
+    // Apply ownership and category filters using the server snapshot and its miniature model
+    public void render(PoseStack poses, MultiBufferSource buffers, Vec3 origin, List<HologramEntity> snapshots,
+                       float partialTicks, BiPredicate<HologramEntity, Entity> visible){
         try(var scope = HologramRenderScope.enter()){
             renderEntities(poses, buffers, origin, snapshots, partialTicks, visible);
         }
     }
 
     private void renderEntities(PoseStack poses, MultiBufferSource buffers, Vec3 origin, List<HologramEntity> snapshots,
-                                float partialTicks, java.util.function.Predicate<Entity> visible){
+                                float partialTicks, BiPredicate<HologramEntity, Entity> visible){
         var mc = Minecraft.getInstance();
         if(mc.level == null) return;
         var retained = new HashSet<UUID>();
@@ -65,7 +72,7 @@ public final class HologramEntityRenderer{
             Entity entity = models.computeIfAbsent(snapshot.id(), id -> snapshot.type().getPath().equals("player")
                     ? new RemotePlayer(mc.level, new GameProfile(id, snapshot.name()))
                     : BuiltInRegistries.ENTITY_TYPE.get(snapshot.type()).create(mc.level));
-            if(entity == null || !visible.test(entity)) continue;
+            if(entity == null || !visible.test(snapshot, entity)) continue;
             entity.setUUID(snapshot.id());
             Vec3 point = motion.computeIfAbsent(snapshot.id(), ignored -> new ProjectionSmoothing())
                     .update(snapshot.pos(), (mc.level.getGameTime() + partialTicks) / 20D);
@@ -105,6 +112,15 @@ public final class HologramEntityRenderer{
     }
 
     private record Tint(VertexConsumer target) implements VertexConsumer{
+        @Override public void addVertex(float x, float y, float z, int color, float u, float v,
+                                        int overlay, int light, float normalX, float normalY, float normalZ){
+            int r = ((color >> 16 & 255) + 30) / 2;
+            int g = ((color >> 8 & 255) + 170) / 2;
+            int b = ((color & 255) + 240) / 2;
+            int a = (color >>> 24) * 3 / 4;
+            target.addVertex(x, y, z, a << 24 | r << 16 | g << 8 | b, u, v, overlay,
+                    light, normalX, normalY, normalZ);
+        }
         @Override public VertexConsumer addVertex(float x, float y, float z){ target.addVertex(x, y, z); return this; }
         @Override public VertexConsumer setColor(int r, int g, int b, int a){ target.setColor((r + 30) / 2, (g + 170) / 2, (b + 240) / 2, a * 3 / 4); return this; }
         @Override public VertexConsumer setUv(float u, float v){ target.setUv(u, v); return this; }

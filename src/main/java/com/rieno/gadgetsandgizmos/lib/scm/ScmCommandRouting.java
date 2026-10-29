@@ -46,13 +46,13 @@ public final class ScmCommandRouting {
         return allowsCollisionAvoidance(commandType, requested, manualControlActive);
     }
 
-    // Restrict avoidance to autonomous movement with an enabled safety request
+    // Keep connector capture under docking control instead of platform avoidance
     public static boolean allowsCollisionAvoidance(
             @Nullable String commandType, boolean requested, boolean manualControlActive
     ){
         if(commandType == null || !requested || manualControlActive) return false;
         return switch(commandType){
-            case "ship_navigate", "ship_follow", "ship_climb", "ship_dock" -> true;
+            case "ship_navigate", "ship_follow", "ship_climb" -> true;
             default -> false;
         };
     }
