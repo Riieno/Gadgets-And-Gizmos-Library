@@ -32,6 +32,7 @@ public final class GraphValueText{
             if(!"any".equals(type)) throw new IllegalArgumentException("A JSON " + type + " is required", err);
             return GraphValue.string(raw);
         }
+        if(PlayerGraphValue.TYPE.equals(type) && "map".equals(value.type())) return new GraphValue(type, value.value());
         if(!"any".equals(type) && !type.equals(value.type())) throw new IllegalArgumentException("A " + type + " is required");
         return value;
     }

@@ -27,4 +27,73 @@ public record GuiTextureRegion(ResourceLocation texture, int textureWidth, int t
         graphics.blit(texture, x, y, drawWidth, drawHeight,
                 (float)u, (float)v, width, height, textureWidth, textureHeight);
     }
+<<<<<<< Updated upstream
+=======
+
+    // Recolor painted pixels relative to their source RGB while preserving the sprite's exact alpha outline
+    public void drawRecolored(GuiGraphics graphics, int x, int y, int drawWidth, int drawHeight, int rgb, int sourceRgb){
+        int red = sourceRgb >> 16 & 255, green = sourceRgb >> 8 & 255, blue = sourceRgb & 255;
+        if(red == 0 || green == 0 || blue == 0) throw new IllegalArgumentException("Source RGB channels must be nonzero");
+        graphics.setColor((rgb >> 16 & 255) / (float)red, (rgb >> 8 & 255) / (float)green, (rgb & 255) / (float)blue, 1);
+        try{ draw(graphics, x, y, drawWidth, drawHeight); }
+        finally{ graphics.setColor(1, 1, 1, 1); }
+    }
+
+    // Fit the complete region with one scale for both axes
+    public void drawFitted(GuiGraphics graphics, int x, int y, int drawWidth, int drawHeight){
+        if(drawWidth <= 0 || drawHeight <= 0) return;
+        float scale = Math.min(drawWidth / (float)width, drawHeight / (float)height);
+        graphics.pose().pushPose();
+        try{
+            graphics.pose().translate(x + (drawWidth - width * scale) / 2, y + (drawHeight - height * scale) / 2, 0);
+            graphics.pose().scale(scale, scale, 1);
+            draw(graphics, 0, 0);
+        }finally{ graphics.pose().popPose(); }
+    }
+
+    // Keep the end caps intact and repeat the middle at the same scale as the height
+    public void drawHorizontallyTiled(GuiGraphics graphics, int x, int y, int drawWidth, int drawHeight,
+                                      int leftWidth, int rightWidth){
+        if(leftWidth < 0 || rightWidth < 0 || leftWidth + rightWidth >= width){
+            throw new IllegalArgumentException("GUI end caps must leave a repeatable middle");
+        }
+        if(drawWidth <= 0 || drawHeight <= 0) return;
+        float scale = drawHeight / (float)height;
+        if(drawWidth < (leftWidth + rightWidth) * scale){
+            throw new IllegalArgumentException("GUI width must fit both end caps");
+        }
+        graphics.pose().pushPose();
+        try{
+            graphics.pose().translate(x, y, 0);
+            graphics.pose().scale(scale, scale, 1);
+            int total = Math.round(drawWidth / scale);
+            drawStrip(graphics, 0, 0, leftWidth);
+            int middle = width - leftWidth - rightWidth;
+            for(int pos = leftWidth; pos < total - rightWidth; pos += middle){
+                drawStrip(graphics, pos, leftWidth, Math.min(middle, total - rightWidth - pos));
+            }
+            drawStrip(graphics, total - rightWidth, width - rightWidth, rightWidth);
+        }finally{ graphics.pose().popPose(); }
+    }
+
+    // Repeat a region at the requested tile size and crop the final row and column
+    public void drawTiled(GuiGraphics graphics, int x, int y, int drawWidth, int drawHeight,
+                          int tileWidth, int tileHeight){
+        if(tileWidth <= 0 || tileHeight <= 0) throw new IllegalArgumentException("GUI tile dimensions must be positive");
+        if(drawWidth <= 0 || drawHeight <= 0) return;
+        try(var clip = GuiPoseScissor.push(graphics, x, y, x + drawWidth, y + drawHeight)){
+            for(int row = 0; row < drawHeight; row += tileHeight){
+                for(int col = 0; col < drawWidth; col += tileWidth){
+                    draw(graphics, x + col, y + row, tileWidth, tileHeight);
+                }
+            }
+        }
+    }
+
+    private void drawStrip(GuiGraphics graphics, int x, int sourceX, int stripWidth){
+        if(stripWidth <= 0) return;
+        graphics.blit(texture, x, 0, stripWidth, height, (float)(u + sourceX), (float)v,
+                stripWidth, height, textureWidth, textureHeight);
+    }
+>>>>>>> Stashed changes
 }

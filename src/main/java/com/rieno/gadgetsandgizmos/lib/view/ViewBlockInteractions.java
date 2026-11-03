@@ -67,7 +67,7 @@ public final class ViewBlockInteractions{
                 () -> player.gameMode.useItemOn(player, level, stack, hand, hit)) : net.minecraft.world.InteractionResult.SUCCESS;
         if(player.containerMenu != before && player.containerMenu != player.inventoryMenu){
             MENUS.put(player.getUUID(), new MenuAccess(player, player.containerMenu, ref, source, pos,
-                    target.reference().subLevelId(), level.getBlockState(pos).getBlock(), level.getBlockEntity(pos), player.position()));
+                    target.reference().subLevelId(), level.getBlockState(pos).getBlock(), level.getBlockEntity(pos), new ViewBodyAnchor(player)));
         }
         if(result == net.minecraft.world.InteractionResult.FAIL){ ViewInteractionContext.end(player); return false; }
         var tag = target.reference().toTag();
@@ -118,7 +118,7 @@ public final class ViewBlockInteractions{
         var player = access.player;
         var level = player.serverLevel();
         return player.isAlive() && !player.hasDisconnected() && player.containerMenu == access.menu
-                && player.position().distanceToSqr(access.origin) <= 64 && sourceAccess(player, access.source)
+                && player.position().distanceToSqr(access.origin.position()) <= 64 && sourceAccess(player, access.source)
                 && access.source.resolve(level) == access.lens && level.isLoaded(access.pos)
                 && level.getBlockState(access.pos).is(access.block)
                 && (access.entity == null || level.getBlockEntity(access.pos) == access.entity)
@@ -139,5 +139,5 @@ public final class ViewBlockInteractions{
 
     private record UseKey(UUID player, ViewReference source){}
     private record MenuAccess(ServerPlayer player, AbstractContainerMenu menu, ViewReference source, ViewSource lens,
-                              BlockPos pos, UUID body, Block block, BlockEntity entity, Vec3 origin){}
+                              BlockPos pos, UUID body, Block block, BlockEntity entity, ViewBodyAnchor origin){}
 }

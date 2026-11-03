@@ -146,7 +146,7 @@ public final class GraphNodePresentationRegistry{
                     for(int idx = 0; idx < list.size(); idx++) payload.put(Integer.toString(idx), encode(GraphValue.of(list.get(idx))));
                 }
             }
-            case "map" -> {
+            case "map", "player" -> {
                 if(val.value() instanceof Map<?, ?> map) map.forEach((key, entry) -> payload.put(key.toString(), encode(GraphValue.of(entry))));
             }
             default -> { }

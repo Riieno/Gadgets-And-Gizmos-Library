@@ -12,6 +12,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import com.rieno.gadgetsandgizmos.lib.client.render.GuiTextureRegion;
+import com.rieno.gadgetsandgizmos.lib.client.ui.GuiControlPreviews;
+import net.minecraft.network.chat.Component;
 
 // Share a compact checklist dropdown between tablet app browsers
 public final class TabletMultiSelectDropdown{
@@ -55,6 +58,28 @@ public final class TabletMultiSelectDropdown{
             }
         }
         graphics.pose().popPose();
+    }
+
+    // Reuse checklist behavior with the consuming app's painted controls and row height
+    public void renderPainted(TabletAppClientContext ctx, GuiTextureRegion normal, GuiTextureRegion selectedTexture,
+                              int x, int y, int width, int height, String label){
+        projected = ctx.ui().projected();
+        button = new TabletLayout.Rect(ctx.left() + x, ctx.top() + y, width, height);
+        rows.clear();
+        ctx.graphics().pose().pushPose();
+        try{
+            ctx.graphics().pose().translate(0, 0, 400);
+            drawPainted(ctx, normal, button, label + ": " + (selected.size() == options.size() ? "All" : selected.size()));
+            if(open){
+                for(int idx = 0; idx < options.size(); idx++){
+                    Option option = options.get(idx);
+                    var row = new TabletLayout.Rect(button.left(), button.top() + (height + 1) * (idx + 1), width, height);
+                    rows.add(row);
+                    boolean checked = selected.contains(option.id());
+                    drawPainted(ctx, checked ? selectedTexture : normal, row, (checked ? "[x] " : "[ ] ") + option.label());
+                }
+            }
+        }finally{ ctx.graphics().pose().popPose(); }
     }
 
     // Consume dropdown clicks before the consuming app tests underlying controls
@@ -101,6 +126,12 @@ public final class TabletMultiSelectDropdown{
                 area.contains(ctx.mouseX(), ctx.mouseY()) ? ctx.app().accentColor() : selected ? 0xFF365572 : 0xFF304D66);
         ctx.graphics().drawString(ctx.font(), ctx.font().plainSubstrByWidth(text, Math.max(1, area.width() - 8)),
                 area.left() + 4, area.top() + 6, 0xFFF1F6FB, false);
+    }
+
+    private static void drawPainted(TabletAppClientContext ctx, GuiTextureRegion texture, TabletLayout.Rect area, String text){
+        texture.draw(ctx.graphics(), area.left(), area.top(), area.width(), area.height());
+        GuiControlPreviews.drawFittedText(ctx.graphics(), ctx.font(), Component.literal(text), area.left() + 3, area.top() + 1,
+                Math.max(1, area.width() - 6), Math.max(1, area.height() - 2), .85F, 0xFFF1F1F1, false);
     }
 
     // Pair a stable filter ID with its visible label

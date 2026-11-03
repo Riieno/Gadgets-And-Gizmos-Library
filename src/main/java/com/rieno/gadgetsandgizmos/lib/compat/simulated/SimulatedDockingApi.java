@@ -6,6 +6,7 @@ import dev.simulated_team.simulated.content.blocks.docking_connector.DockingConn
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Objects;
@@ -13,7 +14,18 @@ import java.util.UUID;
 
 // Restore persisted Simulated connector links without loading their peer chunks.
 public final class SimulatedDockingApi{
+    private static final double TIP_OFFSET = 1.5D;
     private SimulatedDockingApi(){}
+
+    // Resolve the base block centre from the extended contact point in the same coordinate frame
+    public static Vec3 basePosition(Vec3 tip, Vec3 facing){
+        return tip.subtract(facing.normalize().scale(TIP_OFFSET));
+    }
+
+    // Resolve the extended contact point from the base block centre in the same coordinate frame
+    public static Vec3 tipPosition(Vec3 base, Vec3 facing){
+        return base.add(facing.normalize().scale(TIP_OFFSET));
+    }
 
     // Implemented by the compatibility mixin; logical lock state alone is not a physics joint.
     public interface PhysicsState{

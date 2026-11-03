@@ -8,6 +8,7 @@ import java.util.Objects;
 public record GuiNineSlice(GuiTextureRegion topLeft, GuiTextureRegion top, GuiTextureRegion topRight,
                            GuiTextureRegion left, GuiTextureRegion center, GuiTextureRegion right,
                            GuiTextureRegion bottomLeft, GuiTextureRegion bottom, GuiTextureRegion bottomRight){
+    public record Area(int x, int y, int width, int height){}
     public GuiNineSlice{
         for(GuiTextureRegion region : new GuiTextureRegion[]{topLeft, top, topRight, left, center, right,
                 bottomLeft, bottom, bottomRight}) Objects.requireNonNull(region, "region");
@@ -24,6 +25,15 @@ public record GuiNineSlice(GuiTextureRegion topLeft, GuiTextureRegion top, GuiTe
     // Keep the corner sizes while stretching the edges and center
     public void draw(GuiGraphics graphics, int x, int y, int width, int height){
         draw(graphics, x, y, width, height, 1.0D);
+    }
+
+    // Share the exact stretched centre bounds with fills and overlays
+    public Area centerBounds(int x, int y, int width, int height){
+        int left = leadingSize(width, topLeft.width(), topRight.width(), 1);
+        int right = (int)Math.round(Math.min(width - left, topRight.width()));
+        int top = leadingSize(height, topLeft.height(), bottomLeft.height(), 1);
+        int bottom = (int)Math.round(Math.min(height - top, bottomLeft.height()));
+        return new Area(x + left, y + top, Math.max(0, width - left - right), Math.max(0, height - top - bottom));
     }
 
     // Scale the corners with the host's layout and fit them inside smaller destinations

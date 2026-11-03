@@ -31,22 +31,7 @@ public final class GraphGroupHeader{
             graphics.drawString(font, visible, 0, 0, 0xFFFFFFFF, false);
             graphics.pose().popPose();
         }
-        graphics.pose().pushPose();
-        graphics.pose().translate(bounds.buttonX(), bounds.buttonY(), 0);
-        float buttonScale = bounds.buttonSize() / 14.0F;
-        graphics.pose().scale(buttonScale, buttonScale, 1);
-        boolean hovered = bounds.colorContains(mouseX, mouseY);
-        graphics.fill(0, 0, 14, 14, hovered ? 0xAAFFFFFF : 0x66000000);
-        int ink = hovered ? 0xFF17202B : 0xFFFFFFFF;
-        // A diagonal pipette, with a bulb at the top and an open glass tip.
-        graphics.fill(9, 2, 12, 5, ink);
-        graphics.fill(7, 4, 11, 6, ink);
-        for(int step = 0; step < 5; step++){
-            graphics.fill(7 - step, 6 + step, 8 - step, 7 + step, ink);
-            graphics.fill(9 - step, 6 + step, 10 - step, 7 + step, ink);
-        }
-        graphics.fill(2, 11, 5, 12, ink);
-        graphics.pose().popPose();
+        ColorPickerModal.renderButton(graphics, bounds.buttonX(), bounds.buttonY(), bounds.buttonSize(), bounds.colorContains(mouseX, mouseY));
     }
 
     public record Layout(int titleX, int titleY, int titleWidth, int titleHitWidth,

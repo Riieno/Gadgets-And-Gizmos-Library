@@ -50,7 +50,7 @@ public final class RemoteViewSessions{
     private RemoteViewSessions(){}
     // Enter a loaded view without moving the player's body to the camera
     public static boolean open(ServerPlayer player, ViewReference ref){
-        if(player == null || !player.isAlive() || player.isPassenger()) return false;
+        if(player == null || !player.isAlive()) return false;
         ViewSource src = ref.resolve(player.level());
         if(src == null) return false;
         Session prev = SESSIONS.get(player.getUUID());
@@ -63,7 +63,7 @@ public final class RemoteViewSessions{
         src.setViewControlled(true);
         player.setNoGravity(true);
         player.setDeltaMovement(Vec3.ZERO);
-        player.connection.teleport(session.pos.x, session.pos.y, session.pos.z, session.yaw, session.pitch);
+        if(!player.isPassenger()) player.connection.teleport(player.getX(), player.getY(), player.getZ(), session.yaw, session.pitch);
         PacketDistributor.sendToPlayer(player, new RemoteViewStatePayload(ref.toTag(), true));
         if(src instanceof PredictedViewSource predicted) PacketDistributor.sendToPlayer(player,
                 new RemoteViewAimPayload(ref.toTag(), 0, predicted.viewAim()));
@@ -171,11 +171,14 @@ public final class RemoteViewSessions{
         player.setNoGravity(session.noGravity);
         player.setDeltaMovement(Vec3.ZERO);
         if(player.level().dimension().location().equals(session.ref.dimension()) && player.isAlive()){
-            player.connection.teleport(session.pos.x, session.pos.y, session.pos.z, session.yaw, session.pitch);
+            if(!player.isPassenger()){
+                Vec3 pos = session.anchor.position();
+                player.connection.teleport(pos.x, pos.y, pos.z, session.yaw, session.pitch);
+            }
         }
         if(!player.hasDisconnected()) PacketDistributor.sendToPlayer(player, new RemoteViewStatePayload(new CompoundTag(), false));
     }
-    // Hold position and expire sessions whose camera or client is unavailable
+    // Hold the body in its original frame and expire unavailable sessions
     @SubscribeEvent
     public static void tick(ServerTickEvent.Post evt){
         for(Session session : new ArrayList<>(SESSIONS.values())){
@@ -185,7 +188,7 @@ public final class RemoteViewSessions{
                 close(player);
                 continue;
             }
-            player.setPos(session.pos);
+            if(!player.isPassenger()) player.setPos(session.anchor.position());
             player.setYRot(session.yaw);
             player.setXRot(session.pitch);
             player.setDeltaMovement(Vec3.ZERO);
@@ -212,7 +215,7 @@ public final class RemoteViewSessions{
         private final ServerPlayer player;
         private final ViewReference ref;
         private final ViewSource source;
-        private final Vec3 pos;
+        private final ViewBodyAnchor anchor;
         private final float yaw;
         private final float pitch;
         private final boolean noGravity;
@@ -224,12 +227,12 @@ public final class RemoteViewSessions{
         private double inputZoom;
         private long lastFlashlight = Long.MIN_VALUE;
         private long lastRaycast = Long.MIN_VALUE;
-        // Capture the exact state restored when the session ends
+        // Capture the body frame and state restored when the session ends
         private Session(ServerPlayer player, ViewReference ref, ViewSource source){
             this.player = player;
             this.ref = ref;
             this.source = source;
-            pos = player.position();
+            anchor = new ViewBodyAnchor(player);
             yaw = player.getYRot();
             pitch = player.getXRot();
             noGravity = player.isNoGravity();

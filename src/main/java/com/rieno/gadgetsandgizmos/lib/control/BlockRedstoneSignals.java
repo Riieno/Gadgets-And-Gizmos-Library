@@ -13,6 +13,16 @@ import org.jetbrains.annotations.Nullable;
 public final class BlockRedstoneSignals{
     private BlockRedstoneSignals(){}
 
+    // Sample incoming power from one neighbour or the strongest surrounding source
+    public static int readNeighbours(Level level, BlockPos pos, @Nullable Direction face){
+        int signal = 0;
+        for(Direction side : Direction.values()){
+            if(face != null && side != face) continue;
+            signal = Math.max(signal, read(level, pos.relative(side), side.getOpposite()));
+        }
+        return signal;
+    }
+
     // Read an outward face, or the strongest output when no face is selected
     public static int read(Level level, BlockPos pos, @Nullable Direction face){
         if(level == null || pos == null || !level.isLoaded(pos)) return 0;

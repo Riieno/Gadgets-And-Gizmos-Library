@@ -23,6 +23,7 @@ public final class HudInteractionPorts{
             CompoundTag elm = (CompoundTag)raw;
             String exec = elm.getString("ExecPort");
             String value = elm.getString("ValuePort");
+            String player = elm.getString("PlayerPort");
             if(exec.isBlank() || value.isBlank()) continue;
             String id = "hud:" + elm.getString("InteractionId");
             String label = elm.getString("Text");
@@ -31,8 +32,10 @@ public final class HudInteractionPorts{
             section.putString("Label", label);
             ListTag ports = new ListTag();
             ports.add(StringTag.valueOf(exec)); ports.add(StringTag.valueOf(value));
+            if(!player.isBlank()) ports.add(StringTag.valueOf(player));
             section.put("Ports", ports); sections.put(id, section);
             order.add(StringTag.valueOf(exec)); order.add(StringTag.valueOf(value));
+            if(!player.isBlank()){ order.add(StringTag.valueOf(player)); labels.putString(player, "Player"); }
             labels.putString(exec, "Exec"); labels.putString(value, "Value");
         }
         sides.put("Outputs", sections); data.put("PortSections", sides);

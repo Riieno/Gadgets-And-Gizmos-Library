@@ -9,6 +9,8 @@ package com.rieno.gadgetsandgizmos.lib.view;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.rieno.gadgetsandgizmos.lib.graph.GraphValue;
+import com.rieno.gadgetsandgizmos.lib.geometry.RayBounds;
+import com.rieno.gadgetsandgizmos.lib.physics.SableEntityQueryApi;
 import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
 import com.rieno.gadgetsandgizmos.lib.physics.SableTransformApi;
 import com.rieno.gadgetsandgizmos.lib.physics.SableSubLevelTelemetryApi;
@@ -140,12 +142,22 @@ public final class ViewRaycast{
     private static Result traceSpace(Level level, @Nullable SubLevel body, Vec3 start, Vec3 end,
                                      Filter filter, @Nullable ViewReference excluded, Result best, boolean entities, @Nullable UUID ignored, boolean interaction){
         Vec3 from = SableTransformApi.toLocalPosition(body, start);
-        Vec3 to = SableTransformApi.toLocalPosition(body, end);
+        Vec3 to = SableTransformApi.toLocalPosition(body, best.hit() ? best.position() : end);
+        Vec3 blockFrom = from, blockTo = to;
+        boolean hasBlockSegment = true;
+        if(body != null){
+            var bounds = body.getPlot().getBoundingBox();
+            var segment = RayBounds.clip(new AABB(bounds.minX(), bounds.minY(), bounds.minZ(),
+                    bounds.maxX() + 1.0D, bounds.maxY() + 1.0D, bounds.maxZ() + 1.0D).inflate(1.0E-7D), from, to);
+            if(segment == null && !entities) return best;
+            hasBlockSegment = segment != null;
+            if(segment != null){ blockFrom = segment.from(); blockTo = segment.to(); }
+        }
         UUID id = body == null ? null : body.getUniqueId();
         LoadedTerrainAccess terrain = new LoadedTerrainAccess();
         terrain.beginTick(level);
         BlockGetter shapes = new LoadedBlocks(level, terrain);
-        Result block = BlockGetter.traverseBlocks(from, to, terrain, (access, pos) -> {
+        Result block = !hasBlockSegment ? null : BlockGetter.traverseBlocks(blockFrom, blockTo, terrain, (access, pos) -> {
             if(excluded != null && java.util.Objects.equals(id, excluded.subLevelId())
                     && pos.equals(excluded.blockPos())) return null;
             if(body == null && SableLevelApi.containing(level, pos) != null) return null;
@@ -161,7 +173,7 @@ public final class ViewRaycast{
         }, access -> null);
         if(block != null && block.distance() <= best.distance()) best = block;
         if(!entities) return best;
-        for(Entity entity : level.getEntities((Entity) null, new AABB(from, to).inflate(1),
+        for(Entity entity : SableEntityQueryApi.localEntities(level, new AABB(from, to).inflate(1),
                 entity -> entity.isAlive() && entity.isPickable())){
             if(entity.getUUID().equals(ignored)) continue;
             SubLevel owner = SableLevelApi.containing(entity);

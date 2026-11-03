@@ -42,6 +42,51 @@ public final class ContainerNetworkSnapshot{
 
     // Call on the server thread with containers the viewer is allowed to inspect
     public static CompoundTag capture(Collection<? extends BlockEntity> targets, int offset, int limit){
+        var inventory = collect(targets);
+        return page(inventory.rows(), inventory.containers(), offset, limit);
+    }
+
+    // Page items independently so large item networks cannot hide their fluids or energy
+    public static CompoundTag captureSplit(Collection<? extends BlockEntity> targets, int itemOffset, int resourceOffset, int limit){
+        var inventory = collect(targets);
+        var data = new CompoundTag();
+        data.put("Items", page(inventory.rows().stream().filter(row -> "item".equals(row.getString("Type"))).toList(), inventory.containers(), itemOffset, limit));
+        data.put("Resources", page(inventory.rows().stream().filter(row -> !"item".equals(row.getString("Type"))).toList(), inventory.containers(), resourceOffset, limit));
+        return data;
+    }
+
+    // Page authored resource pools without resolving unrelated nearby containers
+    public static CompoundTag capturePool(ResourceRouting.Pool pool, String type, String filter, int offset, int limit){
+        Map<String, CompoundTag> resources = new LinkedHashMap<>();
+        for(var handler : pool.items()) for(int slot = 0; slot < handler.getSlots(); slot++){
+            var stack = handler.getStackInSlot(slot);
+            if(stack.isEmpty()) continue;
+            add(resources, "item", BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),
+                    stack.getItem().getDescription().getString(), stack.getCount(), 0);
+        }
+        for(var handler : pool.fluids()) for(int tank = 0; tank < handler.getTanks(); tank++){
+            var stack = handler.getFluidInTank(tank);
+            add(resources, "fluid", BuiltInRegistries.FLUID.getKey(stack.getFluid()).toString(),
+                    stack.isEmpty() ? "Empty tanks" : stack.getHoverName().getString(), stack.getAmount(), handler.getTankCapacity(tank));
+        }
+        for(var handler : pool.energy()){
+            add(resources, "energy", "neoforge:energy", "Energy", handler.getEnergyStored(), handler.getMaxEnergyStored());
+        }
+        String query = filter == null ? "" : filter.strip().toLowerCase(java.util.Locale.ROOT);
+        var sorted = resources.values().stream()
+                .filter(row -> type == null || type.isEmpty() || type.equals(row.getString("Type")))
+                .filter(row -> (row.getString("Name") + " " + row.getString("Id")).toLowerCase(java.util.Locale.ROOT).contains(query))
+                .sorted(Comparator.comparing((CompoundTag row) -> row.getString("Type"))
+                        .thenComparing(row -> row.getString("Name"), String.CASE_INSENSITIVE_ORDER)
+                        .thenComparing(row -> row.getString("Id"))).toList();
+        var data = page(sorted, 0, offset, limit);
+        data.putInt("Handlers", pool.items().size() + pool.fluids().size() + pool.energy().size());
+        return data;
+    }
+
+    private record Inventory(int containers, List<CompoundTag> rows){}
+
+    private static Inventory collect(Collection<? extends BlockEntity> targets){
         Map<String, CompoundTag> resources = new LinkedHashMap<>();
         Set<Storage> storages = new HashSet<>();
         Set<Object> itemHandlers = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -91,6 +136,10 @@ public final class ContainerNetworkSnapshot{
                 .comparingInt((CompoundTag row) -> switch(row.getString("Type")){ case "item" -> 0; case "fluid" -> 1; default -> 2; })
                 .thenComparing(row -> row.getString("Name"), String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(row -> row.getString("Id"))).toList();
+        return new Inventory(containers, sorted);
+    }
+
+    private static CompoundTag page(List<CompoundTag> sorted, int containers, int offset, int limit){
         int start = Math.clamp(offset, 0, Math.max(0, sorted.size() - 1));
         int end = Math.min(sorted.size(), start + Math.clamp(limit, 1, 64));
         ListTag rows = new ListTag();

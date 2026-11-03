@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.PriorityQueue;
 import java.util.Queue;
 import java.util.function.Predicate;
+import java.util.function.Consumer;
 
 // Queue immediate and delayed graph events while keeping both queues safely bounded
 public final class GraphEventScheduler<E> {
@@ -136,6 +137,11 @@ public final class GraphEventScheduler<E> {
     public List<Scheduled<E>> scheduledSnapshot() {
         return List.copyOf(new ArrayList<>(scheduled));
     }
+
+    // Visit retained work on the owning thread without allocating a queue snapshot
+    public void visitImmediate(Consumer<E> visitor){ immediate.forEach(visitor); }
+
+    public void visitScheduled(Consumer<Scheduled<E>> visitor){ scheduled.forEach(visitor); }
 
     // Clear the graph event scheduler
     public void clear() {

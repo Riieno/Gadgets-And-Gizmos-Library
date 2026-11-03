@@ -28,7 +28,7 @@ public final class ViewInteractionContext{
 
     public record Cursor(ViewReference source, ViewInteractionTargets.Target target, ViewPose pose, double range){}
     private record Scoped(Player player, Cursor cursor){}
-    private record Session(ServerPlayer player, Cursor cursor, Object lens, Object block, BlockEntity entity, Vec3 origin, long expires){}
+    private record Session(ServerPlayer player, Cursor cursor, Object lens, Object block, BlockEntity entity, ViewBodyAnchor origin, long expires){}
 
     // Install a physical-client provider without loading client classes on dedicated servers
     public static void registerClient(Function<Player, Cursor> provider){ client = java.util.Objects.requireNonNull(provider); }
@@ -36,7 +36,7 @@ public final class ViewInteractionContext{
     static void begin(ServerPlayer player, Cursor cursor){
         BlockPos pos = cursor.target.reference().blockPos();
         SESSIONS.put(player.getUUID(), new Session(player, cursor, cursor.source.resolve(player.level()),
-                player.level().getBlockState(pos).getBlock(), player.level().getBlockEntity(pos), player.position(), player.level().getGameTime() + 200));
+                player.level().getBlockState(pos).getBlock(), player.level().getBlockEntity(pos), new ViewBodyAnchor(player), player.level().getGameTime() + 200));
     }
 
     // Refresh only a previously server-selected target; packets cannot choose another block
@@ -107,7 +107,7 @@ public final class ViewInteractionContext{
         if(session == null) return null;
         var target = session.cursor.target.reference();
         boolean valid = player.isAlive() && !player.hasDisconnected() && player.level().getGameTime() <= session.expires
-                && player.position().distanceToSqr(session.origin) <= 64 && ViewBlockInteractions.sourceAccess(player, session.cursor.source)
+                && player.position().distanceToSqr(session.origin.position()) <= 64 && ViewBlockInteractions.sourceAccess(player, session.cursor.source)
                 && session.cursor.source.resolve(player.level()) == session.lens
                 && player.level().isLoaded(target.blockPos()) && player.level().getBlockState(target.blockPos()).is((net.minecraft.world.level.block.Block) session.block)
                 && (session.entity == null || player.level().getBlockEntity(target.blockPos()) == session.entity)

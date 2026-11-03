@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.client.ui;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.item.RegisteredItemCatalog;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
@@ -16,7 +17,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 
 import java.util.Comparator;
 import java.util.List;
@@ -63,6 +63,7 @@ public final class ItemPickerScreen extends Screen{
 
     ------------------------------------------------------------##-----------------------------------------------------*/
 
+<<<<<<< Updated upstream
     // Fit the modal to the current window and focus its search field
     @Override protected void init(){
         panelWidth = Math.min(440, width - 24);
@@ -91,6 +92,68 @@ public final class ItemPickerScreen extends Screen{
         });
         addRenderableWidget(search);
         setInitialFocus(search);
+=======
+    // Let the owning mod supply its established picker artwork for every shared item screen
+    public static void setDefaultAppearance(PaintedSelectionModal.Appearance appearance){ defaultAppearance = Objects.requireNonNull(appearance); }
+    public static PaintedSelectionModal.Appearance defaultAppearance(){ return defaultAppearance; }
+
+    // Retain inventory-only choices and their component variants when a host requires owned stacks
+    public static ItemPickerScreen inventory(Screen parent, List<ItemStack> choices, ItemStack selected, Consumer<ItemStack> accept, String title){
+        return new ItemPickerScreen(parent, choices, selected, accept, title);
+    }
+
+    // Share all registered items and block items with embedded picker hosts
+    public static List<PaintedSelectionModal.Entry> registryEntries(){
+        return registryEntries(stack -> true);
+    }
+
+    // Apply a host's item restriction while retaining registry IDs, search metadata and tooltips
+    public static List<PaintedSelectionModal.Entry> registryEntries(Predicate<ItemStack> allowed){
+        Objects.requireNonNull(allowed);
+        return RegisteredItemCatalog.items().stream().map(ItemStack::new).filter(allowed)
+                .sorted(Comparator.comparing(stack -> stack.getHoverName().getString(), String.CASE_INSENSITIVE_ORDER))
+                .map(stack -> PaintedSelectionModal.Entry.item(BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(), stack)).toList();
+    }
+
+    // Highlight the registered item even when an existing ghost stack has extra components
+    public static List<String> registrySelection(List<PaintedSelectionModal.Entry> entries, ItemStack selected){
+        if(selected.isEmpty()) return List.of();
+        String id = BuiltInRegistries.ITEM.getKey(selected.getItem()).toString();
+        return entries.stream().filter(entry -> entry.id().equals(id)).map(PaintedSelectionModal.Entry::id).limit(1).toList();
+    }
+
+    // Share inventory-backed choices with embedded hosts while keeping component variants separate
+    public static List<PaintedSelectionModal.Entry> inventoryEntries(List<ItemStack> choices){
+        List<ItemStack> unique = new ArrayList<>();
+        for(ItemStack stack : choices){
+            if(!stack.isEmpty() && unique.stream().noneMatch(prev -> ItemStack.isSameItemSameComponents(prev, stack))) unique.add(stack.copyWithCount(1));
+        }
+        unique.sort(Comparator.comparing(stack -> stack.getHoverName().getString(), String.CASE_INSENSITIVE_ORDER));
+        List<PaintedSelectionModal.Entry> entries = new ArrayList<>();
+        for(int idx = 0; idx < unique.size(); idx++) entries.add(PaintedSelectionModal.Entry.item("inventory:" + idx, unique.get(idx)));
+        return List.copyOf(entries);
+    }
+
+    public static List<String> inventorySelection(List<PaintedSelectionModal.Entry> entries, ItemStack selected){
+        return entries.stream().filter(entry -> ItemStack.isSameItemSameComponents(entry.icon(), selected))
+                .map(PaintedSelectionModal.Entry::id).limit(1).toList();
+    }
+
+    // Keep a single modal alive across window resizes so pending edits and searches survive
+    @Override protected void init(){
+        if(modal != null) return;
+        List<PaintedSelectionModal.Entry> entries = inventory == null ? registryEntries(allowed)
+                : inventoryEntries(inventory);
+        entries.forEach(entry -> stacks.put(entry.id(), entry.icon().copyWithCount(1)));
+        List<String> initial = inventory == null ? selected == null ? List.of() : List.of(selected.toString()) : inventorySelection(entries, initialStack);
+        modal = new PaintedSelectionModal(defaultAppearance, font, title, entries, initial, false, ids -> {
+            if(ids.isEmpty()) return;
+            ItemStack stack = stacks.get(ids.getFirst());
+            if(stack == null) return;
+            if(acceptStack != null) acceptStack.accept(stack.copyWithCount(1));
+            else accept.accept(BuiltInRegistries.ITEM.getKey(stack.getItem()));
+        }, () -> {});
+>>>>>>> Stashed changes
     }
 
     // The modal draws its own background without the vanilla menu blur pass

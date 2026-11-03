@@ -42,6 +42,7 @@ import org.joml.Quaternionf;
 import org.joml.Vector3d;
 import org.joml.Vector3f;
 import org.lwjgl.glfw.GLFW;
+import org.lwjgl.opengl.GL11;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -304,9 +305,17 @@ public final class SubLevelPreviewRenderer implements AutoCloseable {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null || rootId == null || bodyIds.isEmpty()) return false;
         if (!refreshBlocks(minecraft.level, partialTick)) return false;
-        ensureTarget(minecraft, width, height);
-        if (target == null || texture == null) return false;
-        if (targetDirty) renderFrame(minecraft, partialTick, highlights, markers);
+        // Keep the caller's screen clip out of offscreen allocation and rendering
+        int[] scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST) ? new int[4] : null;
+        if(scissor != null) GL11.glGetIntegerv(GL11.GL_SCISSOR_BOX, scissor);
+        RenderSystem.disableScissor();
+        try{
+            ensureTarget(minecraft, width, height);
+            if(target == null || texture == null) return false;
+            if(targetDirty) renderFrame(minecraft, partialTick, highlights, markers);
+        }finally{
+            if(scissor != null) RenderSystem.enableScissor(scissor[0], scissor[1], scissor[2], scissor[3]);
+        }
         drawTexture(graphics, x, y, width, height);
         return true;
     }

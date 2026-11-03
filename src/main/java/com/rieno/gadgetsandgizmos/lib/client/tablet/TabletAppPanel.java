@@ -11,6 +11,9 @@ package com.rieno.gadgetsandgizmos.lib.client.tablet;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
+import com.rieno.gadgetsandgizmos.lib.client.render.GuiTextureRegion;
+import com.rieno.gadgetsandgizmos.lib.client.render.GuiNineSlice;
+import com.rieno.gadgetsandgizmos.lib.client.ui.GuiControlPreviews;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -25,9 +28,14 @@ public final class TabletAppPanel{
     private boolean projected;
 
     public void begin(TabletAppClientContext ctx){
+        begin(ctx, true);
+    }
+
+    // Retain input and hit testing when the host supplies a painted background
+    public void begin(TabletAppClientContext ctx, boolean paintBackground){
         controls.clear();
         projected = ctx.ui().projected();
-        ctx.graphics().fill(ctx.left(), ctx.top(), ctx.left() + ctx.width(), ctx.top() + ctx.height(), 0xEF152334);
+        if(paintBackground) ctx.graphics().fill(ctx.left(), ctx.top(), ctx.left() + ctx.width(), ctx.top() + ctx.height(), 0xEF152334);
     }
 
     // Render errors above app content, after the remaining controls have been drawn
@@ -84,6 +92,53 @@ public final class TabletAppPanel{
             }
         }, id));
     }
+
+    // Draw an atlas button while preserving disabled controls and projected input routing
+    public void paintedButton(TabletAppClientContext ctx, GuiTextureRegion texture,
+                              int x, int y, int width, int height, String label, boolean enabled, Runnable action){
+        var area = new TabletLayout.Rect(ctx.left() + x, ctx.top() + y, width, height);
+        texture.draw(ctx.graphics(), area.left(), area.top(), width, height);
+        paintedButtonContents(ctx, area, label, enabled, action);
+    }
+
+    // Retain native border pixels when a painted control needs a different width
+    public void paintedButton(TabletAppClientContext ctx, GuiNineSlice texture,
+                              int x, int y, int width, int height, String label, boolean enabled, Runnable action){
+        var area = new TabletLayout.Rect(ctx.left() + x, ctx.top() + y, width, height);
+        texture.draw(ctx.graphics(), area.left(), area.top(), width, height);
+        paintedButtonContents(ctx, area, label, enabled, action);
+    }
+
+    private void paintedButtonContents(TabletAppClientContext ctx, TabletLayout.Rect area, String label, boolean enabled, Runnable action){
+        int width = area.width(), height = area.height();
+        if(!enabled) ctx.graphics().fill(area.left() + 1, area.top() + 1, area.left() + width - 1, area.top() + height - 1, 0x44000000);
+        else if(area.contains(ctx.mouseX(), ctx.mouseY())) ctx.graphics().fill(area.left() + 1, area.top() + 1,
+                area.left() + width - 1, area.top() + height - 1, 0x22FFFFFF);
+        GuiControlPreviews.drawFittedText(ctx.graphics(), ctx.font(), Component.literal(label),
+                area.left() + 2, area.top() + 1, Math.max(1, width - 4), Math.max(1, height - 2),
+                1, enabled ? 0xFFF1F1F1 : 0xFF999999, true);
+        controls.add(new Control(area, enabled ? action : () -> {}, ""));
+    }
+
+    // Add editable text to an input whose frame is already painted in the host atlas
+    public void paintedInput(TabletAppClientContext ctx, String id, int x, int y, int width, int height, String hint){
+        var area = new TabletLayout.Rect(ctx.left() + x, ctx.top() + y, width, height);
+        String val = value(id);
+        String label = val.isEmpty() && !id.equals(focus) ? hint : val + (id.equals(focus) ? "_" : "");
+        GuiControlPreviews.drawFittedText(ctx.graphics(), ctx.font(), Component.literal(
+                        ctx.font().plainSubstrByWidth(label, Math.max(1, width - 9))),
+                area.left() + 4, area.top() + 1, Math.max(1, width - 9), Math.max(1, height - 2),
+                .9F, val.isEmpty() && !id.equals(focus) ? 0xFFAAAAAA : 0xFFF1F1F1, false);
+        controls.add(new Control(area, () -> {
+            if(projected){
+                clearFocus();
+                ctx.ui().editText(hint, value(id), 128, res -> setValue(id, res));
+            }
+        }, id));
+    }
+
+    // Stop search editing when a host-owned list or preview receives a click
+    public void clearFocus(){ focus = ""; }
 
     public String value(String id){ return inputs.getOrDefault(id, ""); }
     public void setValue(String id, String val){ inputs.put(id, val == null ? "" : val); }

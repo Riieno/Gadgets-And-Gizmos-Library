@@ -1,6 +1,7 @@
 package com.rieno.gadgetsandgizmos.lib.navigation;
 
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.AABB;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -48,6 +49,64 @@ public final class RouteTrafficPriority {
                 : selectedConflict != null ? selectedConflict : Decision.clear();
     }
 
+<<<<<<< Updated upstream
+=======
+    // Break circular yielding without changing ordinary pairwise right-of-way
+    public static Decision resolveCoordinated(Participant subject, Collection<Participant> traffic, Settings settings){
+        Decision res = resolve(subject, traffic, settings);
+        if(subject == null || !res.yield()) return res;
+        Settings resolved = settings == null ? Settings.DEFAULT : settings;
+        Map<UUID, Participant> fleet = new LinkedHashMap<>();
+        fleet.put(subject.vehicleId(), subject);
+        if(traffic != null) for(Participant other : traffic){
+            if(other != null && measuredDistance(subject.position(), other.position(), false)
+                    <= resolved.coordinationDistance()) fleet.put(other.vehicleId(), other);
+        }
+        List<UUID> chain = new ArrayList<>();
+        UUID current = subject.vehicleId();
+        while(current != null && !chain.contains(current)){
+            Participant participant = fleet.get(current);
+            if(participant == null) return res;
+            chain.add(current);
+            Decision next = current.equals(subject.vehicleId()) ? res : resolve(participant, fleet.values(), resolved);
+            current = next.yield() ? next.otherVehicleId() : null;
+        }
+        if(!subject.vehicleId().equals(current)) return res;
+        UUID first = chain.stream().min(RouteTrafficPriority::compareVehicleIds).orElse(subject.vehicleId());
+        if(!subject.vehicleId().equals(first)) return res;
+        return new Decision(res.conflict(), false, res.otherVehicleId(), res.encounter(), res.conflictPosition(),
+                res.distanceToConflict(), res.otherDistanceToConflict(), res.routeSeparation(), res.yieldDistance());
+    }
+
+    // Resolve each vehicle once, then break yield cycles using the completed fleet decisions
+    public static Map<UUID, Decision> resolveFleet(Collection<Participant> traffic, Settings settings){
+        Map<UUID, Participant> fleet = new LinkedHashMap<>();
+        if(traffic != null) for(Participant participant : traffic){
+            if(participant != null) fleet.put(participant.vehicleId(), participant);
+        }
+        Map<UUID, Decision> decisions = new LinkedHashMap<>();
+        for(var participant : fleet.values()) decisions.put(participant.vehicleId(), resolve(participant, fleet.values(), settings));
+        for(UUID id : fleet.keySet()){
+            List<UUID> chain = new ArrayList<>();
+            UUID current = id;
+            while(current != null && !chain.contains(current)){
+                Decision decision = decisions.get(current);
+                if(decision == null || !decision.yield()) break;
+                chain.add(current);
+                current = decision.otherVehicleId();
+            }
+            int idx = chain.indexOf(current);
+            if(idx < 0) continue;
+            UUID first = chain.subList(idx, chain.size()).stream().min(RouteTrafficPriority::compareVehicleIds).orElseThrow();
+            Decision decision = decisions.get(first);
+            decisions.put(first, new Decision(decision.conflict(), false, decision.otherVehicleId(), decision.encounter(),
+                    decision.conflictPosition(), decision.distanceToConflict(), decision.otherDistanceToConflict(),
+                    decision.routeSeparation(), decision.yieldDistance()));
+        }
+        return Map.copyOf(decisions);
+    }
+
+>>>>>>> Stashed changes
     /**
      * Check whether a yielding vehicle should clear an imminent crossing or
      * head-on encounter by retreating. The host remains responsible for
@@ -98,11 +157,22 @@ public final class RouteTrafficPriority {
                 + other.clearanceRadius() + settings.clearanceBuffer();
         boolean ground = subject.mode() == SablePathfinder.RouteMode.GROUND
                 && other.mode() == SablePathfinder.RouteMode.GROUND;
+        boolean precise = !subject.hull().isEmpty() && !other.hull().isEmpty();
         for (PathSegment first : subjectPath.segments()) {
             for (PathSegment second : otherPath.segments()) {
-                SegmentApproach approach = closestApproach(first, second, ground);
-                if (approach.separation() > requiredSeparation + EPSILON) continue;
-                if (ground && approach.verticalSeparation()
+                SegmentApproach approach;
+                if(precise){
+                    var overlap = DockTrafficGeometry.sweptIntersection(first.start(), first.end(), subject.hull(),
+                            second.start(), second.end(), other.hull(), settings.clearanceBuffer());
+                    if(overlap.isEmpty()) continue;
+                    var point = overlap.get();
+                    approach = new SegmentApproach(point.firstFraction(), point.secondFraction(),
+                            point.firstPosition().add(point.secondPosition()).scale(0.5D),
+                            measuredDistance(point.firstPosition(), point.secondPosition(), ground),
+                            Math.abs(point.firstPosition().y - point.secondPosition().y));
+                }else approach = closestApproach(first, second, ground);
+                if (!precise && approach.separation() > requiredSeparation + EPSILON) continue;
+                if (!precise && ground && approach.verticalSeparation()
                         > subject.verticalClearance() + other.verticalClearance()
                         + settings.clearanceBuffer()) {
                     continue;
@@ -116,7 +186,7 @@ public final class RouteTrafficPriority {
                         || Math.abs(subjectDistance - selected.subjectDistance()) <= EPSILON
                         && otherDistance < selected.otherDistance()) {
                     double alignment = first.direction().dot(second.direction());
-                    Encounter encounter = alignment >= 0.5D
+                    Encounter encounter = alignment >= (precise ? 0.995D : 0.5D)
                             ? Encounter.SAME_DIRECTION
                             : alignment <= -0.5D ? Encounter.HEAD_ON
                             : Encounter.CROSSING;
@@ -128,22 +198,53 @@ public final class RouteTrafficPriority {
         }
         if (!selected.found()) return Decision.clear();
 
+<<<<<<< Updated upstream
+=======
+        // Short centreline corrections do not change the order of a following queue
+        Vec3 subjectHeading = sustainedDirection(subjectPath);
+        Vec3 otherHeading = sustainedDirection(otherPath);
+        Vec3 between = measured(other.position().subtract(subject.position()), ground);
+        double along = between.dot(subjectHeading);
+        Vec3 alignedPosition = subject.position().add(subjectHeading.scale(along));
+        boolean followingQueue = subjectHeading.dot(otherHeading) >= 0.75D && Math.abs(along) > EPSILON
+                && (precise ? DockTrafficGeometry.sweptIntersection(alignedPosition, alignedPosition, subject.hull(), other.position(),
+                other.position(), other.hull(), settings.clearanceBuffer()).isPresent()
+                : between.subtract(subjectHeading.scale(along)).length() <= requiredSeparation);
+        if(followingQueue){
+            double gap = precise ? along > 0 ? along + extent(other.hull(), subjectHeading, false)
+                    - extent(subject.hull(), subjectHeading, true) - settings.clearanceBuffer()
+                    : -along + extent(subject.hull(), subjectHeading, false)
+                    - extent(other.hull(), subjectHeading, true) - settings.clearanceBuffer() : Math.abs(along);
+            selected = new Conflict(selected.position(), along > 0 ? Math.max(0, gap) : 0, along < 0 ? Math.max(0, gap) : 0,
+                    selected.separation(), Encounter.SAME_DIRECTION, true);
+        }else if(precise && selected.encounter() == Encounter.SAME_DIRECTION){
+            selected = new Conflict(selected.position(), selected.subjectDistance(), selected.otherDistance(),
+                    selected.separation(), Encounter.CROSSING, true);
+        }
+
+>>>>>>> Stashed changes
         double subjectSpeed = subject.travelSpeed(settings.minimumTravelSpeed());
         double otherSpeed = other.travelSpeed(settings.minimumTravelSpeed());
         double subjectDistance = selected.subjectDistance();
         double otherDistance = selected.otherDistance();
         boolean mustYield;
         if (selected.encounter() == Encounter.SAME_DIRECTION) {
+<<<<<<< Updated upstream
             boolean subjectBehind = subjectDistance > otherDistance + settings.distanceTieTolerance();
             boolean otherBehind = otherDistance > subjectDistance + settings.distanceTieTolerance();
+=======
+            boolean subjectBehind = followingQueue ? along > 0 : subjectDistance > otherDistance + EPSILON;
+            boolean otherBehind = followingQueue ? along < 0 : otherDistance > subjectDistance + EPSILON;
+>>>>>>> Stashed changes
             if (subjectBehind) {
                 double closingSpeed = Math.max(
                         subject.measuredSpeed() - other.measuredSpeed(),
                         subject.expectedSpeed() - other.expectedSpeed());
-                boolean alreadyClose = centerDistance <= requiredSeparation;
+                boolean alreadyClose = precise ? selected.subjectDistance() <= EPSILON
+                        && selected.otherDistance() <= EPSILON : centerDistance <= requiredSeparation;
                 if (!alreadyClose && closingSpeed <= EPSILON) return Decision.clear();
                 double catchSeconds = alreadyClose ? 0.0D
-                        : Math.max(0.0D, centerDistance - requiredSeparation) / closingSpeed;
+                        : Math.max(0.0D, precise ? subjectDistance - otherDistance : centerDistance - requiredSeparation) / closingSpeed;
                 if (catchSeconds > settings.minimumTimeSeparation()) return Decision.clear();
                 mustYield = true;
             } else if (otherBehind) {
@@ -153,7 +254,7 @@ public final class RouteTrafficPriority {
             }
         } else {
             if (selected.encounter() == Encounter.HEAD_ON
-                    && directlyApproaching(subject, other)) {
+                    && !precise && directlyApproaching(subject, other)) {
                 double combinedSpeed = Math.max(EPSILON, subjectSpeed + otherSpeed);
                 subjectDistance = centerDistance * subjectSpeed / combinedSpeed;
                 otherDistance = centerDistance - subjectDistance;
@@ -173,10 +274,22 @@ public final class RouteTrafficPriority {
             }
         }
         double yieldDistance = Math.max(0.0D,
-                subjectDistance - requiredSeparation);
+                subjectDistance - (precise ? 0 : requiredSeparation));
         return new Decision(true, mustYield, other.vehicleId(), selected.encounter(),
                 selected.position(), subjectDistance, otherDistance,
                 selected.separation(), yieldDistance);
+    }
+
+    // Measure hull support along travel without treating its length as lateral clearance
+    private static double extent(List<AABB> hull, Vec3 direction, boolean maximum){
+        double res = maximum ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
+        for(AABB box : hull){
+            double val = (direction.x >= 0 == maximum ? box.maxX : box.minX) * direction.x
+                    + (direction.y >= 0 == maximum ? box.maxY : box.minY) * direction.y
+                    + (direction.z >= 0 == maximum ? box.maxZ : box.minZ) * direction.z;
+            res = maximum ? Math.max(res, val) : Math.min(res, val);
+        }
+        return res;
     }
 
     // Check whether current travel headings approach each other.
@@ -335,8 +448,15 @@ public final class RouteTrafficPriority {
             SablePathfinder.RouteMode mode,
             double clearanceRadius,
             double verticalClearance,
-            double expectedSpeed
+            double expectedSpeed,
+            List<AABB> hull
     ) {
+        // Preserve conservative radius-based callers which do not publish a hull
+        public Participant(UUID vehicleId, Vec3 position, Vec3 velocity, List<Vec3> route,
+                SablePathfinder.RouteMode mode, double clearanceRadius, double verticalClearance, double expectedSpeed){
+            this(vehicleId, position, velocity, route, mode, clearanceRadius, verticalClearance, expectedSpeed, List.of());
+        }
+
         public Participant {
             vehicleId = vehicleId == null ? new UUID(0L, 0L) : vehicleId;
             position = finite(position);
@@ -348,6 +468,7 @@ public final class RouteTrafficPriority {
             clearanceRadius = nonNegative(clearanceRadius);
             verticalClearance = nonNegative(verticalClearance);
             expectedSpeed = nonNegative(expectedSpeed);
+            hull = hull == null ? List.of() : List.copyOf(hull);
         }
 
         private double travelSpeed(double minimum) {

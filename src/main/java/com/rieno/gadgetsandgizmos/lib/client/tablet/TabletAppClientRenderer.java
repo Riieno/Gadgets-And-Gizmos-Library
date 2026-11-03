@@ -13,6 +13,11 @@ public interface TabletAppClientRenderer {
 
     // Check if the app draws all content below the host status bar
     default boolean ownsAppSurface(){
+        return ownsTabletSurface();
+    }
+
+    // Let painted apps use the whole tablet frame beneath the live host chrome
+    default boolean ownsTabletSurface(){
         return false;
     }
 

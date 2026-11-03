@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Predicate;
+import java.util.function.BiConsumer;
 
 // Retain submitted data outputs independently of a host's personal UI state
 public final class GraphInteractionOutputs<V>{
@@ -26,6 +27,9 @@ public final class GraphInteractionOutputs<V>{
 
     // Export submitted outputs for host-owned serialization
     public Map<String, Submission<V>> snapshot(){ return Map.copyOf(outputs); }
+
+    // Visit retained submissions on the owning thread without copying their map
+    public void visit(BiConsumer<String, Submission<V>> visitor){ outputs.forEach(visitor); }
 
     // Drop outputs whose ports no longer exist in the host graph
     public void retainKeys(Predicate<String> valid){ outputs.keySet().removeIf(key -> !valid.test(key)); }

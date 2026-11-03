@@ -9,7 +9,7 @@
   function decode(entry) {
     if (!entry || !entry.Payload) return undefined;
     const payload = entry.Payload;
-    if (entry.Type === "list" || entry.Type === "map") {
+    if (entry.Type === "list" || entry.Type === "map" || entry.Type === "player") {
       const fields = owns(payload, "Value") && payload.Value && typeof payload.Value === "object" && !payload.Value.Type
         ? payload.Value : payload;
       const order = entry.EntryOrder || Object.keys(fields);
@@ -19,6 +19,60 @@
     }
     if (owns(payload, "Value")) return entry.Type === "boolean" ? Boolean(payload.Value) : copy(payload.Value);
     return copy(payload);
+  }
+
+  // Encode structured references and preserve nested Player types from their saved envelopes
+  function encode(value, declaredType, prevEntry) {
+    const previous = prevEntry && typeof prevEntry === "object" && !Array.isArray(prevEntry)
+      ? prevEntry : {};
+    const prevType = String(previous.Type || "").trim().toLowerCase();
+    let type = String(declaredType || prevType || "any").trim().toLowerCase();
+    if (!type || type === "exec") type = prevType || "any";
+    if (type === "any") {
+      if (typeof value === "boolean") type = "boolean";
+      else if (typeof value === "number") type = "number";
+      else if (Array.isArray(value)) type = "list";
+      else if (value && typeof value === "object") type = prevType === "player" ? "player" : "map";
+      else if (prevType && prevType !== "any") type = prevType;
+      else type = "string";
+    }
+    if (type === "list") {
+      const values = Array.isArray(value) ? value : [];
+      const prevPayload = previous.Payload && typeof previous.Payload === "object"
+        ? previous.Payload : {};
+      return {
+        Type: "list",
+        Payload: Object.fromEntries(values.map((child, index) => {
+          const key = String(index);
+          return [key, encode(child, "any", prevPayload[key])];
+        }))
+      };
+    }
+    if (type === "map" || type === "player") {
+      const values = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+      const prevPayload = previous.Payload && typeof previous.Payload === "object"
+        ? previous.Payload : {};
+      return {
+        Type: type,
+        EntryOrder: Object.keys(values),
+        Payload: Object.fromEntries(Object.entries(values)
+          .map(([key, child]) => [key,
+            encode(child, "any", prevPayload[key])]))
+      };
+    }
+    let normalized = value;
+    if (type === "boolean") {
+      normalized = typeof value === "string" ? value.toLowerCase() === "true" : Boolean(value);
+    } else if (type === "number") {
+      const number = Number(value);
+      normalized = Number.isFinite(number) ? number : 0;
+    } else if (["string", "direction"].includes(type)) {
+      normalized = value == null ? "" : String(value);
+    }
+    const payload = normalized && typeof normalized === "object" && !Array.isArray(normalized)
+      ? copy(normalized)
+      : { Value: normalized };
+    return { Type: type, Payload: payload };
   }
 
   function value(data, port, fallback) {
@@ -131,6 +185,18 @@
     return { result, value: removed, removed: true };
   }
 
+<<<<<<< Updated upstream
   globalThis.GadgetsGraphNodes = Object.freeze({ copy, decode, defaults, value, ports, ordered, numeric, typeOf, collection,
+=======
+  // Retain saved-node lookup while excluding retired definitions from palette enumeration
+  function configureLibraryVisibility(definitions, catalog) {
+    for (const entry of catalog || []) {
+      if (owns(definitions, entry.id)) Object.defineProperty(definitions, entry.id, { enumerable: !entry.hiddenFromLibrary });
+    }
+    return definitions;
+  }
+
+  globalThis.GadgetsGraphNodes = Object.freeze({ copy, decode, encode, defaults, value, ports, ordered, numeric, typeOf, collection, configureLibraryVisibility, synchronizeInputOptions, inputOptionLabel, convertUnit,
+>>>>>>> Stashed changes
     format: (value, precise) => typeof value === "number" ? precise ? String(value) : Number.isInteger(value) ? String(value) : value.toFixed(2) : String(value ?? "") });
 })();

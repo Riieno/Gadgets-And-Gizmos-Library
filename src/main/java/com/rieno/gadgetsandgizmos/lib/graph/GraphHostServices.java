@@ -26,6 +26,11 @@ public final class GraphHostServices {
             ResourceLocation.fromNamespaceAndPath(GadgetsNGizmosLibrary.MOD_ID, "block_entity"),
             BlockEntity.class);
 
+    // Supply a live command permission policy independently of the host implementation
+    public static final GraphServiceKey<CommandExecutionPolicy> COMMAND_EXECUTION = new GraphServiceKey<>(
+            ResourceLocation.fromNamespaceAndPath(GadgetsNGizmosLibrary.MOD_ID, "command_execution"),
+            CommandExecutionPolicy.class);
+
     public static final GraphServiceKey<GraphNodeOutputs> NODE_OUTPUTS = new GraphServiceKey<>(
             ResourceLocation.fromNamespaceAndPath(GadgetsNGizmosLibrary.MOD_ID, "node_outputs"),
             GraphNodeOutputs.class);

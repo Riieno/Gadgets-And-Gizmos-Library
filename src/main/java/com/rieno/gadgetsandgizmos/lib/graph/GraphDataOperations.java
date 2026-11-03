@@ -80,7 +80,7 @@ public final class GraphDataOperations{
         return switch(type.getAsString()){
             case "string", "direction", "number", "boolean", "color" ->
                     payload.size() == 1 && payload.has("Value") ? payload.get("Value") : null;
-            case "list", "map" -> payload;
+            case "list", "map", "player" -> payload;
             default -> null;
         };
     }

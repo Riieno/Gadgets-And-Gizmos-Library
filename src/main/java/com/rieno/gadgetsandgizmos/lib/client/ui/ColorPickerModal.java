@@ -104,6 +104,25 @@ public final class ColorPickerModal {
         return open;
     }
 
+    // Share the existing graph-header eyedropper with other color-editing controls
+    public static void renderButton(GuiGraphics graphics, int x, int y, int size, boolean hovered){
+        if(size <= 0) return;
+        graphics.pose().pushPose();
+        try{
+            graphics.pose().translate(x, y, 0);
+            graphics.pose().scale(size / 14F, size / 14F, 1);
+            graphics.fill(0, 0, 14, 14, hovered ? 0xAAFFFFFF : 0x66000000);
+            int ink = hovered ? 0xFF17202B : 0xFFFFFFFF;
+            graphics.fill(9, 2, 12, 5, ink);
+            graphics.fill(7, 4, 11, 6, ink);
+            for(int step = 0; step < 5; step++){
+                graphics.fill(7 - step, 6 + step, 8 - step, 7 + step, ink);
+                graphics.fill(9 - step, 6 + step, 10 - step, 7 + step, ink);
+            }
+            graphics.fill(2, 11, 5, 12, ink);
+        }finally{ graphics.pose().popPose(); }
+    }
+
     // Render the picker centered within the supplied screen dimensions.
     public void render(GuiGraphics graphics, Font font, int screenWidth, int screenHeight, Chrome chrome,
                        int mouseX, int mouseY) {
