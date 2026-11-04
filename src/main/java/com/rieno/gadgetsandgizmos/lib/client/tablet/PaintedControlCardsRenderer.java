@@ -435,7 +435,10 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
             hit.action().run(); return true;
         }
         for(var slider : state.sliders) if(slider.area().contains(x, y) && y >= 24 && y < 165){
-            state.dragging = slider; drag(state, x); return true;
+            state.dragging = slider; state.dragStrength = -1;
+            drag(ctx, state, x);
+            if(ctx.ui().projected()) state.dragging = null;
+            return true;
         }
         if("devices".equals(ctx.tab().id()) && !state.editor) for(var card : state.cards) if(card.area().contains(x, y) && y >= 24 && y < 165){
             state.dragCard = card; state.anchors = List.copyOf(state.cards);
@@ -471,8 +474,8 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
             }
             return true;
         }
-        if(state.dragging == null) return false;
-        drag(state, x); return true;
+        if(state.dragging == null || btn != 0) return false;
+        drag(ctx, state, x); return true;
     }
 
     @Override public boolean mouseReleased(TabletAppClientContext ctx, TabletAppClientState raw, double x, double y, int btn){
@@ -490,8 +493,8 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
             }
             state.dragCard = null; state.cardDragging = false; return true;
         }
-        if(state.dragging == null) return false;
-        ctx.actions().send("channel_slider", state.dragging.id() + "|" + state.dragStrength);
+        if(state.dragging == null || btn != 0) return false;
+        drag(ctx, state, (x - bounds.left()) / bounds.scaleX());
         state.dragging = null; return true;
     }
 
@@ -522,7 +525,13 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
         return state.items != null && state.items.charTyped(ch, mods);
     }
 
-    private static void drag(State state, double x){ state.dragStrength = (int)Math.round(Math.clamp((x - state.dragging.area().left()) / state.dragging.area().width(), 0, 1) * 15); }
+    // Publish changed analog values during clicks and drags, including hosts without release events
+    private static void drag(TabletAppClientContext ctx, State state, double x){
+        int strength = (int)Math.round(Math.clamp((x - state.dragging.area().left()) / state.dragging.area().width(), 0, 1) * 15);
+        if(strength == state.dragStrength) return;
+        state.dragStrength = strength;
+        ctx.actions().send("channel_slider", state.dragging.id() + "|" + strength);
+    }
     private static void edit(State state, CompoundTag row){
         state.editor = true; state.pending = false; state.notice = "";
         state.draft = row == null ? new CompoundTag() : row.copy();

@@ -185,11 +185,11 @@ public final class HudWidgetRenderer{
         };
     }
 
-    // Match GUI blending without discarding faint pixels or hiding the back of a hologram
+    // Use world shader hooks while retaining GUI blending and faint translucent highlights
     private static final class SurfaceTypes extends RenderStateShard{
         private static final RenderType COLOR = RenderType.create("gadgetsngizmos_widget_color",
                 DefaultVertexFormat.POSITION_COLOR, VertexFormat.Mode.QUADS, 1536, false, false,
-                RenderType.CompositeState.builder().setShaderState(RENDERTYPE_GUI_SHADER)
+                RenderType.CompositeState.builder().setShaderState(POSITION_COLOR_SHADER)
                         .setTransparencyState(TRANSLUCENT_TRANSPARENCY).setCullState(NO_CULL)
                         .setDepthTestState(LEQUAL_DEPTH_TEST).createCompositeState(false));
         private static final Map<ResourceLocation, RenderType> TEXTURES = new HashMap<>();
