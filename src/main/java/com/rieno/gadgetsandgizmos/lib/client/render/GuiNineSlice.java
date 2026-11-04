@@ -9,6 +9,12 @@ public record GuiNineSlice(GuiTextureRegion topLeft, GuiTextureRegion top, GuiTe
                            GuiTextureRegion left, GuiTextureRegion center, GuiTextureRegion right,
                            GuiTextureRegion bottomLeft, GuiTextureRegion bottom, GuiTextureRegion bottomRight){
     public record Area(int x, int y, int width, int height){}
+
+    // Draw the same atlas patches through GUI or projected-surface consumers
+    @FunctionalInterface
+    public interface Painter{
+        void draw(GuiTextureRegion region, int x, int y, int width, int height);
+    }
     public GuiNineSlice{
         for(GuiTextureRegion region : new GuiTextureRegion[]{topLeft, top, topRight, left, center, right,
                 bottomLeft, bottom, bottomRight}) Objects.requireNonNull(region, "region");
@@ -38,6 +44,10 @@ public record GuiNineSlice(GuiTextureRegion topLeft, GuiTextureRegion top, GuiTe
 
     // Scale the corners with the host's layout and fit them inside smaller destinations
     public void draw(GuiGraphics graphics, int x, int y, int width, int height, double borderScale){
+        paint((region, px, py, pw, ph) -> region.draw(graphics, px, py, pw, ph), x, y, width, height, borderScale);
+    }
+
+    public void paint(Painter painter, int x, int y, int width, int height, double borderScale){
         if(width <= 0 || height <= 0) return;
         if(!Double.isFinite(borderScale) || borderScale <= 0){
             throw new IllegalArgumentException("Nine-slice border scale must be finite and positive");
@@ -53,15 +63,15 @@ public record GuiNineSlice(GuiTextureRegion topLeft, GuiTextureRegion top, GuiTe
         int rightX = centerX + centerWidth;
         int bottomY = centerY + centerHeight;
 
-        topLeft.draw(graphics, x, y, leftWidth, topHeight);
-        top.draw(graphics, centerX, y, centerWidth, topHeight);
-        topRight.draw(graphics, rightX, y, rightWidth, topHeight);
-        left.draw(graphics, x, centerY, leftWidth, centerHeight);
-        center.draw(graphics, centerX, centerY, centerWidth, centerHeight);
-        right.draw(graphics, rightX, centerY, rightWidth, centerHeight);
-        bottomLeft.draw(graphics, x, bottomY, leftWidth, bottomHeight);
-        bottom.draw(graphics, centerX, bottomY, centerWidth, bottomHeight);
-        bottomRight.draw(graphics, rightX, bottomY, rightWidth, bottomHeight);
+        painter.draw(topLeft, x, y, leftWidth, topHeight);
+        painter.draw(top, centerX, y, centerWidth, topHeight);
+        painter.draw(topRight, rightX, y, rightWidth, topHeight);
+        painter.draw(left, x, centerY, leftWidth, centerHeight);
+        painter.draw(center, centerX, centerY, centerWidth, centerHeight);
+        painter.draw(right, rightX, centerY, rightWidth, centerHeight);
+        painter.draw(bottomLeft, x, bottomY, leftWidth, bottomHeight);
+        painter.draw(bottom, centerX, bottomY, centerWidth, bottomHeight);
+        painter.draw(bottomRight, rightX, bottomY, rightWidth, bottomHeight);
     }
 
     // Reduce opposing corners proportionally when the available space is too small

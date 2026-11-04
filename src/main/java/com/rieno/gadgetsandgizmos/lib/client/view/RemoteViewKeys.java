@@ -68,8 +68,8 @@ public final class RemoteViewKeys{
         }
         if(state != GLFW.GLFW_PRESS) return;
         if(key == EXIT) RemoteViewClient.exit();
-        else if(key == FRAME) ViewfinderConfig.toggleFrame();
-        else if(key == GRID) ViewfinderConfig.toggleGrid();
+        else if(key == FRAME) ViewfinderConfig.toggleFrame(RemoteViewClient.reference());
+        else if(key == GRID) ViewfinderConfig.toggleGrid(RemoteViewClient.reference());
         else{
             RemoteViewClient.flushInput();
             PacketDistributor.sendToServer(new RemoteViewActionPayload(key == FLASHLIGHT

@@ -34,6 +34,11 @@ public final class ContainerContentsSnapshot{
     public static CompoundTag capture(BlockEntity target){
         CompoundTag data = new CompoundTag();
         data.putBoolean("Attached", true);
+        if(target instanceof TransferTrackedStorage tracked){
+            var rates = tracked.transferRates();
+            data.putDouble("TransferIn", rates.input());
+            data.putDouble("TransferOut", rates.output());
+        }
         data.putString("Name", target.getBlockState().getBlock().getName().getString());
         var level = target.getLevel();
         var pos = target.getBlockPos();
@@ -95,6 +100,28 @@ public final class ContainerContentsSnapshot{
             row.putInt("Amount", stack.getAmount());
             row.putInt("Capacity", fluids.getTankCapacity(idx));
             liquid.add(row);
+        }
+        if(fluids instanceof CombinedFluidTank || fluids instanceof SharedCapacityFluidTank){
+            java.util.Map<String, CompoundTag> grouped = new java.util.LinkedHashMap<>();
+            // Inspect every member before applying the UI row limit so late members are represented.
+            for(int idx = 0; idx < fluids.getTanks(); idx++){
+                var stack = fluids.getFluidInTank(idx);
+                if(stack.isEmpty()) continue;
+                String id = BuiltInRegistries.FLUID.getKey(stack.getFluid()).toString();
+                var row = grouped.computeIfAbsent(id, key -> {
+                    CompoundTag entry = new CompoundTag();
+                    entry.putString("Id", key);
+                    entry.putString("Name", shortText(stack.getHoverName().getString(), 128));
+                    entry.putInt("Capacity", ((net.neoforged.neoforge.fluids.capability.templates.FluidTank)fluids).getCapacity());
+                    return entry;
+                });
+                row.putInt("Amount", (int)Math.min(Integer.MAX_VALUE, (long)row.getInt("Amount") + stack.getAmount()));
+            }
+            liquid = new ListTag();
+            for(var row : grouped.values()){
+                if(liquid.size() >= 128) break;
+                liquid.add(row);
+            }
         }
         data.put("Fluids", liquid);
         if(longEnergy != null){

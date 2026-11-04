@@ -15,6 +15,12 @@ public final class PropulsionLight {
 
     private PropulsionLight() {}
 
+    // Clear a stored source and relight old saved emission on the owning game thread
+    public static void clear(Level level, BlockPos pos){
+        if(level == null || level.isClientSide) return;
+        if(update(level, pos, 0)) level.getLightEngine().checkBlock(pos);
+    }
+
     public static int level(double signedThrust, double fullBrightnessThrust) {
         if (!Double.isFinite(signedThrust) || signedThrust == 0.0D
                 || !Double.isFinite(fullBrightnessThrust) || fullBrightnessThrust <= 0.0D) return 0;

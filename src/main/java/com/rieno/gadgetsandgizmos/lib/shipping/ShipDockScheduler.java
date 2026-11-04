@@ -9,7 +9,9 @@ package com.rieno.gadgetsandgizmos.lib.shipping;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import com.rieno.gadgetsandgizmos.lib.navigation.DockTrafficGeometry;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -51,6 +53,7 @@ public final class ShipDockScheduler {
 
     // Tracked requests
     private final Map<RequestKey, DockRequest> requests = new HashMap<>();
+    private final Map<RequestKey, ClearanceReservation> clearanceReservations = new HashMap<>();
     // Next connector offsets
     private final Map<UUID, Integer> nextConnectorOffsets = new HashMap<>();
     // Next sequence
@@ -189,6 +192,20 @@ public final class ShipDockScheduler {
             VesselEnvelope vessel,
             long gameTime
     ) {
+        return request(requester, candidateDocks, occupiedDocks, ownedDock, priority, vessel, gameTime, Map.of());
+    }
+
+    // Accept the ship's measured access to each berth before the dock allocates its connector
+    public Lease requestPreferred(MinecraftServer server, RequestKey requester, List<DockSlot> candidates,
+            Set<DockSlot> occupied, @Nullable DockSlot owned, RequestPriority priority, VesselEnvelope vessel,
+            Map<DockSlot, AccessReport> access){
+        if(server == null) return Lease.NONE;
+        return request(requester, candidates, occupied, owned, priority, vessel, server.getTickCount(), access);
+    }
+
+    public synchronized Lease request(RequestKey requester, List<DockSlot> candidateDocks, Set<DockSlot> occupiedDocks,
+            @Nullable DockSlot ownedDock, RequestPriority priority, VesselEnvelope vessel, long gameTime,
+            Map<DockSlot, AccessReport> access){
         if (shuttingDown || requester == null || requester.ownerId() == null) {
             return Lease.NONE;
         }
@@ -220,12 +237,47 @@ public final class ShipDockScheduler {
                 req.candidates = candidates;
             }
         }
+        req.access = access == null ? Map.of() : Map.copyOf(access);
+        if(req.assignedDock != null && !req.priority.committed() && !reachable(req, req.assignedDock)) req.reassignForAccess = true;
         rebalance();
         return req.assignedDock == null
                 ? new Lease(null, null, queuePosition(req), holdingPlacement(req))
                 : new Lease(req.assignedDock.dockId(), req.assignedDock.connectorKey(),
                 0, HoldingPlacement.NONE);
     }
+
+    // Publish obstruction feedback without exposing either mod's controller implementation
+    public synchronized Map<RequestKey, Map<DockSlot, AccessReport>> accessReports(UUID dockId){
+        Map<RequestKey, Map<DockSlot, AccessReport>> res = new HashMap<>();
+        for(DockRequest req : requests.values()){
+            Map<DockSlot, AccessReport> reports = new HashMap<>();
+            req.access.forEach((slot, report) -> { if(slot.dockId().equals(dockId)) reports.put(slot, report); });
+            if(!reports.isEmpty()) res.put(req.requester, Map.copyOf(reports));
+        }
+        return Map.copyOf(res);
+    }
+
+    public record AccessReport(boolean reachable, double exitDistance, double approachDistance, @Nullable UUID blocker){
+        public AccessReport{
+            exitDistance = Double.isFinite(exitDistance) ? Math.max(0, exitDistance) : Double.MAX_VALUE;
+            approachDistance = Double.isFinite(approachDistance) ? Math.max(0, approachDistance) : Double.MAX_VALUE;
+        }
+    }
+
+    // Publish granted berths without exposing mutable requests or queued candidates
+    public synchronized List<BerthReservation> reservations(UUID dockId, long gameTime){
+        cleanup(gameTime);
+        List<BerthReservation> res = new ArrayList<>();
+        for(DockRequest req : requests.values()){
+            DockSlot slot = req.ownedDock == null ? req.assignedDock : req.ownedDock;
+            if(slot != null && slot.dockId().equals(dockId)) res.add(new BerthReservation(req.requester, slot, req.vessel,
+                    req.ownedDock != null, req.priority.committed()));
+        }
+        res.sort(Comparator.comparing((BerthReservation val) -> val.owner().ownerId()).thenComparing(val -> val.owner().channel()));
+        return List.copyOf(res);
+    }
+
+    public record BerthReservation(RequestKey owner, DockSlot slot, VesselEnvelope vessel, boolean occupied, boolean committed){}
 
     // Update the ship dock scheduler
     public synchronized void heartbeat(UUID requester, long gameTime) {
@@ -287,6 +339,46 @@ public final class ShipDockScheduler {
         }
     }
 
+    // Retain physical manoeuvre ownership independently of a schedule or navigation request
+    public synchronized void retainClearance(RequestKey owner, DockSlot slot, List<AABB> bounds, long gameTime){
+        if(shuttingDown || owner == null || slot == null) return;
+        clearanceReservations.put(owner, new ClearanceReservation(slot, List.copyOf(bounds), gameTime));
+        rebalance();
+    }
+
+    // Admit one docking manoeuvre only when its hull sweep does not cross another active manoeuvre
+    public synchronized boolean tryRetainClearance(RequestKey owner, DockSlot slot, List<AABB> bounds, long gameTime){
+        cleanup(gameTime);
+        if(shuttingDown || owner == null || slot == null) return false;
+        for(var entry : clearanceReservations.entrySet()){
+            if(entry.getKey().equals(owner)) continue;
+            if(conflicts(slot, entry.getValue().slot()) || bounds.stream().anyMatch(box ->
+                    entry.getValue().bounds().stream().anyMatch(box::intersects))) return false;
+        }
+        retainClearance(owner, slot, bounds, gameTime);
+        return true;
+    }
+
+    public synchronized void releaseClearance(RequestKey owner){
+        if(clearanceReservations.remove(owner) != null) rebalance();
+    }
+
+    // Replace this vessel's obsolete reservation only after the caller confirms its current physical berth
+    public synchronized void reconcileOccupiedClearance(RequestKey previousOwner, RequestKey owner,
+            DockSlot occupiedSlot, List<AABB> occupiedBounds, long gameTime){
+        if(shuttingDown || owner == null || occupiedSlot == null) return;
+        if(previousOwner != null) clearanceReservations.remove(previousOwner);
+        retainClearance(owner, occupiedSlot, occupiedBounds, gameTime);
+    }
+
+    // Expose occupied docking sweeps to approach selection and live collision control
+    public synchronized List<DockTrafficGeometry.Obstacle> clearanceObstacles(RequestKey owner, long gameTime){
+        cleanup(gameTime);
+        return clearanceReservations.entrySet().stream().filter(entry -> !entry.getKey().equals(owner))
+                .map(entry -> new DockTrafficGeometry.Obstacle(
+                        entry.getKey().ownerId(), entry.getValue().bounds())).toList();
+    }
+
     // Remove the dock
     public synchronized void removeDock(UUID dockId) {
         if (dockId == null) {
@@ -306,6 +398,7 @@ public final class ShipDockScheduler {
                     .collect(java.util.stream.Collectors.toUnmodifiableSet());
         }
         nextConnectorOffsets.remove(dockId);
+        clearanceReservations.entrySet().removeIf(entry -> entry.getValue().slot().dockId().equals(dockId));
         rebalance();
     }
 
@@ -313,11 +406,14 @@ public final class ShipDockScheduler {
     private synchronized void clearForShutdown() {
         shuttingDown = true;
         requests.clear();
+        clearanceReservations.clear();
         nextConnectorOffsets.clear();
     }
 
     // Clean up the ship dock scheduler
     private void cleanup(long gameTime) {
+        boolean cleared = clearanceReservations.entrySet().removeIf(entry -> gameTime < entry.getValue().lastSeen()
+                || gameTime - entry.getValue().lastSeen() > REQUEST_TIMEOUT_TICKS);
         List<RequestKey> expired = requests.values().stream()
                 .filter(req -> gameTime < req.lastSeen
                         || gameTime - req.lastSeen > REQUEST_TIMEOUT_TICKS)
@@ -329,7 +425,7 @@ public final class ShipDockScheduler {
                 releaseAssignment(req);
             }
         }
-        if (!expired.isEmpty()) {
+        if (!expired.isEmpty() || cleared) {
             rebalance();
         }
     }
@@ -364,8 +460,9 @@ public final class ShipDockScheduler {
                 continue;
             }
             boolean requesterOwnsDock = req.assignedDock.equals(req.ownedDock);
-            boolean blocked = isExternallyOccupied(req.assignedDock) && !requesterOwnsDock;
-            if (blocked || !req.candidates.contains(req.assignedDock)
+            boolean blocked = clearanceHeldByOther(req.assignedDock, req.requester)
+                    || isExternallyOccupied(req.assignedDock) && !requesterOwnsDock;
+            if (blocked || !req.candidates.contains(req.assignedDock) || !reachable(req, req.assignedDock) && !requesterOwnsDock && !req.priority.committed()
                     || assignmentHeldByOther(req.assignedDock, req.requester)) {
                 releaseAssignment(req);
                 continue;
@@ -378,9 +475,10 @@ public final class ShipDockScheduler {
             if (req.assignedDock != null) {
                 continue;
             }
-            for (DockSlot candidate : assignmentOrder(req.candidates)) {
+            for (DockSlot candidate : assignmentOrder(req)) {
                 boolean requesterOwnsDock = candidate.equals(req.ownedDock);
-                if (assignmentHeldByOther(candidate, req.requester)
+                if (clearanceHeldByOther(candidate, req.requester)
+                        || !reachable(req, candidate) && !requesterOwnsDock || assignmentHeldByOther(candidate, req.requester)
                         || isExternallyOccupied(candidate) && !requesterOwnsDock) {
                     continue;
                 }
@@ -388,6 +486,38 @@ public final class ShipDockScheduler {
                 break;
             }
         }
+    }
+
+    private static boolean reachable(DockRequest req, DockSlot slot){
+        AccessReport report = req.access.get(slot);
+        return report == null || report.reachable();
+    }
+
+    private boolean clearanceHeldByOther(DockSlot slot, RequestKey requester){
+        return clearanceReservations.entrySet().stream().anyMatch(entry -> conflicts(slot, entry.getValue().slot())
+                && !entry.getKey().ownerId().equals(requester.ownerId()));
+    }
+
+    private record ClearanceReservation(DockSlot slot, List<AABB> bounds, long lastSeen){}
+
+    // Prefer the free berth nearest an exit; a blocked assignment asks for a nearer reachable berth
+    private List<DockSlot> assignmentOrder(DockRequest req){
+        if(req.access.isEmpty()) return assignmentOrder(req.candidates);
+        Map<UUID, List<DockSlot>> groups = new java.util.LinkedHashMap<>();
+        req.candidates.forEach(slot -> groups.computeIfAbsent(slot.dockId(), ignored -> new ArrayList<>()).add(slot));
+        List<DockSlot> res = new ArrayList<>();
+        groups.forEach((dock, slots) -> {
+            boolean blocked = req.reassignForAccess;
+            slots.sort(Comparator.comparingDouble((DockSlot slot) -> {
+                AccessReport report = req.access.get(slot);
+                return report == null ? Double.MAX_VALUE : blocked ? report.approachDistance() : report.exitDistance();
+            }).thenComparingDouble(slot -> {
+                AccessReport report = req.access.get(slot);
+                return report == null ? Double.MAX_VALUE : blocked ? report.exitDistance() : report.approachDistance();
+            }));
+            res.addAll(slots);
+        });
+        return res;
     }
 
     // Check if the externally is occupied
@@ -568,8 +698,8 @@ public final class ShipDockScheduler {
                     && hasAvailableAlternative(earlier, req.assignedDock)) {
                 continue;
             }
-            if (earlier.candidates.stream().anyMatch(candidate ->
-                    conflicts(candidate, req.assignedDock))) {
+            if (earlier.candidates.stream().anyMatch(candidate -> reachable(earlier, candidate)
+                    && conflicts(candidate, req.assignedDock))) {
                 return true;
             }
         }
@@ -579,6 +709,7 @@ public final class ShipDockScheduler {
     // Check if this has available alternative
     private boolean hasAvailableAlternative(DockRequest req, DockSlot blockedSlot) {
         return req.candidates.stream()
+                .filter(candidate -> reachable(req, candidate))
                 .filter(candidate -> !conflicts(candidate, blockedSlot))
                 .anyMatch(candidate -> !assignmentHeldByOther(candidate, req.requester)
                         && (!isExternallyOccupied(candidate)
@@ -676,6 +807,13 @@ public final class ShipDockScheduler {
             height = finitePositive(height, 1.0D);
             bottomOffset = Double.isFinite(bottomOffset)
                     ? Math.max(0.0D, bottomOffset) : height * 0.5D;
+        }
+
+        // Forecast an upright vessel extending outward from its docking connector
+        public AABB dockingBounds(Vec3 connectorTip, Vec3 outward){
+            Vec3 centre = connectorTip.add(outward.normalize().scale(horizontalRadius));
+            return new AABB(-horizontalRadius, -bottomOffset, -horizontalRadius,
+                    horizontalRadius, height - bottomOffset, horizontalRadius).move(centre);
         }
 
         // Check if this vessel fits inside an axis-aligned zone
@@ -795,6 +933,8 @@ public final class ShipDockScheduler {
         private final long sequence;
         // Tracked candidates
         private List<DockSlot> candidates;
+        private Map<DockSlot, AccessReport> access = Map.of();
+        private boolean reassignForAccess;
         // Tracked occupied docks
         private Set<DockSlot> occupiedDocks;
         // Current owned dock

@@ -31,8 +31,6 @@ public final class GraphDynamicPortSchema {
         }
         return result;
     }
-<<<<<<< Updated upstream
-=======
 
     // Restore nested MAP fields after their parent ports, independently of saved key order
     public static Map<String, String> resolveInlinePorts(Map<String, String> base, Map<String, InlinePort> fields){
@@ -56,5 +54,4 @@ public final class GraphDynamicPortSchema {
 
     // Describe the parent MAP and retained type of one inline field
     public record InlinePort(String source, String type){}
->>>>>>> Stashed changes
 }

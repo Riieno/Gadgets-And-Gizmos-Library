@@ -9,8 +9,6 @@ public interface TabletAppClientUi{
     TabletAppClientUi NONE = new TabletAppClientUi(){};
 
     default boolean projected(){ return false; }
-<<<<<<< Updated upstream
-=======
     // Full-screen menus and projected screens can both belong to a placed tablet
     default boolean placed(){ return projected(); }
     // Read and change the host's interaction mode without depending on its screen state
@@ -21,7 +19,6 @@ public interface TabletAppClientUi{
     default void openApp(ResourceLocation appId, String tabId){}
     // Native slots, cursor synchronization and item transfers remain owned by the host menu
     default TabletMenuInventory inventory(){ return null; }
->>>>>>> Stashed changes
     default void editText(String prompt, String initial, int maximumLength, Consumer<String> accept){}
     default void pickItem(ResourceLocation selected, Consumer<ResourceLocation> accept){}
     default void pickFluidContainer(ResourceLocation selected, ResourceLocation fluid,

@@ -53,4 +53,21 @@ public record GraphViewport(double originX, double originY, double panX, double 
     public double graphDistance(double screenPixels) {
         return screenPixels / zoom;
     }
+
+    // Keep the point beneath the pointer stationary while changing zoom
+    public GraphViewport zoomAt(double screenX, double screenY, double nextZoom){
+        double scale = Math.max(0.0001D, nextZoom);
+        return new GraphViewport(originX, originY, screenX - originX - graphX(screenX) * scale,
+                screenY - originY - graphY(screenY) * scale, scale);
+    }
+
+    public GraphViewport panBy(double screenX, double screenY){
+        return new GraphViewport(originX, originY, panX + screenX, panY + screenY, zoom);
+    }
+
+    // Use the same authored grid regardless of viewport pan and zoom
+    public static double snapCoordinate(double coordinate, double step){
+        if(!Double.isFinite(step) || step <= 0) throw new IllegalArgumentException("Grid step must be positive");
+        return Math.round(coordinate / step) * step;
+    }
 }

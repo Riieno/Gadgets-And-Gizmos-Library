@@ -70,5 +70,9 @@ public final class DisplayWidgetProjection {
             return Math.max(0.0D, Math.min(1.0D,
                     x / Math.max(1.0D, bounds.width())));
         }
+
+        public double verticalFraction(Bounds bounds){
+            return Math.max(0, Math.min(1, y / Math.max(1D, bounds.height())));
+        }
     }
 }

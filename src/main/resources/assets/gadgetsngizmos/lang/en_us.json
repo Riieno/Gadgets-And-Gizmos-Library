@@ -18,5 +18,15 @@
   "gadgetsngizmos.camera.ray.miss": "No hit within %s m",
   "gadgetsngizmos.camera.take_control": "Take control of camera",
   "key.gadgetsngizmos.camera.interact": "Interact with hit",
-  "gadgetsngizmos.camera.hint.interact": "%s: Interact with hit"
+  "gadgetsngizmos.camera.hint.interact": "%s: Interact with hit",
+  "gadgetsngizmos.tooltip.color_effect.mode": "Mode: %s",
+  "gadgetsngizmos.tooltip.color_effect.mode.default": "Default",
+  "gadgetsngizmos.tooltip.color_effect.mode.solid": "Solid",
+  "gadgetsngizmos.tooltip.color_effect.mode.gradient": "Gradient",
+  "gadgetsngizmos.tooltip.color_effect.mode.cycle": "Cycle",
+  "gadgetsngizmos.tooltip.color_effect.default_colors": "Default colors",
+  "gadgetsngizmos.tooltip.color_effect.animated": "Animated: %s",
+  "gadgetsngizmos.tooltip.color_effect.additive": "Additive Blending: %s",
+  "gadgetsngizmos.tooltip.color_effect.hold_shift": "Hold [Shift] for stored ingredients",
+  "gadgetsngizmos.tooltip.color_effect.ingredients": "Stored ingredients"
 }

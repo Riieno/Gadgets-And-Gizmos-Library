@@ -86,6 +86,24 @@ public final class SablePhysicalConnectionApi{
         return Set.copyOf(ids);
     }
 
+    // Docking attaches separate vehicles without making the station part of either vehicle's hull
+    public static synchronized void markExternalAttachment(PhysicsConstraintHandle handle){
+        if(handle == null) return;
+        for(State state : STATES.values()){
+            if(state.links.containsKey(handle) && state.externalAttachments.add(handle)) state.revision++;
+        }
+    }
+
+    // Preserve structural attachments while stopping navigation ownership at external docking joints
+    public static synchronized Set<UUID> assemblyBodyIds(ServerLevel level, Collection<UUID> roots){
+        Set<UUID> ids = new LinkedHashSet<>(roots);
+        State state = state(level);
+        if(state == null) return Set.copyOf(ids);
+        state.updateComponents();
+        for(UUID root : roots) ids.addAll(state.assemblyComponents.getOrDefault(root, Set.of()));
+        return Set.copyOf(ids);
+    }
+
     // Release native handles when their dimension unloads
     @SubscribeEvent public static synchronized void onLevelUnload(LevelEvent.Unload evt){
         if(evt.getLevel() instanceof ServerLevel level) STATES.remove(level);
@@ -106,24 +124,34 @@ public final class SablePhysicalConnectionApi{
 
     private static final class State{
         private final Map<PhysicsConstraintHandle, Link> links = new IdentityHashMap<>();
+        private final Set<PhysicsConstraintHandle> externalAttachments = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         private long revision;
         private long validatedTick = Long.MIN_VALUE;
         private long componentsRevision = Long.MIN_VALUE;
         private final Map<UUID, Set<UUID>> components = new HashMap<>();
+        private final Map<UUID, Set<UUID>> assemblyComponents = new HashMap<>();
 
         // Build each attachment component once per membership revision
         private void updateComponents(){
             if(componentsRevision == revision) return;
             componentsRevision = revision;
             components.clear();
+            assemblyComponents.clear();
+            externalAttachments.retainAll(links.keySet());
+            buildComponents(components, false);
+            buildComponents(assemblyComponents, true);
+        }
+
+        private void buildComponents(Map<UUID, Set<UUID>> target, boolean assembly){
             Map<UUID, Set<UUID>> adjacent = new HashMap<>();
             for(Link link : links.values()){
+                if(assembly && externalAttachments.contains(link.handle())) continue;
                 UUID first = link.first().getUniqueId(), second = link.second().getUniqueId();
                 adjacent.computeIfAbsent(first, ignored -> new HashSet<>()).add(second);
                 adjacent.computeIfAbsent(second, ignored -> new HashSet<>()).add(first);
             }
             for(UUID root : adjacent.keySet()){
-                if(components.containsKey(root)) continue;
+                if(target.containsKey(root)) continue;
                 Set<UUID> ids = new HashSet<>();
                 ArrayDeque<UUID> pending = new ArrayDeque<>();
                 ids.add(root); pending.add(root);
@@ -131,7 +159,7 @@ public final class SablePhysicalConnectionApi{
                     for(UUID next : adjacent.get(pending.removeFirst())) if(ids.add(next)) pending.addLast(next);
                 }
                 Set<UUID> component = Set.copyOf(ids);
-                for(UUID id : component) components.put(id, component);
+                for(UUID id : component) target.put(id, component);
             }
         }
     }

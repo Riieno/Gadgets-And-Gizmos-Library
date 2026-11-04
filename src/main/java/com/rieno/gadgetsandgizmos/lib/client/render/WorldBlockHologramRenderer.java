@@ -24,6 +24,14 @@ public final class WorldBlockHologramRenderer{
     public static void render(PoseStack pose, MultiBufferSource.BufferSource buffers, Vec3 camera,
                               Vec3 target, Quaterniond rotation,
                               Collection<SubLevelPreviewRenderer.SnapshotBlock> blocks){
+        try(var scope = HologramRenderScope.enter()){
+            renderBlocks(pose, buffers, camera, target, rotation, blocks);
+        }
+    }
+
+    private static void renderBlocks(PoseStack pose, MultiBufferSource.BufferSource buffers, Vec3 camera,
+                                     Vec3 target, Quaterniond rotation,
+                                     Collection<SubLevelPreviewRenderer.SnapshotBlock> blocks){
         if(blocks == null || blocks.isEmpty()) return;
         Minecraft minecraft = Minecraft.getInstance();
         MultiBufferSource ghost = type -> new GhostVertexConsumer(buffers.getBuffer(RenderType.translucent()));

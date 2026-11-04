@@ -7,6 +7,8 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /** Resolves deterministic right-of-way between vehicles on retained routes. */
 public final class RouteTrafficPriority {
@@ -49,8 +51,6 @@ public final class RouteTrafficPriority {
                 : selectedConflict != null ? selectedConflict : Decision.clear();
     }
 
-<<<<<<< Updated upstream
-=======
     // Break circular yielding without changing ordinary pairwise right-of-way
     public static Decision resolveCoordinated(Participant subject, Collection<Participant> traffic, Settings settings){
         Decision res = resolve(subject, traffic, settings);
@@ -106,7 +106,6 @@ public final class RouteTrafficPriority {
         return Map.copyOf(decisions);
     }
 
->>>>>>> Stashed changes
     /**
      * Check whether a yielding vehicle should clear an imminent crossing or
      * head-on encounter by retreating. The host remains responsible for
@@ -126,6 +125,21 @@ public final class RouteTrafficPriority {
                 ? Math.max(0.0D, liveTravelClearance) : Double.POSITIVE_INFINITY;
         double required = nonNegative(requiredClearance);
         return available + EPSILON < required;
+    }
+
+    // Score occupied candidate geometry without granting right-of-way or changing route ownership
+    public static double routeOccupancyCost(List<Vec3> controls, Collection<Participant> traffic, double clearance){
+        if(controls == null || controls.size() < 2 || traffic == null || traffic.isEmpty()) return 0.0D;
+        WaypointSpline spline = WaypointSpline.of(controls);
+        double cost = 0.0D;
+        for(Participant other : traffic){
+            if(other == null) continue;
+            WaypointSpline.Projection projection = spline.project(other.position());
+            double radius = Math.max(1.0D, clearance) + other.clearanceRadius() + 2.0D;
+            if(!projection.found() || projection.distance() >= radius) continue;
+            cost += (radius - projection.distance()) * 8.0D + 16.0D;
+        }
+        return cost;
     }
 
     // Begin a physical bypass before right-of-way braking parks both participants
@@ -198,8 +212,6 @@ public final class RouteTrafficPriority {
         }
         if (!selected.found()) return Decision.clear();
 
-<<<<<<< Updated upstream
-=======
         // Short centreline corrections do not change the order of a following queue
         Vec3 subjectHeading = sustainedDirection(subjectPath);
         Vec3 otherHeading = sustainedDirection(otherPath);
@@ -222,20 +234,14 @@ public final class RouteTrafficPriority {
                     selected.separation(), Encounter.CROSSING, true);
         }
 
->>>>>>> Stashed changes
         double subjectSpeed = subject.travelSpeed(settings.minimumTravelSpeed());
         double otherSpeed = other.travelSpeed(settings.minimumTravelSpeed());
         double subjectDistance = selected.subjectDistance();
         double otherDistance = selected.otherDistance();
         boolean mustYield;
         if (selected.encounter() == Encounter.SAME_DIRECTION) {
-<<<<<<< Updated upstream
-            boolean subjectBehind = subjectDistance > otherDistance + settings.distanceTieTolerance();
-            boolean otherBehind = otherDistance > subjectDistance + settings.distanceTieTolerance();
-=======
             boolean subjectBehind = followingQueue ? along > 0 : subjectDistance > otherDistance + EPSILON;
             boolean otherBehind = followingQueue ? along < 0 : otherDistance > subjectDistance + EPSILON;
->>>>>>> Stashed changes
             if (subjectBehind) {
                 double closingSpeed = Math.max(
                         subject.measuredSpeed() - other.measuredSpeed(),
@@ -314,6 +320,19 @@ public final class RouteTrafficPriority {
             direction = horizontal(direction);
         }
         return normalize(direction, participant.velocity());
+    }
+
+    // Measure the retained lane heading across small transverse corrections
+    private static Vec3 sustainedDirection(Path path){
+        Vec3 travel = Vec3.ZERO;
+        double remaining = 8.0D;
+        for(PathSegment segment : path.segments()){
+            double length = Math.min(remaining, segment.length());
+            travel = travel.add(segment.direction().scale(length));
+            remaining -= length;
+            if(remaining <= EPSILON) break;
+        }
+        return normalize(travel, Vec3.ZERO);
     }
 
     // Compare stable vehicle ids without depending on registration order.

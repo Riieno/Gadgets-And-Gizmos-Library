@@ -126,6 +126,12 @@ public final class ScmBuiltinControlModes {
         // Navigate the airship mode
         @Override
         public ControlOutput navigate(ControlInput input) {
+            return navigate(input, null);
+        }
+
+        @Override
+        public ControlOutput navigate(ControlInput input, Vec3 headingDirection){
+            Vec3 heading = headingDirection == null ? input.pathDirection() : headingDirection;
             Vec3 error = input.target().subtract(input.position());
             double targetDistance = error.length();
             boolean terminalCapture = !input.transitWaypoint()
@@ -134,6 +140,9 @@ public final class ScmBuiltinControlModes {
                     ? Math.min(input.targetSpeed(), input.travelSpeedLimit())
                     : Math.min(input.travelSpeedLimit(), Math.min(input.targetSpeed(),
                     targetDistance * Math.max(0.75D, input.distanceResponse())));
+            if(headingDirection != null && input.transitWaypoint()){
+                desiredSpeed = com.rieno.gadgetsandgizmos.lib.navigation.SplineRouteTraversal.headingSpeedLimit(input.forward(), heading, desiredSpeed);
+            }
             Vec3 captureDirection = terminalCapture ? error.normalize() : input.pathDirection();
             Vec3 desiredVelocity = captureDirection.scale(desiredSpeed);
             ScmAdaptiveStateModel model = input.stateModel();
@@ -179,7 +188,7 @@ public final class ScmBuiltinControlModes {
                     || error.length() > Math.max(2, input.tolerance() * 2));
             if (faceTravel) {
                 Vec3 forward = horizontal(input.forward());
-                Vec3 path = horizontal(input.pathDirection());
+                Vec3 path = horizontal(heading);
                 double alignment = Mth.clamp(forward.dot(path), -1.0D, 1.0D);
                 double engagement = Mth.clamp((alignment + 0.15D) / 0.75D, 0.0D, 1.0D);
                 double forwardDemand = force.dot(forward);
@@ -194,9 +203,8 @@ public final class ScmBuiltinControlModes {
                                 : Mth.clamp(forwardDemand, -3.5D, 3.5D)));
             }
             Vec3 worldUp = new Vec3(0.0D, 1.0D, 0.0D);
-            Vec3 horizontalPath = new Vec3(input.pathDirection().x, 0.0D, input.pathDirection().z);
-            double yawError = horizontalPath.lengthSqr() <= 1.0E-12D ? 0.0D : signedAngle(
-                    horizontal(input.forward()), horizontalPath.normalize(), worldUp);
+            Vec3 horizontalPath = new Vec3(heading.x, 0.0D, heading.z);
+            double yawError = ScmHeadingControl.yawError(input.forward(), horizontalPath, input.angularVelocity().y);
             boolean liveYaw = liveModel && (model.authority(worldUp, true, true) > 0.0D
                     || model.authority(worldUp, true, false) > 0.0D);
             Vec3 torque = worldUp.scale(Mth.clamp(liveYaw

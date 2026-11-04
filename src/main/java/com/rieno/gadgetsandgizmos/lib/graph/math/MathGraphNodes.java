@@ -37,6 +37,8 @@ public final class MathGraphNodes{
     public static List<Node> nodes(String namespace){
         if(namespace == null || !namespace.matches("[a-z0-9_.-]+")) throw new IllegalArgumentException("A mod namespace is required");
         List<Node> res = new ArrayList<>();
+        res.add(AngleConversionNode.node(namespace));
+        res.add(UnitConversionNode.node(namespace));
         add(res, namespace, "pi", Map.of(), ports("value:number"), "Return pi (3.141592653589793), the circle constant.");
         add(res, namespace, "percentage", ports("a:number", "b:number"), ports("value:number"),
                 "Return A divided by B times 100. For example, A = 50 and B = 200 returns 25. Zero B or an unrepresentable result returns 0 with Valid = false.");

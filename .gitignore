@@ -8,12 +8,11 @@
 !/gradlew.bat
 !/LICENSE
 !/README.md
+!/wiki-changes.md
 !/library-api.md
 !/library-docs.md
 !/settings.gradle
 
-!/docs/
-!/docs/**
 !/gradle/
 !/gradle/**
 !/images/
@@ -24,6 +23,7 @@
 !/src/**
 !/website/
 !/website/**
+
 
 /jar_src/
 /reference_assets/

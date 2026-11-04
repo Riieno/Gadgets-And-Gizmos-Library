@@ -26,8 +26,11 @@ public final class WorkerContainerAccess {
 
     // Read readiness from the owning world or Sable plot without retaining an unavailable result
     public static boolean isLoaded(Level level, BlockPos pos){
-        return level != null && pos != null
-                && com.rieno.gadgetsandgizmos.lib.discovery.SubLevelBlockEntityCollector.isTargetLoaded(level,
+        if(level == null || pos == null) return false;
+        if(!com.rieno.gadgetsandgizmos.lib.discovery.SubLevelBlockEntityCollector.isSubLevelPlotPosition(level, pos)){
+            return level.isLoaded(pos);
+        }
+        return com.rieno.gadgetsandgizmos.lib.discovery.SubLevelBlockEntityCollector.isTargetLoaded(level,
                 com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi.containingId(level, pos), pos);
     }
 
@@ -36,6 +39,7 @@ public final class WorkerContainerAccess {
         if (!isLoaded(level, pos)) return List.of();
         BlockState state = level.getBlockState(pos);
         BlockEntity blockEntity = level.getBlockEntity(pos);
+        if(blockEntity instanceof com.rieno.gadgetsandgizmos.lib.inventory.LocalResourceStorage storage) return storage.localResources().items();
         IItemHandler combined = level.getCapability(Capabilities.ItemHandler.BLOCK, pos, state, blockEntity, null);
         if(combined != null) return List.of(combined);
         List<IItemHandler> handlers = new ArrayList<>();
@@ -55,6 +59,7 @@ public final class WorkerContainerAccess {
         if (!isLoaded(level, pos)) return List.of();
         BlockState state = level.getBlockState(pos);
         BlockEntity blockEntity = level.getBlockEntity(pos);
+        if(blockEntity instanceof com.rieno.gadgetsandgizmos.lib.inventory.LocalResourceStorage storage) return storage.localResources().fluids();
         List<IFluidHandler> handlers = new ArrayList<>();
         Set<IFluidHandler> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         add(handlers, seen, preferredSide == null ? null : level.getCapability(
@@ -72,6 +77,7 @@ public final class WorkerContainerAccess {
         if (!isLoaded(level, pos)) return List.of();
         BlockState state = level.getBlockState(pos);
         BlockEntity blockEntity = level.getBlockEntity(pos);
+        if(blockEntity instanceof com.rieno.gadgetsandgizmos.lib.inventory.LocalResourceStorage storage) return storage.localResources().energy();
         List<IEnergyStorage> storages = new ArrayList<>();
         Set<IEnergyStorage> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         add(storages, seen, preferredSide == null ? null : level.getCapability(

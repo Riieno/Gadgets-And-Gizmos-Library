@@ -1,7 +1,9 @@
 package com.rieno.gadgetsandgizmos.lib.graph;
 
 import com.rieno.gadgetsandgizmos.lib.discovery.ControllerDiscoveryNode;
+import com.rieno.gadgetsandgizmos.lib.discovery.ControllerTargetMap;
 import net.minecraft.core.Direction;
+import net.minecraft.nbt.CompoundTag;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Collection;
@@ -12,6 +14,33 @@ public final class GraphTargetSelection{
     public static final String ALIASES_TAG = "DataTargetAliases";
     public static final int MAX_ALIAS_LENGTH = 64;
     private GraphTargetSelection(){}
+
+    // An explicitly resolved empty target clears a saved binding; ordinary scalar defaults do not
+    public static CompoundTag resolveBinding(@Nullable CompoundTag saved, @Nullable String runtimeType,
+                                             @Nullable CompoundTag runtimePayload){
+        if("target".equals(runtimeType)) return runtimePayload == null ? new CompoundTag() : runtimePayload.copy();
+        if("map".equals(runtimeType)) return ControllerTargetMap.first(runtimePayload);
+        return saved == null ? new CompoundTag() : saved.copy();
+    }
+
+    // Let hosts resolve scalar names while retaining Target and target-map input support
+    public static CompoundTag resolveNamedBinding(@Nullable String type, @Nullable CompoundTag payload,
+            java.util.function.Function<String, CompoundTag> names){
+        if(("string".equals(type) || "any".equals(type)) && payload != null
+                && payload.contains("Value", net.minecraft.nbt.Tag.TAG_STRING)){
+            CompoundTag target = names.apply(payload.getString("Value"));
+            return target == null ? new CompoundTag() : target.copy();
+        }
+        return resolveBinding(null, type, payload);
+    }
+
+    // Unwired picker defaults may contain only an id; retain their complete saved selection
+    public static CompoundTag resolveDefaultBinding(@Nullable CompoundTag saved, @Nullable String type,
+                                                    @Nullable CompoundTag payload){
+        if("target".equals(type) && (payload == null || !payload.contains("BlockPos"))
+                && saved != null && !saved.isEmpty()) return saved.copy();
+        return resolveBinding(saved, type, payload);
+    }
 
     public static ControllerDiscoveryNode withFace(ControllerDiscoveryNode target, @Nullable Direction face){
         if(face == null) return target;

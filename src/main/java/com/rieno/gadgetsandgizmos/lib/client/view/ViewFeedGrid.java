@@ -41,8 +41,8 @@ public final class ViewFeedGrid{
                 var source = entry.source().resolve(net.minecraft.client.Minecraft.getInstance().level);
                 var pose = source == null ? null : source.viewPose(0);
                 ViewfinderOverlay.render(RemoteViewHud.canvas(graphics), font, vx, vy, vw, vh,
-                        com.rieno.gadgetsandgizmos.lib.config.ViewfinderConfig.FRAME.get(),
-                        com.rieno.gadgetsandgizmos.lib.config.ViewfinderConfig.GRID.get(),
+                        com.rieno.gadgetsandgizmos.lib.config.ViewfinderConfig.frame(entry.source()),
+                        com.rieno.gadgetsandgizmos.lib.config.ViewfinderConfig.grid(entry.source()),
                         pose == null ? 70 : pose.fov(), net.minecraft.Util.getMillis() - started);
                 graphics.disableScissor();
             }

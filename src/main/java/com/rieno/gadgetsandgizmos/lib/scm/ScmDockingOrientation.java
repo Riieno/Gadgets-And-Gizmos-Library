@@ -6,6 +6,19 @@ import net.minecraft.world.phys.Vec3;
 public final class ScmDockingOrientation{
     private ScmDockingOrientation(){}
 
+    // Resolve facing and connector roll as one shortest rotation instead of competing cross products
+    public static Vec3 alignmentError(Vec3 facing, Vec3 up, Vec3 targetFacing, Vec3 targetUp){
+        if(unit(facing).lengthSqr() == 0 || unit(targetFacing).lengthSqr() == 0) return Vec3.ZERO;
+        var current = com.rieno.gadgetsandgizmos.lib.navigation.SplineConstraintFrame.orientation(facing, up);
+        var target = com.rieno.gadgetsandgizmos.lib.navigation.SplineConstraintFrame.orientation(targetFacing, targetUp);
+        var error = target.mul(current.conjugate()).normalize();
+        if(error.w < 0) error.mul(-1.0D);
+        double sin = Math.sqrt(error.x * error.x + error.y * error.y + error.z * error.z);
+        if(sin < 1.0E-9D) return Vec3.ZERO;
+        double angle = 2.0D * Math.atan2(sin, Math.max(0, error.w));
+        return new Vec3(error.x, error.y, error.z).scale(angle / sin);
+    }
+
     // Prefer a matching ship-relative inclination before choosing the nearest yaw
     public static double score(Vec3 connectorFacing, Vec3 connectorUp,
                                Vec3 shipUp, Vec3 targetFacing, Vec3 targetUp){

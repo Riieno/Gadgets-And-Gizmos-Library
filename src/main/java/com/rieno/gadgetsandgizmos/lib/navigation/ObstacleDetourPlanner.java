@@ -67,6 +67,12 @@ public final class ObstacleDetourPlanner{
         boolean clear(Vec3 start, Vec3 end);
     }
 
+    // A retained collision query can defer a leg until its work budget is available
+    @FunctionalInterface
+    public interface PendingProbe{
+        SablePathfinder.TraversalResult validate(Vec3 start, Vec3 end);
+    }
+
     public static final class QueuedPlan{
         private final Request request;
         private final List<Candidate> candidates;
@@ -84,6 +90,14 @@ public final class ObstacleDetourPlanner{
         // Bound both the number of world sweeps and the caller's measured tick allowance
         public void advance(Probe probe, int maximumProbes, BooleanSupplier workAvailable){
             Objects.requireNonNull(probe, "probe");
+            advancePending((start, end) -> probe.clear(start, end)
+                    ? SablePathfinder.TraversalResult.CLEAR : SablePathfinder.TraversalResult.BLOCKED,
+                    maximumProbes, workAvailable);
+        }
+
+        // Preserve the candidate and leg while an exact collision scan is pending
+        public void advancePending(PendingProbe probe, int maximumProbes, BooleanSupplier workAvailable){
+            Objects.requireNonNull(probe, "probe");
             Objects.requireNonNull(workAvailable, "workAvailable");
             for(int work = 0; !finished && work < maximumProbes && workAvailable.getAsBoolean(); work++){
                 if(candidateIdx >= candidates.size()){
@@ -93,7 +107,9 @@ public final class ObstacleDetourPlanner{
                 Candidate candidate = candidates.get(candidateIdx);
                 Vec3 start = legIdx == 0 ? request.start() : candidate.waypoints().get(legIdx - 1);
                 Vec3 end = candidate.waypoints().get(legIdx);
-                if(!probe.clear(start, end)){
+                SablePathfinder.TraversalResult res = probe.validate(start, end);
+                if(res == SablePathfinder.TraversalResult.PENDING) break;
+                if(res != SablePathfinder.TraversalResult.CLEAR){
                     candidateIdx++;
                     legIdx = 0;
                     continue;

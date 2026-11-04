@@ -1,12 +1,26 @@
 package com.rieno.gadgetsandgizmos.lib.view;
 
+/*--------------------------------------------------------##---------------------------------------------------------
+
+=======================================================================================================================
+                                                        IMPORTS
+=======================================================================================================================
+
+------------------------------------------------------------##-----------------------------------------------------*/
+
+import com.rieno.gadgetsandgizmos.lib.GadgetsNGizmosLibrary;
 import com.rieno.gadgetsandgizmos.lib.physics.SableAssemblyHullApi;
 import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
 import com.rieno.gadgetsandgizmos.lib.physics.SableTransformApi;
 import com.rieno.gadgetsandgizmos.lib.probe.LoadedTerrainAccess;
+import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.tags.TagKey;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
@@ -18,10 +32,48 @@ import java.util.Comparator;
 
 // Resolve entity and SubLevel ray hits into live world bounds without loading missing targets
 public final class ViewTrackingTargets{
+    /*--------------------------------------------------------##---------------------------------------------------------
+
+    =======================================================================================================================
+                                                            CONSTANTS
+    =======================================================================================================================
+
+    ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Exclude bodies made entirely from blocks supplied by the owning mods
+    public static final TagKey<Block> IGNORED_BLOCKS = TagKey.create(Registries.BLOCK,
+            ResourceLocation.fromNamespaceAndPath(GadgetsNGizmosLibrary.MOD_ID, "view_tracking_ignored"));
     public static final double ACQUISITION_RADIUS = 1.5;
     public static final double ACQUISITION_HALF_ANGLE = 15;
     private static final int MAX_CONE_CANDIDATES = 32;
+
+    /*--------------------------------------------------------##---------------------------------------------------------
+
+    =======================================================================================================================
+                                                            FUNCTIONS
+    =======================================================================================================================
+
+    ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Prevent construction of the tracking facade
     private ViewTrackingTargets(){}
+
+    // Keep populated bodies eligible while ignoring empty plots and tagged support blocks
+    public static boolean isTrackable(@Nullable SubLevel body){
+        if(body == null || body.isRemoved() || body.getLevel().isClientSide || body.getPlot() == null) return false;
+        for(var holder : body.getPlot().getLoadedChunks()){
+            var chunk = holder.getChunk();
+            if(chunk == null) return false;
+            for(var section : chunk.getSections()){
+                if(section.hasOnlyAir() || !section.maybeHas(state -> !state.isAir() && !state.is(IGNORED_BLOCKS))) continue;
+                for(int y = 0; y < 16; y++) for(int z = 0; z < 16; z++) for(int x = 0; x < 16; x++){
+                    var state = section.getBlockState(x, y, z);
+                    if(!state.isAir() && !state.is(IGNORED_BLOCKS)) return true;
+                }
+            }
+        }
+        return false;
+    }
 
     // Supplement precise ray hits with nearby visible targets in a widening acquisition volume
     public static List<ViewTargetLock.Target<Reference>> acquire(Level level, ViewPose pose, double length,
@@ -53,7 +105,7 @@ public final class ViewTrackingTargets{
             if(target != null) addCandidate(candidates, cone, target);
         }
         for(var body : SableTransformApi.intersecting(root, cone.bounds())){
-            if(body.getUniqueId().equals(excludedBody)) continue;
+            if(body.getUniqueId().equals(excludedBody) || !isTrackable(body)) continue;
             var bounds = SableAssemblyHullApi.sample(body, List.of(body)).worldBounds();
             if(!bounds.isEmpty()) addCandidate(candidates, cone,
                     new ViewTargetLock.Target<>(new Reference(null, body.getUniqueId(), null), bounds.getFirst()));
@@ -149,7 +201,7 @@ public final class ViewTrackingTargets{
         }
         if(ref.bodyId() == null || ref.bodyId().equals(excludedBody) || ref.blockPos() == null) return null;
         var body = SableLevelApi.subLevel(root, ref.bodyId());
-        if(body == null || body.isRemoved()) return null;
+        if(!isTrackable(body)) return null;
         LoadedTerrainAccess terrain = new LoadedTerrainAccess();
         terrain.beginTick(body.getLevel());
         var state = terrain.blockState(ref.blockPos());

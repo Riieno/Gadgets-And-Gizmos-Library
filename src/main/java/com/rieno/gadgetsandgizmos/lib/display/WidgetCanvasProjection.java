@@ -7,6 +7,15 @@ import org.jetbrains.annotations.Nullable;
 public final class WidgetCanvasProjection{
     private WidgetCanvasProjection(){}
 
+    // Use the same legacy canvas defaults for painting, editing, resizing and picking
+    public static int canvasWidth(net.minecraft.nbt.CompoundTag data){
+        return data.getInt("WidgetWidth") > 1 ? data.getInt("WidgetWidth") : 320;
+    }
+
+    public static int canvasHeight(net.minecraft.nbt.CompoundTag data){
+        return data.getInt("WidgetHeight") > 1 ? data.getInt("WidgetHeight") : 180;
+    }
+
     public static Layout layout(boolean hologram, int canvasWidth, int canvasHeight,
                                 int surfaceWidth, int surfaceHeight, double sizeX, double sizeY,
                                 double offsetX, double offsetY, double offsetZ, double rotation,
@@ -38,8 +47,8 @@ public final class WidgetCanvasProjection{
 
     // Resize authored element bounds while retaining their proportions
     public static void resizeCanvas(net.minecraft.nbt.CompoundTag data, int width, int height){
-        int oldWidth = Math.max(1, data.getInt("WidgetWidth"));
-        int oldHeight = Math.max(1, data.getInt("WidgetHeight"));
+        int oldWidth = canvasWidth(data);
+        int oldHeight = canvasHeight(data);
         width = Math.max(1, width); height = Math.max(1, height);
         if(width == oldWidth && height == oldHeight) return;
         net.minecraft.nbt.ListTag elements = data.getList("WidgetElements", net.minecraft.nbt.Tag.TAG_COMPOUND);
@@ -61,6 +70,14 @@ public final class WidgetCanvasProjection{
                          int canvasWidth, int canvasHeight, double rotation){
         public double scaleX(){ return width / canvasWidth; }
         public double scaleY(){ return height / canvasHeight; }
+        // Project authored corners through the same canvas transform used for rendering
+        public DisplayWidgetProjection.Point project(double x, double y){
+            double dx = (x - canvasWidth / 2.0) * scaleX();
+            double dy = (y - canvasHeight / 2.0) * scaleY();
+            double radians = Math.toRadians(rotation);
+            return new DisplayWidgetProjection.Point(x() + width / 2 + dx * Math.cos(radians) - dy * Math.sin(radians),
+                    y() + height / 2 + dx * Math.sin(radians) + dy * Math.cos(radians));
+        }
         public DisplayWidgetProjection.Point unproject(double pointerX, double pointerY){
             double dx = pointerX - x - width / 2;
             double dy = pointerY - y - height / 2;

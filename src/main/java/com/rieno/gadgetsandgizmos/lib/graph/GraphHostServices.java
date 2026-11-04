@@ -35,6 +35,16 @@ public final class GraphHostServices {
             ResourceLocation.fromNamespaceAndPath(GadgetsNGizmosLibrary.MOD_ID, "node_outputs"),
             GraphNodeOutputs.class);
 
+    // Read current assignable targets without exposing host implementation classes
+    public static final GraphServiceKey<GraphTargetSource> TARGETS = new GraphServiceKey<>(
+            ResourceLocation.fromNamespaceAndPath(GadgetsNGizmosLibrary.MOD_ID, "targets"),
+            GraphTargetSource.class);
+
+    // Supply the owning world's solar time and authoritative wall clock to reusable nodes
+    public static final GraphServiceKey<com.rieno.gadgetsandgizmos.lib.time.TimeSource> TIME = new GraphServiceKey<>(
+            ResourceLocation.fromNamespaceAndPath(GadgetsNGizmosLibrary.MOD_ID, "time"),
+            com.rieno.gadgetsandgizmos.lib.time.TimeSource.class);
+
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================

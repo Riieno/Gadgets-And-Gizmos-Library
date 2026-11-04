@@ -31,6 +31,9 @@ public interface ScmControlMode {
     // Navigate the SCM control mode
     ControlOutput navigate(ControlInput input);
 
+    // Keep route heading independent from lateral corrections made by the flight controls
+    default ControlOutput navigate(ControlInput input, Vec3 headingDirection){ return navigate(input); }
+
     // Store the control input
     record ControlInput(
             Vec3 position,

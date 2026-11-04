@@ -32,6 +32,9 @@ public interface GraphExecutionContext {
     // Identify the executing node within this host's graph
     default String nodeId(){ return ""; }
 
+    // Read a saved node setting independently of wired runtime inputs
+    default GraphValue configuration(String key){ return new GraphValue("any", null); }
+
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================

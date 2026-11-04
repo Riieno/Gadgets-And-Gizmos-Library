@@ -55,6 +55,16 @@ public final class HudControlRenderer{
         };
     }
 
+    // Share box fills, rounded corners and bounded borders across render targets
+    public static void panel(Canvas canvas, Rect bounds, int background, int border, double borderWidth, double radius){
+        if(!valid(bounds)) return;
+        double limit = Math.min(bounds.width(), bounds.height()) / 2;
+        double width = Math.clamp(borderWidth, 0, limit);
+        double round = Math.clamp(radius, 0, limit);
+        rounded(canvas, bounds, round, width > 0 ? border : background, 0);
+        if(width > 0) rounded(canvas, bounds.inset(width), Math.max(0, round - width), background, 1);
+    }
+
     // Return the available label rectangle; the host owns font styling and graph data.
     public static Rect button(Canvas canvas, Rect bounds, Palette palette, ControlStyle style,
                               boolean pressed, boolean hovered){

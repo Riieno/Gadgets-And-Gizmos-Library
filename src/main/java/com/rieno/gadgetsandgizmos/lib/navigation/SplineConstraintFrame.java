@@ -363,6 +363,16 @@ public final class SplineConstraintFrame{
         return new Quaterniond().setFromNormalized(basis).normalize();
     }
 
+    // Keep the ship upright while the translation frame follows a climbing or descending rail
+    public static Quaterniond levelLocalFrame(Quaterniond localFrame, Vec3 travel, Vec3 fallbackForward){
+        Vec3 heading = new Vec3(travel.x, 0, travel.z);
+        if(heading.lengthSqr() < 1.0E-12D) heading = new Vec3(fallbackForward.x, 0, fallbackForward.z);
+        if(heading.lengthSqr() < 1.0E-12D) heading = new Vec3(0, 0, 1);
+        Quaterniond level = orientation(heading, new Vec3(0, 1, 0));
+        return new Quaterniond(localFrame).mul(level.conjugate())
+                .mul(orientation(travel, new Vec3(0, 1, 0))).normalize();
+    }
+
     // Carry longitudinal momentum into a new tangent without adding speed
     public static Vec3 transportVelocity(Vec3 velocity, Vec3 prevDirection,
                                          Vec3 nextDirection, AxisPolicy axes){

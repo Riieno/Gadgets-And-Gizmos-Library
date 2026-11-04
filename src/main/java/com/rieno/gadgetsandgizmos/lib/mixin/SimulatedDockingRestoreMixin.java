@@ -1,6 +1,7 @@
 package com.rieno.gadgetsandgizmos.lib.mixin;
 
 import com.rieno.gadgetsandgizmos.lib.compat.simulated.SimulatedDockingApi;
+import com.rieno.gadgetsandgizmos.lib.physics.SablePhysicalConnectionApi;
 import dev.ryanhcode.sable.api.physics.constraint.FixedConstraintHandle;
 import dev.simulated_team.simulated.content.blocks.docking_connector.DockingConnectorBlockEntity;
 import org.spongepowered.asm.mixin.Mixin;
@@ -21,10 +22,12 @@ public abstract class SimulatedDockingRestoreMixin implements SimulatedDockingAp
     @Unique private boolean gadgetsngizmos$restoreSavedConnection;
 
     @Override public boolean hasDockingConstraint(){
+        SablePhysicalConnectionApi.markExternalAttachment(constraintHandle);
         return constraintHandle != null && constraintHandle.isValid();
     }
 
     @Override public boolean isDockingConstraintPending(){
+        SablePhysicalConnectionApi.markExternalAttachment(constraintHandle);
         DockingConnectorBlockEntity connector = (DockingConnectorBlockEntity)(Object)this;
         if(connector.getLevel() == null) return false;
         if(constraintHandle != gadgetsngizmos$observedConstraint){
@@ -42,12 +45,17 @@ public abstract class SimulatedDockingRestoreMixin implements SimulatedDockingAp
                 ((DockingConnectorBlockEntity)(Object)this).otherConnectorPosition != null;
     }
 
+    @Inject(method = {"tick", "initialize"}, at = @At("RETURN"))
+    private void gadgetsngizmos$separateDockedHull(CallbackInfo ci){
+        SablePhysicalConnectionApi.markExternalAttachment(constraintHandle);
+    }
+
     // Native initialization also resolves the peer through this accessor.
     @Inject(method = "getOtherConnector", at = @At("HEAD"), cancellable = true)
     private void gadgetsngizmos$unloadedPeer(CallbackInfoReturnable<DockingConnectorBlockEntity> cir){
         DockingConnectorBlockEntity connector = (DockingConnectorBlockEntity)(Object)this;
-        if(connector.getLevel() != null && !connector.getLevel().isClientSide
-                && SimulatedDockingApi.isAwaitingPeer(connector)) cir.setReturnValue(null);
+        if(connector.getLevel() != null && !connector.getLevel().isClientSide)
+            cir.setReturnValue(SimulatedDockingApi.loadedPeer(connector));
     }
 
     // Missing chunks must not be interpreted as a broken reciprocal connection.

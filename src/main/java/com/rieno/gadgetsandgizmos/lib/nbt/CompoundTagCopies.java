@@ -4,6 +4,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.Tag;
 
 import java.util.Set;
+import java.util.Objects;
 
 // Copy selected compound fields without visiting omitted payloads
 public final class CompoundTagCopies{
@@ -30,5 +31,17 @@ public final class CompoundTagCopies{
             if(val != null) res.put(key, val.copy());
         }
         return res;
+    }
+
+    // Compare frame metadata without walking separately versioned payloads
+    public static boolean equalsExcept(CompoundTag first, CompoundTag second, Set<String> omitted){
+        for(String key : first.getAllKeys()){
+            if(omitted.contains(key)) continue;
+            if(!Objects.equals(first.get(key), second.get(key))) return false;
+        }
+        for(String key : second.getAllKeys()){
+            if(!omitted.contains(key) && !first.contains(key)) return false;
+        }
+        return true;
     }
 }

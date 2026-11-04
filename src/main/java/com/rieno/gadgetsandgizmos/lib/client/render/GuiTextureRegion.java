@@ -27,8 +27,6 @@ public record GuiTextureRegion(ResourceLocation texture, int textureWidth, int t
         graphics.blit(texture, x, y, drawWidth, drawHeight,
                 (float)u, (float)v, width, height, textureWidth, textureHeight);
     }
-<<<<<<< Updated upstream
-=======
 
     // Recolor painted pixels relative to their source RGB while preserving the sprite's exact alpha outline
     public void drawRecolored(GuiGraphics graphics, int x, int y, int drawWidth, int drawHeight, int rgb, int sourceRgb){
@@ -95,5 +93,4 @@ public record GuiTextureRegion(ResourceLocation texture, int textureWidth, int t
         graphics.blit(texture, x, 0, stripWidth, height, (float)(u + sourceX), (float)v,
                 stripWidth, height, textureWidth, textureHeight);
     }
->>>>>>> Stashed changes
 }

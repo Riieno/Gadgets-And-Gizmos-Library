@@ -1,6 +1,8 @@
 package com.rieno.gadgetsandgizmos.lib.client.ui;
 
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.Font;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.util.FormattedCharSequence;
 
@@ -10,8 +12,6 @@ import java.util.List;
 public final class GuiControlPreviews{
     private GuiControlPreviews(){}
 
-<<<<<<< Updated upstream
-=======
     // Fit a label over a painted control without drawing another background
     public static void drawFittedText(GuiGraphics graphics, Font font, Component text, int x, int y,
                                       int width, int height, float maximumScale, int color, boolean centered){
@@ -84,7 +84,6 @@ public final class GuiControlPreviews{
                 enabled ? 0xFFCAF4D8 : 0xFFB7C3C7);
     }
 
->>>>>>> Stashed changes
     // Draw an 18-unit slot with a 16-unit item, at the host canvas's scale.
     public static void drawItemSlot(GuiGraphics graphics, ItemStack stack, double x, double y,
                                     int color, boolean renderStack, double scale){

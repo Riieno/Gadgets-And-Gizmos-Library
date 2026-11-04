@@ -61,7 +61,7 @@ public final class RemoteViewHud{
                 (width - mc.font.width(lines.get(idx))) / 2, top + idx * (mc.font.lineHeight + 2), 0xFFE9F2EB, true);
         var pose = RemoteViewClient.pose(partialTick);
         ViewfinderOverlay.render(canvas(graphics), mc.font, 0, 0, width, height,
-                ViewfinderConfig.FRAME.get(), ViewfinderConfig.GRID.get(), pose == null ? 70 : pose.fov(),
+                ViewfinderConfig.frame(RemoteViewClient.reference()), ViewfinderConfig.grid(RemoteViewClient.reference()), pose == null ? 70 : pose.fov(),
                 Util.getMillis() - RemoteViewClient.startedAt(), height - top + 3);
         var result = RemoteViewClient.rayResult();
         if(result != null && Util.getMillis() - RemoteViewClient.rayResultTime() < 4000){
