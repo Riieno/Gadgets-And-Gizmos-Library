@@ -31,6 +31,8 @@ public final class KineticGraphHelper {
             getRotationPropagatorMethod("getConnectedNeighbours", KineticBlockEntity.class);
     private static final @Nullable Method ROTATION_PROPAGATOR_SPEED_MODIFIER =
             getRotationPropagatorMethod("getRotationSpeedModifier", KineticBlockEntity.class, KineticBlockEntity.class);
+    private static final @Nullable Method ROTATION_PROPAGATOR_CONVEYED_SPEED =
+            getRotationPropagatorMethod("getConveyedSpeed", KineticBlockEntity.class, KineticBlockEntity.class);
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -95,6 +97,17 @@ public final class KineticGraphHelper {
         try {
             return (Float) ROTATION_PROPAGATOR_SPEED_MODIFIER.invoke(null, from, to);
         } catch (ReflectiveOperationException ignored) {
+            return null;
+        }
+    }
+
+    // Include speed controller ratios when reading the speed conveyed through a connection
+    @Nullable
+    public static Float getConveyedSpeed(KineticBlockEntity from, KineticBlockEntity to){
+        if(ROTATION_PROPAGATOR_CONVEYED_SPEED == null) return null;
+        try{
+            return (Float) ROTATION_PROPAGATOR_CONVEYED_SPEED.invoke(null, from, to);
+        }catch(ReflectiveOperationException ignored){
             return null;
         }
     }

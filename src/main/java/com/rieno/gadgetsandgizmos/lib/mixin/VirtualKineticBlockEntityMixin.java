@@ -12,6 +12,7 @@ import com.rieno.gadgetsandgizmos.lib.kinetics.GadgetsNGizmosKineticGuard;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticHostBlock;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticPos;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticProvider;
+import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticReload;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticSourceLink;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
@@ -48,6 +49,14 @@ public abstract class VirtualKineticBlockEntityMixin extends SmartBlockEntity im
     @Unique
     private int ct$connectedVirtualKineticSlot = -1;
 
+    // Reconcile restored rotation before the first server propagation
+    @Unique
+    private boolean ct$restoreVirtualSource;
+
+    // Avoid entering the same restoration while Create reconnects its consumers
+    @Unique
+    private boolean ct$restoringVirtualSource;
+
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================
@@ -73,6 +82,28 @@ public abstract class VirtualKineticBlockEntityMixin extends SmartBlockEntity im
     @Override
     public int ct$getConnectedVirtualKineticSlot(){
         return ct$connectedVirtualKineticSlot;
+    }
+
+    // Restore saved consumers before Create attaches their cached rotation
+    @Inject(method = "tick", at = @At("HEAD"), remap = false)
+    private void ct$restoreVirtualSourceBeforeTick(CallbackInfo ci){
+        ct$restoreVirtualSource();
+    }
+
+    // Retry unavailable source chains when their chunk or virtual host becomes available
+    @Override
+    public boolean ct$restoreVirtualSource(){
+        if(!ct$restoreVirtualSource) return true;
+        if(ct$restoringVirtualSource || level == null || level.isClientSide) return false;
+        ct$restoringVirtualSource = true;
+        try{
+            KineticBlockEntity target = (KineticBlockEntity) (Object) this;
+            ct$restoreVirtualSource = GadgetsNGizmosKineticGuard.shouldUseVirtualKineticFor(target, target.getBlockPos())
+                    && !VirtualKineticReload.restore(target);
+            return !ct$restoreVirtualSource;
+        }finally{
+            ct$restoringVirtualSource = false;
+        }
     }
 
     // Resolve the virtual validate
@@ -229,6 +260,7 @@ public abstract class VirtualKineticBlockEntityMixin extends SmartBlockEntity im
         ct$connectedVirtualKineticSlot = compound.contains("CTVirtualKineticSourceSlot")
                 ? compound.getInt("CTVirtualKineticSourceSlot")
                 : -1;
+        ct$restoreVirtualSource = !clientPacket && compound.contains("Source");
     }
 
     // Resolve the virtual block entity

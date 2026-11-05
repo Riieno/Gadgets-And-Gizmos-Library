@@ -66,11 +66,15 @@ public final class GadgetsNGizmosLibraryNeoForge {
         ProtectionBypass.clear(evt.getServer());
         com.rieno.gadgetsandgizmos.lib.inventory.ContainerStorageNetworks.clear(evt.getServer());
         com.rieno.gadgetsandgizmos.lib.network.BlockEntityDataSync.clear(evt.getServer());
+        com.rieno.gadgetsandgizmos.lib.network.PayloadTransferChannel.clear(evt.getServer());
     }
 
     // Reconnecting players must enable the bypass again
     private static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent evt){
-        if(evt.getEntity() instanceof ServerPlayer player) ProtectionBypass.clear(player);
+        if(evt.getEntity() instanceof ServerPlayer player){
+            ProtectionBypass.clear(player);
+            com.rieno.gadgetsandgizmos.lib.network.PayloadTransferChannel.clear(player.connection.getConnection());
+        }
     }
 
     // Reject cached storage access before a world or Sable plot chunk unloads
@@ -81,5 +85,6 @@ public final class GadgetsNGizmosLibraryNeoForge {
     // Coalesce state changes without delaying them beyond the issuing server tick
     private static void onServerTick(ServerTickEvent.Post evt){
         com.rieno.gadgetsandgizmos.lib.network.BlockEntityDataSync.flush(evt.getServer());
+        com.rieno.gadgetsandgizmos.lib.network.PayloadTransferChannel.flush(evt.getServer());
     }
 }

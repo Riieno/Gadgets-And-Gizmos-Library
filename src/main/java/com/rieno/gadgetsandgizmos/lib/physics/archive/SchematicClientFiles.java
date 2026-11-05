@@ -37,6 +37,7 @@ public final class SchematicClientFiles{
 
     public static final int MAXIMUM_BYTES = 64 * 1024 * 1024;
     public static final int CHUNK_BYTES = 32 * 1024;
+    public static final int TRANSFER_CHUNK_BYTES = 24 * 1024;
     private static final long SERVER_BYTES = 128L * 1024 * 1024;
     private static final long TIMEOUT_TICKS = 20 * 60;
     // Scope private selections and incomplete uploads to one server and one player

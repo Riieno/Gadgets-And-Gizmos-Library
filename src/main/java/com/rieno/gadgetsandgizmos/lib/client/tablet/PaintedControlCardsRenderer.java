@@ -274,7 +274,8 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
         int iconX = width > 100 ? x + 12 : x + (width - iconSize) / 2;
         int iconY = y + Math.max(20, (height - iconSize) / 2 - 5);
         item(ctx, stack(style.icon()), iconX, iconY, iconSize);
-        int strength = state.dragging != null && state.dragging.id().equals(id) ? state.dragStrength : row.getInt("Strength");
+        int strength = state.dragging != null && state.dragging.id().equals(id) ? state.dragStrength
+                : row.contains("SliderValue") ? row.getInt("SliderValue") : row.getInt("Strength");
         if("slider".equals(mode)){
             text(ctx, Math.round(strength / 15D * 100) + "%", width > 100 ? x + 51 : x + 5, y + 23, width > 100 ? width - 60 : width - 10, 18, width > 100 ? 1.4F : .8F);
             int sx = x + 7, sy = y + height - 17, sw = width - 14;
@@ -398,8 +399,9 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
                 setStyle(state, new ControlCardStyle(current.size(), current.color(), ResourceLocation.parse(ids.getFirst())));
             }, () -> state.items = null);
         });
-        if(!media && !clock) text(ctx, "Output", 211, 145, 29, 10, .75F);
-        if(!media && !clock) control(ctx, state, 244, 143, 24, Integer.toString(state.draft.getInt("Strength")), () ->
+        boolean fixedOutput = "button".equals(mode) || "toggle".equals(mode);
+        if(fixedOutput) text(ctx, "Output", 211, 145, 29, 10, .75F);
+        if(fixedOutput) control(ctx, state, 244, 143, 24, Integer.toString(state.draft.getInt("Strength")), () ->
                 ctx.ui().editText("Signal strength (0-15)", Integer.toString(state.draft.getInt("Strength")), 2, val -> {
                     try{
                         int strength = Integer.parseInt(val.strip());
@@ -537,6 +539,7 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
         state.draft = row == null ? new CompoundTag() : row.copy();
         if(row == null){
             state.draft.putString("Label", "New Card"); state.draft.putString("Mode", "toggle"); state.draft.putInt("Strength", 15);
+            state.draft.putInt("SliderValue", 0);
             state.draft.putInt("FirstColor", -1); state.draft.putInt("SecondColor", -1);
             state.draft.put("Card", new ControlCardStyle(ControlCardStyle.Size.SINGLE, 0x303030, ResourceLocation.withDefaultNamespace("redstone")).toTag());
         }

@@ -9,6 +9,7 @@ package com.rieno.gadgetsandgizmos.lib.mixin;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import com.rieno.gadgetsandgizmos.lib.kinetics.GadgetsNGizmosKineticGuard;
+import com.rieno.gadgetsandgizmos.lib.kinetics.KineticGraphHelper;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticBlockEntity;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticHostBlock;
 import com.rieno.gadgetsandgizmos.lib.virtualkinetics.VirtualKineticPos;
@@ -31,6 +32,7 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,10 +43,36 @@ public abstract class VirtualKineticRotationPropagatorMixin {
     /*--------------------------------------------------------##---------------------------------------------------------
 
     =======================================================================================================================
+                                                            DEFAULTS
+    =======================================================================================================================
+
+    ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Keep restoration from entering another source propagation while reconnecting a chain
+    @Unique
+    private static boolean ct$restoringVirtualSources;
+    /*--------------------------------------------------------##---------------------------------------------------------
+
+    =======================================================================================================================
                                                            Functions
     =======================================================================================================================
 
     ------------------------------------------------------------##-----------------------------------------------------*/
+
+    // Reconcile consumers which loaded before their source chunk became available
+    @Inject(method = "propagateNewSource", at = @At("HEAD"), remap = false)
+    private static void ct$restoreLoadedConsumers(KineticBlockEntity source, CallbackInfo ci){
+        if(ct$restoringVirtualSources) return;
+        ct$restoringVirtualSources = true;
+        try{
+            if(source instanceof VirtualKineticSourceLink link) link.ct$restoreVirtualSource();
+            for(KineticBlockEntity target : KineticGraphHelper.getConnectedNeighbours(source)){
+                if(target instanceof VirtualKineticSourceLink link) link.ct$restoreVirtualSource();
+            }
+        }finally{
+            ct$restoringVirtualSources = false;
+        }
+    }
 
     // Resolve the virtual block entity
     @WrapOperation(method = {"handleRemoved", "propagateMissingSource", "findConnectedNeighbour"},

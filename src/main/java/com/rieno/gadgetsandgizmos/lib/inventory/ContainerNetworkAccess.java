@@ -1,6 +1,8 @@
 package com.rieno.gadgetsandgizmos.lib.inventory;
 
 import com.rieno.gadgetsandgizmos.lib.worker.WorkerContainerAccess;
+import com.rieno.gadgetsandgizmos.lib.power.CombinedEnergyStorage;
+import com.rieno.gadgetsandgizmos.lib.power.LongEnergyStorage;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
@@ -27,6 +29,9 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
     private List<Endpoint> endpoints = List.of();
     private List<ItemPort> items = List.of();
     private List<FluidPort> fluids = List.of();
+    private List<EnergyPort> energy = List.of();
+    private List<LongEnergyStorage> energyMembers = List.of();
+    private final LongEnergyStorage energyStorage = new CombinedEnergyStorage(this::activeEnergy);
     private ResourceRouting.Pool combined;
     private int slots;
     private int tanks;
@@ -37,6 +42,9 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
         this.entry = entry;
         entryAvailability = new Availability(entry);
     }
+
+    // Share exact pooled FE with electrical converters without re-entering automation capabilities
+    public LongEnergyStorage energyStorage(){ return energyStorage; }
 
     // Resolve physical resources for an immediate server-thread transfer, without re-entering network capabilities
     public static ResourceRouting.Pool pool(BlockEntity entry){
@@ -63,8 +71,10 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
         List<Endpoint> next = new ArrayList<>();
         List<ItemPort> nextItems = new ArrayList<>();
         List<FluidPort> nextFluids = new ArrayList<>();
+        List<EnergyPort> nextEnergy = new ArrayList<>();
         Set<Object> seenItems = Collections.newSetFromMap(new IdentityHashMap<>());
         Set<Object> seenFluids = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<Object> seenEnergy = Collections.newSetFromMap(new IdentityHashMap<>());
         int nextSlots = 0;
         int nextTanks = 0;
         for(BlockEntity target : ContainerStorageNetworks.connected(entry)){
@@ -83,10 +93,18 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
                 nextFluids.add(new FluidPort(availability, handler, nextTanks, end));
                 nextTanks = end;
             }
+            for(var handler : pool.energy()){
+                if(!seenEnergy.add(handler)) continue;
+                var storage = target instanceof LongEnergyStorage exact && pool.energy().size() == 1
+                        ? exact : CombinedEnergyStorage.adapt(handler);
+                nextEnergy.add(new EnergyPort(availability, storage));
+            }
         }
         endpoints = List.copyOf(next);
         items = List.copyOf(nextItems);
         fluids = List.copyOf(nextFluids);
+        energy = List.copyOf(nextEnergy);
+        energyMembers = energy.stream().map(EnergyPort::storage).toList();
         combined = null;
         lastItem = null;
         lastFluid = null;
@@ -97,6 +115,16 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
         routedLevel = entry.getLevel();
         routedPos = entry.getBlockPos().immutable();
         return true;
+    }
+
+    private List<LongEnergyStorage> activeEnergy(){
+        if(!refresh()) return List.of();
+        for(var port : energy){
+            if(!port.availability().available(routedLevel, tick, revision)) return energy.stream()
+                    .filter(candidate -> candidate.availability().available(routedLevel, tick, revision))
+                    .map(EnergyPort::storage).toList();
+        }
+        return energyMembers;
     }
 
     private ResourceRouting.Pool activePool(){
@@ -206,21 +234,12 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
         return ResourceRouting.extractFluid(activePool(), this::allowsExtraction, amount, action.simulate());
     }
 
-    @Override public int receiveEnergy(int amount, boolean simulate){ return ResourceRouting.insertEnergy(activePool(), amount, simulate); }
-    @Override public int extractEnergy(int amount, boolean simulate){ return ResourceRouting.extractEnergy(activePool(), amount, simulate); }
-    @Override public int getEnergyStored(){ return energy(false); }
-    @Override public int getMaxEnergyStored(){ return energy(true); }
-    @Override public boolean canExtract(){ return activePool().energy().stream().anyMatch(IEnergyStorage::canExtract); }
-    @Override public boolean canReceive(){ return activePool().energy().stream().anyMatch(IEnergyStorage::canReceive); }
-
-    private int energy(boolean capacity){
-        long total = 0L;
-        for(var handler : activePool().energy()){
-            total += Math.max(0, capacity ? handler.getMaxEnergyStored() : handler.getEnergyStored());
-            if(total >= Integer.MAX_VALUE) return Integer.MAX_VALUE;
-        }
-        return (int)total;
-    }
+    @Override public int receiveEnergy(int amount, boolean simulate){ return (int)energyStorage.receiveEnergy(amount, simulate); }
+    @Override public int extractEnergy(int amount, boolean simulate){ return (int)energyStorage.extractEnergy(amount, simulate); }
+    @Override public int getEnergyStored(){ return (int)Math.min(Integer.MAX_VALUE, energyStorage.getEnergyStored()); }
+    @Override public int getMaxEnergyStored(){ return (int)Math.min(Integer.MAX_VALUE, energyStorage.getMaxEnergyStored()); }
+    @Override public boolean canExtract(){ return energyStorage.canExtract(); }
+    @Override public boolean canReceive(){ return energyStorage.canReceive(); }
 
     // Reuse positive load checks while removal, movement and chunk unloads invalidate the snapshot
     private static final class Availability{
@@ -255,4 +274,5 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
     private record Endpoint(Availability availability, ResourceRouting.Pool pool){}
     private record ItemPort(Availability availability, IItemHandler handler, int start, int end){}
     private record FluidPort(Availability availability, IFluidHandler handler, int start, int end){}
+    private record EnergyPort(Availability availability, LongEnergyStorage storage){}
 }

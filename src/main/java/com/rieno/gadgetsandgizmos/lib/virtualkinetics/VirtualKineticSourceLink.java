@@ -7,6 +7,9 @@ public interface VirtualKineticSourceLink{
     // Get the connected virtual source slot, or -1 for an ordinary source
     int ct$getConnectedVirtualKineticSlot();
 
+    // Prepare restored consumers before propagation reaches their saved rotation
+    default boolean ct$restoreVirtualSource(){ return true; }
+
     // Match both the source position and its virtual slot
     static boolean isSourcedBy(KineticBlockEntity consumer, KineticBlockEntity source){
         if(!consumer.hasSource() || !consumer.source.equals(source.getBlockPos())) return false;

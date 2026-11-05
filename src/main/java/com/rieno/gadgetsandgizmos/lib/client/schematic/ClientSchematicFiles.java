@@ -155,8 +155,8 @@ public final class ClientSchematicFiles{
                 next.data = next.read.join();
                 if(next.data.length == 0) throw new IllegalArgumentException("Client schematic is empty");
             }
-            for(int idx = 0; idx < 4 && next.offset < next.data.length; idx++){
-                int end = Math.min(next.data.length, next.offset + SchematicClientFiles.CHUNK_BYTES);
+            for(int idx = 0; idx < 2 && next.offset < next.data.length; idx++){
+                int end = Math.min(next.data.length, next.offset + SchematicClientFiles.TRANSFER_CHUNK_BYTES);
                 next.send.accept(new Chunk(next.id, next.data.length, next.offset, Arrays.copyOfRange(next.data, next.offset, end)));
                 next.offset = end;
             }

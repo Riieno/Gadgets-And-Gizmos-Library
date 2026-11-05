@@ -87,6 +87,27 @@ public final class SablePhysicsTelemetry{
         return collected;
     }
 
+    // Share attachment forces with diagrams and telemetry without changing the physics queues
+    public static Map<ForceGroup, List<QueuedForceGroup.PointForce>> additionalForces(@Nullable ServerSubLevel subLevel){
+        if(subLevel == null || subLevel.isRemoved()) return Map.of();
+        Map<ForceGroup, List<QueuedForceGroup.PointForce>> grouped = new LinkedHashMap<>();
+        for(var blockEntity : SubLevelBlockEntityCollector.getBlockEntities(subLevel, val -> val instanceof ForceTelemetryProvider)){
+            List<ForceTelemetryProvider.Force> forces;
+            try{ forces = ((ForceTelemetryProvider)blockEntity).forceTelemetry(); }
+            catch(RuntimeException | LinkageError err){ continue; }
+            if(forces == null) continue;
+            for(var force : forces){
+                if(force == null || force.group() == null || force.point() == null || force.force() == null) continue;
+                Vector3d point = new Vector3d(force.point().x, force.point().y, force.point().z);
+                Vector3d vector = new Vector3d(force.force().x, force.force().y, force.force().z);
+                if(!point.isFinite() || !vector.isFinite() || vector.lengthSquared() <= 1.0E-12D) continue;
+                grouped.computeIfAbsent(force.group(), ignored -> new ArrayList<>()).add(new QueuedForceGroup.PointForce(point, vector));
+            }
+        }
+        grouped.replaceAll((group, forces) -> List.copyOf(forces));
+        return Map.copyOf(grouped);
+    }
+
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -174,6 +195,7 @@ public final class SablePhysicsTelemetry{
                 recorded.put(group, new ArrayList<>(forces.getRecordedPointForces()));
         });
         List<ForceSample> samples = new ArrayList<>(convertForces(recorded, pose, 1.0D / step));
+        samples.addAll(convertForces(additionalForces(subLevel), pose, 1.0D));
         var mass = subLevel.getMassTracker();
         ForceGroup gravity = ForceGroups.GRAVITY.get();
         if(mass != null && pose != null && gravity != null){

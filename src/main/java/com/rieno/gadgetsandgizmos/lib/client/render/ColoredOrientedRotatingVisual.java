@@ -17,6 +17,13 @@ public class ColoredOrientedRotatingVisual<T extends KineticBlockEntity> extends
         rotatingModel.colorRgb(this.color).setChanged();
     }
 
+    // Set the model's facing without accumulating rotations from earlier visual updates
+    public final void setModelFacing(Direction modelFacing, Direction facing){
+        rotatingModel.rotation.rotationTo(modelFacing.getStepX(), modelFacing.getStepY(), modelFacing.getStepZ(),
+                facing.getStepX(), facing.getStepY(), facing.getStepZ());
+        rotatingModel.setChanged();
+    }
+
     @Override
     public void update(float partialTick){
         super.update(partialTick);
