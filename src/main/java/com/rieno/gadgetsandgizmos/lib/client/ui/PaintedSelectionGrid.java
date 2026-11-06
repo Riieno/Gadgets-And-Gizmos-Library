@@ -65,9 +65,9 @@ public final class PaintedSelectionGrid<T>{
     // Reset search only when opening a new selection session
     public void open(Font font){
         Region field = appearance.search();
-        search = new EditBox(font, field.x() + 3, field.y() + 3, field.width() - 6, field.height() - 6, Component.literal("Search entries"));
+        search = new EditBox(font, field.x() + 3, field.y() + 3, field.width() - 6, field.height() - 6, Component.translatable("gadgetsngizmos.text.search_entries"));
         search.setBordered(false); search.setMaxLength(256); search.setTextColor(0xFFFFFFFF);
-        search.setHint(Component.literal("Search...")); search.setFocused(true);
+        search.setHint(Component.translatable("gadgetsngizmos.text.search")); search.setFocused(true);
         search.setResponder(query -> { filter = ItemSearchQuery.compile(query); row = 0; scrollbar.reset(); refresh(); });
         search.setValue("");
     }
@@ -122,7 +122,7 @@ public final class PaintedSelectionGrid<T>{
                     appearance.grid().x() + 3, appearance.grid().y() + 3, appearance.grid().width() - 6, 16, 0.8F, 0xFFAAAAAA, false);
         }finally{ graphics.pose().popPose(); }
         if(hovered != null) graphics.renderComponentTooltip(font, tooltip.apply(hovered), mouseX, mouseY);
-        else if(appearance.search().contains(x, y)) graphics.renderTooltip(font, Component.literal("Search name, ID, @mod or #tag"), mouseX, mouseY);
+        else if(appearance.search().contains(x, y)) graphics.renderTooltip(font, Component.translatable("gadgetsngizmos.text.search_name_id_mod_or_tag"), mouseX, mouseY);
     }
 
     public boolean mouseClicked(GuiCanvasTransform transform, double screenX, double screenY, int button, Consumer<T> choose){

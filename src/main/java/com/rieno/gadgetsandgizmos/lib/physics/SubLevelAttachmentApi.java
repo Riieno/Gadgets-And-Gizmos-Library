@@ -81,7 +81,10 @@ public final class SubLevelAttachmentApi{
         Deque<Movement> movements = MOVEMENTS.get();
         movements.push(new Movement(level, transform.getLevel(), source, destination));
         try{
-            transfer.run();
+            SubLevelTransferScope.run(() -> {
+                transfer.run();
+                return null;
+            });
             if(!source.isEmpty()) MOVED_BOUNDS.put(transform, BoundingBox3i.from(source));
         }finally{
             movements.pop();

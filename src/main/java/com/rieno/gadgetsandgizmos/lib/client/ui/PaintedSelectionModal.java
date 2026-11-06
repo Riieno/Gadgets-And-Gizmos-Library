@@ -91,9 +91,9 @@ public final class PaintedSelectionModal implements AutoCloseable{
                 if(action.contains(x, y)) graphics.fill(action.x(), action.y(), action.right(), action.bottom(), 0x22FFFFFF);
             }
         }finally{ graphics.pose().popPose(); }
-        grid.render(graphics, font, transform, mouseX, mouseY, entry -> selected.contains(entry.id()), Component.literal("No matching entries"));
-        if(appearance.accept().contains(x, y)) graphics.renderTooltip(font, Component.literal("Accept selection"), mouseX, mouseY);
-        else if(appearance.close().contains(x, y)) graphics.renderTooltip(font, Component.literal("Cancel"), mouseX, mouseY);
+        grid.render(graphics, font, transform, mouseX, mouseY, entry -> selected.contains(entry.id()), Component.translatable("gadgetsngizmos.text.no_matching_entries"));
+        if(appearance.accept().contains(x, y)) graphics.renderTooltip(font, Component.translatable("gadgetsngizmos.text.accept_selection"), mouseX, mouseY);
+        else if(appearance.close().contains(x, y)) graphics.renderTooltip(font, Component.translatable("gadgetsngizmos.text.cancel"), mouseX, mouseY);
     }
 
     public boolean mouseClicked(int width, int height, double x, double y, int button){

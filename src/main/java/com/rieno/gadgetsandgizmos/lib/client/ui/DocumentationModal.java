@@ -335,9 +335,9 @@ public final class DocumentationModal implements AutoCloseable{
 
     public record Labels(Component title, Component pages, Component refresh, Component back, Component loading,
                          Component failed, Component offline, Component footer){
-        public static final Labels DEFAULT = new Labels(Component.literal("Documentation"), Component.literal("Pages"),
-                Component.literal("Refresh"), Component.literal("Back"), Component.literal("Loading..."),
-                Component.literal("Documentation unavailable. Check your connection and click Refresh to retry."),
-                Component.literal("Offline: showing cached documentation"), Component.literal("Esc: close  |  F5: refresh  |  Shift+Wheel: scroll wide tables"));
+        public static final Labels DEFAULT = new Labels(Component.translatable("gadgetsngizmos.text.documentation"), Component.translatable("gadgetsngizmos.text.pages"),
+                Component.translatable("gadgetsngizmos.text.refresh"), Component.translatable("gadgetsngizmos.text.back"), Component.translatable("gadgetsngizmos.text.loading"),
+                Component.translatable("gadgetsngizmos.text.documentation_unavailable_check_your_connection_and_click_refresh_to_retry"),
+                Component.translatable("gadgetsngizmos.text.offline_showing_cached_documentation"), Component.translatable("gadgetsngizmos.text.esc_close_f5_refresh_shift_wheel_scroll_wide_tables"));
     }
 }

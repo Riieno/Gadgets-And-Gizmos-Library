@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
     ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import net.minecraft.resources.ResourceLocation;
 import java.util.Map;
 import java.util.HashMap;
@@ -77,7 +78,7 @@ public final class TabletAppClientSession{
         saveDrafts();
         for(TabletAppClientState state : states.values()){
             if(state instanceof AutoCloseable closeable){
-                try{ closeable.close(); }catch(Exception err){ throw new IllegalStateException("Cannot release tablet app state", err); }
+                try{ closeable.close(); }catch(Exception err){ throw new IllegalStateException(LocalizedText.get("gadgetsngizmos.text.cannot_release_tablet_app_state"), err); }
             }
         }
         states.clear();

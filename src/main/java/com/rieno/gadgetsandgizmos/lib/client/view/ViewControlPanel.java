@@ -40,6 +40,9 @@ public final class ViewControlPanel{
     private int bottom;
     private int radius = 18;
     private ViewControlLayout layout;
+    // Keep the visibility toggle available while the rest of this feed's overlay is hidden
+    private ViewControlLayout.Bounds overlayToggle;
+    private boolean overlayVisible = true;
     private String dragging = "";
     private double stickX;
     private double stickY;
@@ -65,6 +68,16 @@ public final class ViewControlPanel{
     // Let the host route a hit interaction through its own authenticated source selection
     public void setInteractAction(Runnable action){ interactAction = action; }
 
+    // Report whether this feed draws its overlay controls and viewfinder
+    public boolean isOverlayVisible(){ return overlayVisible; }
+
+    // Release held controls before changing the overlay visibility
+    public void setOverlayVisible(boolean visible){
+        if(overlayVisible == visible) return;
+        mouseReleased();
+        overlayVisible = visible;
+    }
+
     // Draw controls at the bottom middle of the host's live view
     public void render(GuiGraphics graphics, Font font, int x, int y, int width, int height,
                        ViewControlState state, Consumer<ViewControlInput> sender){
@@ -79,6 +92,7 @@ public final class ViewControlPanel{
         this.state = state;
         this.sender = sender;
         layout = ViewControlLayout.compact(x, y, width, height);
+        overlayToggle = null;
         radius = layout.radius();
         center = x + width / 2;
         left = Math.max(x + 4, center - 142);
@@ -116,10 +130,15 @@ public final class ViewControlPanel{
     public void renderOverlay(Canvas graphics, Font font, int x, int y, int width, int height,
                               ViewControlState state, Consumer<ViewControlInput> sender){
         var layout = ViewControlLayout.overlay(x, y, width, height);
-        ViewfinderOverlay.render(graphics, font, x, y, width, height, ViewfinderConfig.frame(source), ViewfinderConfig.grid(source),
-                state.fov(), net.minecraft.Util.getMillis() - viewStarted, 0,
-                layout.flashlight().x() + layout.flashlight().width() - x + 4, layout.radius() * 2 + 12);
-        renderControls(graphics, font, width, height, layout, state, sender);
+        this.layout = layout;
+        overlayToggle = layout.overlayToggle();
+        if(overlayVisible){
+            ViewfinderOverlay.render(graphics, font, x, y, width, height, ViewfinderConfig.frame(source), ViewfinderConfig.grid(source),
+                    state.fov(), net.minecraft.Util.getMillis() - viewStarted, 0,
+                    layout.flashlight().x() + layout.flashlight().width() - x + 4, layout.radius() * 2 + 12);
+            renderControls(graphics, font, width, height, layout, state, sender);
+        }
+        visibilityIcon(graphics, overlayToggle, overlayVisible);
     }
     // Share the floating controls with GUI hosts while preserving their transforms
     public void renderOverlay(GuiGraphics graphics, Font font, int x, int y, int width, int height,
@@ -131,6 +150,7 @@ public final class ViewControlPanel{
     }
     public void renderChin(Canvas graphics, Font font, int x, int y, int width, int height,
                            ViewControlState state, Consumer<ViewControlInput> sender){
+        overlayToggle = null;
         graphics.fill(x, y, x + width, y + height, 0xF0152433);
         renderControls(graphics, font, width, height, ViewControlLayout.chin(x, y, width, height), state, sender);
     }
@@ -194,6 +214,13 @@ public final class ViewControlPanel{
     // Accept clicks from either a GUI or a projected world surface
     public boolean mouseClicked(double x, double y, int button){
         if(button != 0 && button != 1 || layout == null) return false;
+        if(overlayToggle != null){
+            if(overlayToggle.contains(x, y)){
+                setOverlayVisible(!overlayVisible);
+                return true;
+            }
+            if(!overlayVisible) return false;
+        }
         if(takeControlAction != null && layout.takeControl().contains(x, y)){
             mouseReleased();
             takeControlAction.run();
@@ -280,6 +307,26 @@ public final class ViewControlPanel{
     private static void circle(Canvas graphics, int x, int y, int radius, int color){
         com.rieno.gadgetsandgizmos.lib.client.ui.RasterRectangles.circle(x, y, radius,
                 (left, top, right, bottom) -> graphics.fill(left, top, right, bottom, color));
+    }
+    // Draw an eye with a slash while the camera overlay is hidden
+    private static void visibilityIcon(Canvas graphics, ViewControlLayout.Bounds bounds, boolean visible){
+        if(bounds.width() <= 0 || bounds.height() <= 0) return;
+        rounded(graphics, bounds, bounds.width() / 4, visible ? 0xFF77B5AC : 0xFF747877);
+        graphics = graphics.layer(1);
+        int cx = bounds.centerX(), cy = bounds.centerY();
+        int rx = Math.max(3, bounds.width() / 3), ry = Math.max(2, bounds.height() / 5);
+        int line = Math.max(1, bounds.width() / 14);
+        for(int dx = -rx; dx <= rx; dx++){
+            int dy = ry * (rx - Math.abs(dx)) / rx;
+            graphics.fill(cx + dx, cy - dy, cx + dx + line, cy - dy + line, 0xFFF0F6FA);
+            graphics.fill(cx + dx, cy + dy, cx + dx + line, cy + dy + line, 0xFFF0F6FA);
+        }
+        circle(graphics, cx, cy, Math.max(1, ry / 2), 0xFFF0F6FA);
+        if(!visible){
+            for(int idx = -rx; idx <= rx; idx++){
+                graphics.fill(cx + idx, cy + idx, cx + idx + line, cy + idx + line, 0xFFF0F6FA);
+            }
+        }
     }
     // Draw a targeting reticle whose background shows whether acquisition is enabled
     private static void trackingIcon(Canvas graphics, ViewControlLayout.Bounds bounds, boolean enabled){

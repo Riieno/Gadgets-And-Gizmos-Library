@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import com.rieno.gadgetsandgizmos.lib.client.render.GuiNineSlice;
 import com.rieno.gadgetsandgizmos.lib.client.render.GuiPoseScissor;
 import com.rieno.gadgetsandgizmos.lib.client.render.GuiTextureRegion;
@@ -126,7 +127,7 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
             state.pending = false; state.editor = false; state.notice = "";
         }
         if(state.pending && ctx.data().contains("Error")){
-            state.pending = false; state.notice = ctx.data().getString("Error");
+            state.pending = false; state.notice = LocalizedText.read(ctx.data(), "Error").getString();
         }
         state.hits.clear(); state.sliders.clear(); state.cards.clear();
         var graphics = ctx.graphics();
@@ -158,15 +159,15 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
         boolean edit = "devices".equals(ctx.tab().id());
         if(!state.editor) ctx.graphics().fill(5, edit ? 68 : 38, 25, edit ? 89 : 59, 0x664E696C);
         item(ctx, new ItemStack(Items.REDSTONE_TORCH), 7, 40, 16);
-        hit(state, 5, 36, 21, 25, "Controls", () -> { state.editor = false; state.notice = ""; ctx.ui().selectTab("home"); });
+        hit(state, 5, 36, 21, 25, LocalizedText.get("gadgetsngizmos.text.controls"), () -> { state.editor = false; state.notice = ""; ctx.ui().selectTab("home"); });
         region(283, 319, 10, 10).draw(ctx.graphics(), 9, 71, 12, 12);
-        hit(state, 5, 66, 21, 25, "Edit cards", () -> { state.editor = false; state.notice = ""; ctx.ui().selectTab("devices"); });
+        hit(state, 5, 66, 21, 25, LocalizedText.get("gadgetsngizmos.text.edit_cards"), () -> { state.editor = false; state.notice = ""; ctx.ui().selectTab("devices"); });
         item(ctx, new ItemStack(Items.SPYGLASS), 7, 102, 16);
-        hit(state, 5, 97, 21, 25, "Scan a Redstone Link", () -> {
+        hit(state, 5, 97, 21, 25, LocalizedText.get("gadgetsngizmos.text.scan_a_redstone_link"), () -> {
             ctx.ui().selectTab("devices"); ctx.actions().send("begin_reader", "bind_channel");
         });
         item(ctx, new ItemStack(Items.CLOCK), 7, 132, 16);
-        hit(state, 5, 127, 21, 25, "Refresh controls", ctx.refresh());
+        hit(state, 5, 127, 21, 25, LocalizedText.get("gadgetsngizmos.text.refresh_controls"), ctx.refresh());
     }
 
     private void grid(TabletAppClientContext ctx, State state){
@@ -196,8 +197,8 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
                 if(idx >= rows.size()){
                     artwork.frame(ctx.graphics(), ControlCardStyle.Size.SINGLE, 0x303030, x, y, width, height);
                     artwork.addIcon(ctx.graphics(), x + (width - 28) / 2, y + 9, 28, 30);
-                    text(ctx, "Add Card", x + 5, y + 45, width - 10, 12, .8F);
-                    hit(state, x, y, width, height, "Create a control card", () -> edit(state, null));
+                    text(ctx, LocalizedText.get("gadgetsngizmos.text.add_card"), x + 5, y + 45, width - 10, 12, .8F);
+                    hit(state, x, y, width, height, LocalizedText.get("gadgetsngizmos.text.create_a_control_card"), () -> edit(state, null));
                 }else{
                     var row = rows.get(idx);
                     state.cards.add(new CardSlot(row.getUUID("Id"), new TabletLayout.Rect(x, y, width, height)));
@@ -218,10 +219,10 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
             }
         }
         if(rows.isEmpty() && !edit){
-            text(ctx, "No control cards", 56, 62, 230, 16, 1);
-            control(ctx, state, 121, 87, 90, "Create a card", () -> { ctx.ui().selectTab("devices"); edit(state, null); });
+            text(ctx, LocalizedText.get("gadgetsngizmos.text.no_control_cards"), 56, 62, 230, 16, 1);
+            control(ctx, state, 121, 87, 90, LocalizedText.get("gadgetsngizmos.text.create_a_card"), () -> { ctx.ui().selectTab("devices"); edit(state, null); });
         }
-        if(totalRows > 2) text(ctx, "Scroll to browse cards", 64, 169, 218, 8, .65F);
+        if(totalRows > 2) text(ctx, LocalizedText.get("gadgetsngizmos.text.scroll_to_browse_cards"), 64, 169, 218, 8, .65F);
     }
 
     private void mediaCard(TabletAppClientContext ctx, State state, int x, int y, int width, int height, boolean live){
@@ -232,8 +233,8 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
             state.track = level == null ? null : MusicDiscCatalog.resolve(level.registryAccess(), state.disc);
         }
         boolean installed = ctx.data().getBoolean("MediaInstalled");
-        GuiControlPreviews.drawFittedWrappedText(ctx.graphics(), ctx.font(), !installed ? Component.literal("Install Media")
-                        : state.track == null ? Component.literal("Choose music in Media") : state.track.title(),
+        GuiControlPreviews.drawFittedWrappedText(ctx.graphics(), ctx.font(), !installed ? Component.translatable("gadgetsngizmos.text.install_media")
+                        : state.track == null ? Component.translatable("gadgetsngizmos.text.choose_music_in_media") : state.track.title(),
                 x + 6, y + 19, width - 12, height - 54, .65F, 2, TEXT, false);
         int base = x + (width - 72) / 2, bottom = y + height - 66;
         region(117, 304, 62, 12).draw(ctx.graphics(), x + 6, y + height - 36, width - 12, 9);
@@ -247,11 +248,11 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
         }else region(14, 238, 12, 16).draw(ctx.graphics(), base + 33, bottom + 46, 7, 10);
         region(81, 237, 24, 16).draw(ctx.graphics(), base + 49, bottom + 43, 16, 16);
         if(live && installed){
-            hit(state, x + 5, y + 17, width - 10, Math.max(10, height - 54), "Choose music or a playlist", () -> ctx.ui().openApp(
+            hit(state, x + 5, y + 17, width - 10, Math.max(10, height - 54), LocalizedText.get("gadgetsngizmos.text.choose_music_or_a_playlist"), () -> ctx.ui().openApp(
                     ResourceLocation.fromNamespaceAndPath(ctx.app().id().getNamespace(), "media"), "player"));
-            hit(state, base + 4, bottom + 41, 20, 20, "Previous track", () -> ctx.actions().send("media_previous", ""));
-            hit(state, base + 26, bottom + 41, 20, 20, playback.playing() ? "Pause music" : "Play music", () -> ctx.actions().send("media_pause", ""));
-            hit(state, base + 48, bottom + 41, 20, 20, "Next track", () -> ctx.actions().send("media_next", ""));
+            hit(state, base + 4, bottom + 41, 20, 20, LocalizedText.get("gadgetsngizmos.text.previous_track"), () -> ctx.actions().send("media_previous", ""));
+            hit(state, base + 26, bottom + 41, 20, 20, playback.playing() ? LocalizedText.get("gadgetsngizmos.text.pause_music") : LocalizedText.get("gadgetsngizmos.text.play_music"), () -> ctx.actions().send("media_pause", ""));
+            hit(state, base + 48, bottom + 41, 20, 20, LocalizedText.get("gadgetsngizmos.text.next_track"), () -> ctx.actions().send("media_next", ""));
         }
     }
 
@@ -264,8 +265,8 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
         if(edit){
             artwork.deleteIcon(ctx.graphics(), x + width - 24, y + 4, 8);
             artwork.editIcon(ctx.graphics(), x + width - 13, y + 4, 8);
-            hit(state, x + width - 25, y + 3, 10, 10, "Delete card", () -> ctx.actions().send("channel_remove", id));
-            hit(state, x + width - 14, y + 3, 11, 10, "Edit card", () -> edit(state, row));
+            hit(state, x + width - 25, y + 3, 10, 10, LocalizedText.get("gadgetsngizmos.text.delete_card"), () -> ctx.actions().send("channel_remove", id));
+            hit(state, x + width - 14, y + 3, 11, 10, LocalizedText.get("gadgetsngizmos.text.edit_card"), () -> edit(state, row));
         }
         String mode = row.getString("Mode");
         if("media".equals(mode)){ mediaCard(ctx, state, x, y, width, height, live); return; }
@@ -297,7 +298,7 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
             if(!"button".equals(mode)) region(164, 280, 15, 15).draw(ctx.graphics(), sx + (active ? 27 : 2), sy + 2, 15, 15);
             text(ctx, "button".equals(mode) ? "PUSH" : active ? "ON" : "OFF", sx + ("button".equals(mode) ? 10 : active ? 2 : 18), sy + 5,
                     24, 11, .8F);
-            if(live) hit(state, sx, y + height - 22, 44, 21, pulse ? "Pulse channel" : "Toggle channel", () -> {
+            if(live) hit(state, sx, y + height - 22, 44, 21, pulse ? LocalizedText.get("gadgetsngizmos.text.pulse_channel") : LocalizedText.get("gadgetsngizmos.text.toggle_channel"), () -> {
                 if(pulse){ state.pressed = id; state.buttonHeld = true; state.pressedUntil = System.nanoTime() + 150_000_000; }
                 ctx.actions().send(pulse ? "channel_button" : "channel_toggle", id);
             });
@@ -319,7 +320,7 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
             clockHand(ctx, cx, cy, (time.getHour() % 12 + time.getMinute() / 60D) * Math.PI / 6, diameter * .25, 0, 2, 0xFF303030);
             clockHand(ctx, cx, cy, (time.getMinute() + time.getSecond() / 60D) * Math.PI / 30, diameter * .36, 0, 1, 0xFF000000 | style.color());
         }
-        text(ctx, settings.realTime() ? settings.timezone() : "Game time", x + 5, y + height - 10, width - 10, 8, .55F);
+        text(ctx, settings.realTime() ? settings.timezone() : LocalizedText.get("gadgetsngizmos.text.game_time"), x + 5, y + height - 10, width - 10, 8, .55F);
     }
 
     private static void clockHand(TabletAppClientContext ctx, int x, int y, double angle, double end, double start, int width, int color){
@@ -341,23 +342,23 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
             ctx.graphics().pose().translate(x, 22, 0); ctx.graphics().pose().scale(scale, scale, 1);
             card(ctx, state, state.draft, 0, 0, width, height, false, false);
         }finally{ ctx.graphics().pose().popPose(); }
-        hit(state, x, 22, Math.round(width * scale), Math.round(height * scale), "Rename card", () ->
-                ctx.ui().editText("Card name", state.draft.getString("Label"), 48, val -> state.draft.putString("Label", val)));
-        text(ctx, "Card Size", 119, 102, 57, 10, .8F);
+        hit(state, x, 22, Math.round(width * scale), Math.round(height * scale), LocalizedText.get("gadgetsngizmos.text.rename_card"), () ->
+                ctx.ui().editText(LocalizedText.get("gadgetsngizmos.text.card_name"), state.draft.getString("Label"), 48, val -> state.draft.putString("Label", val)));
+        text(ctx, LocalizedText.get("gadgetsngizmos.text.card_size"), 119, 102, 57, 10, .8F);
         control(ctx, state, 178, 100, 58, style.size().label, () -> {
             var current = ControlCardStyle.fromTag(state.draft.getCompound("Card"));
             setStyle(state, new ControlCardStyle(ControlCardStyle.Size.values()[(current.size().ordinal() + 1) % 3], current.color(), current.icon()));
         });
         boolean media = "media".equals(state.draft.getString("Mode")), clock = "clock".equals(state.draft.getString("Mode"));
-        if(!media && !clock) text(ctx, "Frequency", 42, 121, 65, 11, .9F);
-        else if(media) text(ctx, "Uses the tablet's Media player", 42, 119, 151, 14, .75F);
+        if(!media && !clock) text(ctx, LocalizedText.get("gadgetsngizmos.text.frequency"), 42, 121, 65, 11, .9F);
+        else if(media) text(ctx, LocalizedText.get("gadgetsngizmos.text.uses_the_tablet_s_media_player"), 42, 119, 151, 14, .75F);
         if(clock){
             var settings = style.clock();
-            control(ctx, state, 42, 116, 69, settings.digital() ? "Digital" : "Analogue", () -> {
+            control(ctx, state, 42, 116, 69, settings.digital() ? LocalizedText.get("gadgetsngizmos.text.digital") : LocalizedText.get("gadgetsngizmos.text.analogue"), () -> {
                 var current = ControlCardStyle.fromTag(state.draft.getCompound("Card")).clock();
                 setClock(state, new ClockCardSettings(!current.digital(), current.realTime(), current.timezone()));
             });
-            control(ctx, state, 118, 116, 73, settings.realTime() ? "Real time" : "Game time", () -> {
+            control(ctx, state, 118, 116, 73, settings.realTime() ? LocalizedText.get("gadgetsngizmos.text.real_time") : LocalizedText.get("gadgetsngizmos.text.game_time"), () -> {
                 var current = ControlCardStyle.fromTag(state.draft.getCompound("Card")).clock();
                 setClock(state, new ClockCardSettings(current.digital(), !current.realTime(), current.timezone()));
             });
@@ -371,28 +372,28 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
             int slot = idx;
             region(117 + idx * 18, 255, 18, 18).draw(ctx.graphics(), 109 + idx * 18, 116);
             item(ctx, frequency(state.draft, idx), 110 + idx * 18, 117, 16);
-            hit(state, 109 + idx * 18, 116, 18, 18, "Choose " + (idx == 0 ? "red" : "blue") + " frequency", () ->
+            hit(state, 109 + idx * 18, 116, 18, 18, LocalizedText.get("gadgetsngizmos.text.choose") + (idx == 0 ? "red" : "blue") + " frequency", () ->
                     state.frequencies = new LinkFrequencyModal(frequencyBackground, region(117, 255, 18, 18), region(135, 255, 18, 18),
                             frequency(state.draft, 0), frequency(state.draft, 1), slot,
                             (first, second) -> { putFrequency(state.draft, 0, first); putFrequency(state.draft, 1, second); }));
         }
         int colorY = clock ? 145 : 139, colorHeight = clock ? 10 : 12;
-        text(ctx, "Color", 42, colorY + 2, 58, 9, .9F);
+        text(ctx, LocalizedText.get("gadgetsngizmos.text.color"), 42, colorY + 2, 58, 9, .9F);
         ctx.graphics().fill(109, colorY, 166, colorY + colorHeight, 0xFF000000 | style.color());
         ctx.graphics().renderOutline(109, colorY, 57, colorHeight, 0xFF888888);
-        hit(state, 109, colorY, 57, colorHeight, "Card color", () -> state.colors = new ColorPickerModal(0xFF000000 | style.color(),
+        hit(state, 109, colorY, 57, colorHeight, LocalizedText.get("gadgetsngizmos.text.card_color"), () -> state.colors = new ColorPickerModal(0xFF000000 | style.color(),
                 col -> setStyle(state, new ControlCardStyle(ControlCardStyle.fromTag(state.draft.getCompound("Card")).size(), col,
                         ControlCardStyle.fromTag(state.draft.getCompound("Card")).icon())), () -> {}, () -> {}));
-        text(ctx, "Type", 42, 160, 58, 10, .9F);
+        text(ctx, LocalizedText.get("gadgetsngizmos.text.type"), 42, 160, 58, 10, .9F);
         String mode = state.draft.getString("Mode");
         control(ctx, state, 109, 156, 57, Character.toUpperCase(mode.charAt(0)) + mode.substring(1), () ->
                 state.draft.putString("Mode", switch(state.draft.getString("Mode")){ case "toggle" -> "button"; case "button" -> "slider"; case "slider" -> "media"; case "media" -> "clock"; default -> "toggle"; }));
-        text(ctx, "Icon", 211, 128, 29, 10, .9F);
+        text(ctx, LocalizedText.get("gadgetsngizmos.text.icon"), 211, 128, 29, 10, .9F);
         region(165, 249, 25, 24).draw(ctx.graphics(), 244, 119, 24, 24);
         item(ctx, stack(style.icon()), 248, 123, 16);
-        hit(state, 244, 119, 24, 24, "Choose card icon", () -> {
+        hit(state, 244, 119, 24, 24, LocalizedText.get("gadgetsngizmos.text.choose_card_icon"), () -> {
             var entries = ItemPickerScreen.registryEntries();
-            state.items = new PaintedSelectionModal(ItemPickerScreen.defaultAppearance(), ctx.font(), Component.literal("Select Card Icon"), entries,
+            state.items = new PaintedSelectionModal(ItemPickerScreen.defaultAppearance(), ctx.font(), Component.translatable("gadgetsngizmos.text.select_card_icon"), entries,
                     List.of(style.icon().toString()), false, ids -> {
                 if(ids.isEmpty()) return;
                 var current = ControlCardStyle.fromTag(state.draft.getCompound("Card"));
@@ -400,19 +401,19 @@ public class PaintedControlCardsRenderer implements TabletAppClientRenderer{
             }, () -> state.items = null);
         });
         boolean fixedOutput = "button".equals(mode) || "toggle".equals(mode);
-        if(fixedOutput) text(ctx, "Output", 211, 145, 29, 10, .75F);
+        if(fixedOutput) text(ctx, LocalizedText.get("gadgetsngizmos.text.output"), 211, 145, 29, 10, .75F);
         if(fixedOutput) control(ctx, state, 244, 143, 24, Integer.toString(state.draft.getInt("Strength")), () ->
-                ctx.ui().editText("Signal strength (0-15)", Integer.toString(state.draft.getInt("Strength")), 2, val -> {
+                ctx.ui().editText(LocalizedText.get("gadgetsngizmos.text.signal_strength_0_15"), Integer.toString(state.draft.getInt("Strength")), 2, val -> {
                     try{
                         int strength = Integer.parseInt(val.strip());
                         if(strength >= 0 && strength <= 15){ state.draft.putInt("Strength", strength); state.notice = ""; return; }
                     }catch(NumberFormatException ignored){}
-                    state.notice = "Signal strength must be between 0 and 15";
+                    state.notice = LocalizedText.get("gadgetsngizmos.text.signal_strength_must_be_between_0_and_15");
                 }));
-        control(ctx, state, 207, 156, 43, "Cancel", () -> { state.editor = false; state.pending = false; state.notice = ""; });
-        control(ctx, state, 256, 156, 43, "Save", () -> {
+        control(ctx, state, 207, 156, 43, LocalizedText.get("gadgetsngizmos.text.cancel"), () -> { state.editor = false; state.pending = false; state.notice = ""; });
+        control(ctx, state, 256, 156, 43, LocalizedText.get("gadgetsngizmos.text.save"), () -> {
             if(state.pending) return;
-            state.pending = true; state.pendingStamp = ctx.data().getLong("UpdatedAt"); state.notice = "Saving card...";
+            state.pending = true; state.pendingStamp = ctx.data().getLong("UpdatedAt"); state.notice = LocalizedText.get("gadgetsngizmos.text.saving_card");
             ctx.actions().send("card_save", state.draft.toString());
         });
     }

@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import com.rieno.gadgetsandgizmos.lib.client.ui.LayeredItemRenderer;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
@@ -43,16 +44,16 @@ public final class TabletInventoryView{
         int total = data.getInt("Total");
         offset = Mth.clamp(offset, 0, Math.max(0, total - visible));
         panel.text(ctx, data.getInt("Containers") + " containers / " + total + " resources", 5, 5, ctx.width() - 91, 0xFFCDE7C5);
-        panel.button(ctx, ctx.width() - 80, 0, 35, 19, "Up", offset > 0, () -> move(data, -visible, refresh));
-        panel.button(ctx, ctx.width() - 41, 0, 36, 19, "Down", offset + visible < total, () -> move(data, visible, refresh));
+        panel.button(ctx, ctx.width() - 80, 0, 35, 19, LocalizedText.get("gadgetsngizmos.text.up"), offset > 0, () -> move(data, -visible, refresh));
+        panel.button(ctx, ctx.width() - 41, 0, 36, 19, LocalizedText.get("gadgetsngizmos.text.down"), offset + visible < total, () -> move(data, visible, refresh));
         var rows = data.getList("Rows", Tag.TAG_COMPOUND);
         int start = offset - data.getInt("Offset");
         if(total == 0){
-            panel.wrap(ctx, "No accessible cargo. Linked containers must be loaded.", 7, 30, ctx.width() - 14, height - 30);
+            panel.wrap(ctx, LocalizedText.get("gadgetsngizmos.text.no_accessible_cargo_linked_containers_must_be_loaded"), 7, 30, ctx.width() - 14, height - 30);
             return;
         }
         if(start < 0 || start >= rows.size()){
-            panel.text(ctx, "Loading inventory...", 7, 30, ctx.width() - 14, 0xFFB8CBE0);
+            panel.text(ctx, LocalizedText.get("gadgetsngizmos.text.loading_inventory"), 7, 30, ctx.width() - 14, 0xFFB8CBE0);
             return;
         }
         for(int idx = 0; idx < visible && start + idx < rows.size(); idx++){

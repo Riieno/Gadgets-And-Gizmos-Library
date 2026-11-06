@@ -29,11 +29,17 @@ public final class ClientActionKey {
         register.accept(mapping);
     }
 
+    // Leave screen input and events from other windows to their normal handlers
+    public static boolean canHandleGameplayInput(long window){
+        Minecraft mc = Minecraft.getInstance();
+        return window == mc.getWindow().getWindow() && mc.player != null && mc.level != null
+                && mc.screen == null && mc.getOverlay() == null && !mc.isPaused() && mc.isWindowActive();
+    }
+
     // Read the configured physical key, including mouse buttons and NeoForge modifiers
     public boolean isHeld() {
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.player == null || minecraft.level == null || minecraft.screen != null
-                || minecraft.isPaused() || !minecraft.isWindowActive() || mapping.isUnbound()
+        if (!canHandleGameplayInput(minecraft.getWindow().getWindow()) || mapping.isUnbound()
                 || !mapping.isConflictContextAndModifierActive()) return false;
 
         InputConstants.Key key = mapping.getKey();

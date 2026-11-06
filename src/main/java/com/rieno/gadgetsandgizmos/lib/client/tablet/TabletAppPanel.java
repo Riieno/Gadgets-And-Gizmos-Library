@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
@@ -44,7 +45,7 @@ public final class TabletAppPanel{
         ctx.graphics().pose().pushPose();
         ctx.graphics().pose().translate(0, 0, 500);
         ctx.graphics().fill(ctx.left(), ctx.top() + ctx.height() - 36, ctx.left() + ctx.width(), ctx.top() + ctx.height() - 23, 0xFF49262D);
-        text(ctx, ctx.data().getString("Error"), 4, ctx.height() - 33, ctx.width() - 8, 0xFFFFAAAA);
+        text(ctx, LocalizedText.read(ctx.data(), "Error").getString(), 4, ctx.height() - 33, ctx.width() - 8, 0xFFFFAAAA);
         ctx.graphics().pose().popPose();
     }
 
@@ -161,7 +162,7 @@ public final class TabletAppPanel{
         if(keyCode == 259 && !val.isEmpty()) inputs.put(focus, val.substring(0, val.offsetByCodePoints(val.length(), -1)));
         else if(keyCode == 261) inputs.put(focus, "");
         else if(keyCode == 86 && (modifiers & 2) != 0){
-            String text = Minecraft.getInstance().keyboardHandler.getClipboard().replaceAll("[\\p{Cntrl}]", "");
+            String text = Minecraft.getInstance().keyboardHandler.getClipboard().replaceAll("\\p{Cntrl}", "");
             inputs.put(focus, (val + text).substring(0, Math.min(128, val.length() + text.length())));
         }else if(keyCode == 256 || keyCode == 257){ focus = ""; }
         return true;

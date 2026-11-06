@@ -28,6 +28,11 @@ public record ViewControlLayout(int stickX, int stickY, int radius, List<Bounds>
         this(stickX, stickY, radius, modes, zoom, flashlight, new Bounds(0, 0, 0, 0), overlay);
     }
 
+    // Align the overlay visibility button with the left icon column and bottom edge
+    public Bounds overlayToggle(){
+        return new Bounds(flashlight.x(), stickY + radius - flashlight.height(), flashlight.width(), flashlight.height());
+    }
+
     // Fit compact controls into the tablet's reserved bottom strip
     public static ViewControlLayout compact(int x, int y, int width, int height){
         int center = x + width / 2;
@@ -63,6 +68,7 @@ public record ViewControlLayout(int stickX, int stickY, int radius, List<Bounds>
         int zoomWidth = Math.max(6, (int) Math.round(width * .018));
         int iconLeft = x + Math.max(10, (int) Math.round(width * .018));
         int iconStep = flashSize + gapY;
+        stickX = Math.max(stickX, iconLeft + flashSize + Math.max(6, gapY) + radius);
         return new ViewControlLayout(stickX, stickY, radius, modes,
                 new Bounds(x + (int) Math.round(width * .95) - zoomWidth / 2,
                         y + (int) Math.round(height * .78), zoomWidth,

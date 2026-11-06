@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -48,7 +49,7 @@ public final class TabletMultiSelectDropdown{
         var graphics = ctx.graphics();
         graphics.pose().pushPose();
         graphics.pose().translate(0, 0, 400);
-        draw(ctx, button, label + ": " + (selected.size() == options.size() ? "All" : selected.isEmpty() ? "None" : selected.size()) + " ▾", false);
+        draw(ctx, button, label + ": " + (selected.size() == options.size() ? LocalizedText.get("gadgetsngizmos.text.all") : selected.isEmpty() ? LocalizedText.get("gadgetsngizmos.text.none") : selected.size()) + " ▾", false);
         if(open){
             for(int idx = 0; idx < options.size(); idx++){
                 Option option = options.get(idx);
@@ -69,7 +70,7 @@ public final class TabletMultiSelectDropdown{
         ctx.graphics().pose().pushPose();
         try{
             ctx.graphics().pose().translate(0, 0, 400);
-            drawPainted(ctx, normal, button, label + ": " + (selected.size() == options.size() ? "All" : selected.size()));
+            drawPainted(ctx, normal, button, label + ": " + (selected.size() == options.size() ? LocalizedText.get("gadgetsngizmos.text.all") : selected.size()));
             if(open){
                 for(int idx = 0; idx < options.size(); idx++){
                     Option option = options.get(idx);

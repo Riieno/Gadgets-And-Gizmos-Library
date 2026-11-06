@@ -1,5 +1,6 @@
 package com.rieno.gadgetsandgizmos.lib.create;
 
+import com.simibubi.create.api.connectivity.ConnectivityHandler;
 import com.simibubi.create.content.logistics.vault.ItemVaultBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -57,7 +58,10 @@ public class ConnectedVaultBlockEntity extends ItemVaultBlockEntity{
                 for(Direction face : Direction.values()) if(!memberAvailable(pos.relative(face))) return;
             }
         }
-        super.updateConnectivity();
+        updateConnectivity = false;
+        if(!isController()) return;
+        // Keep custom types on Create's typed connectivity path when other mods redirect the base vault
+        ConnectivityHandler.formMulti(this);
     }
 
     private boolean memberAvailable(BlockPos pos){

@@ -1,5 +1,6 @@
 package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import com.rieno.gadgetsandgizmos.lib.tablet.TabletAppDefinition;
 import com.rieno.gadgetsandgizmos.lib.GadgetsNGizmosLibrary;
 import com.rieno.gadgetsandgizmos.lib.tablet.TabletAppIconStyle;
@@ -27,7 +28,7 @@ public final class TabletAppIcons{
     private TabletAppIcons(){}
 
     public static void register(ResourceLocation appId, Renderer renderer){
-        if(RENDERERS.putIfAbsent(appId, renderer) != null) throw new IllegalStateException("App icon already registered: " + appId);
+        if(RENDERERS.putIfAbsent(appId, renderer) != null) throw new IllegalStateException(LocalizedText.get("gadgetsngizmos.text.app_icon_already_registered") + appId);
     }
 
     public static void render(TabletAppDefinition app, GuiGraphics graphics, int x, int y, int size){

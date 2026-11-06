@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import com.rieno.gadgetsandgizmos.lib.client.render.GuiPoseScissor;
 import com.rieno.gadgetsandgizmos.lib.client.render.GuiTextureRegion;
 import com.rieno.gadgetsandgizmos.lib.client.ui.GuiControlPreviews;
@@ -114,7 +115,7 @@ public class PaintedContainerRenderer implements TabletAppClientRenderer{
             renderTabs(local, state);
             if(ctx.data().contains("Error")){
                 ctx.graphics().fill(10, 141, 309, 153, 0xF0302828);
-                text(local, ctx.data().getString("Error"), 12, 142, 295, 10, .7F, RED, false);
+                text(local, LocalizedText.read(ctx.data(), "Error").getString(), 12, 142, 295, 10, .7F, RED, false);
             }
         }finally{ ctx.graphics().pose().popPose(); }
     }
@@ -153,7 +154,7 @@ public class PaintedContainerRenderer implements TabletAppClientRenderer{
                 var stack = item(row);
                 cargoCard.draw(ctx, stack, row.getString("Name"), row.getLong("Count"), x, y);
             }
-            if(rows.isEmpty()) text(ctx, "No item cargo. View Resources for fluids or FE.", 13, 55, 292, 25, .8F, MUTED, true);
+            if(rows.isEmpty()) text(ctx, LocalizedText.get("gadgetsngizmos.text.no_item_cargo_view_resources_for_fluids_or_fe"), 13, 55, 292, 25, .8F, MUTED, true);
         }
         scrollArea(ctx, state, "contents", CONTENT, 24, null);
         if(CONTENT.contains(ctx.mouseX(), ctx.mouseY())){
@@ -186,7 +187,7 @@ public class PaintedContainerRenderer implements TabletAppClientRenderer{
                 resource(ctx, row.getString("Name"), row.getLong("Amount"), row.getLong("Capacity"), fluid(row),
                         9, 21 + scroll.rowOffset(idx++), 302);
             }
-            if(count == 0) text(ctx, "This container stores items", 13, 55, 292, 25, .8F, MUTED, true);
+            if(count == 0) text(ctx, LocalizedText.get("gadgetsngizmos.text.this_container_stores_items"), 13, 55, 292, 25, .8F, MUTED, true);
         }
         scrollArea(ctx, state, "resources", CONTENT, 23, null);
     }
@@ -224,7 +225,7 @@ public class PaintedContainerRenderer implements TabletAppClientRenderer{
                             viewport.left() + 1, y + 14, 147, 26, energy ? RED : GOLD);
                 }
             }
-            if(page.getInt("Total") == 0) text(ctx, items ? "No network items" : "No network fluids or FE",
+            if(page.getInt("Total") == 0) text(ctx, items ? LocalizedText.get("gadgetsngizmos.text.no_network_items") : LocalizedText.get("gadgetsngizmos.text.no_network_fluids_or_fe"),
                     viewport.left() + 3, 44, viewport.width() - 6, 20, .75F, MUTED, true);
         }
         scrollArea(ctx, state, key, viewport, height, offset -> ctx.actions().send("refresh", state.networkPage()));

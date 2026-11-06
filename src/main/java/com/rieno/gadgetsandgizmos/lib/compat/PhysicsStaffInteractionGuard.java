@@ -84,7 +84,7 @@ public final class PhysicsStaffInteractionGuard {
         if(player == null || player.server == null) return false;
         if (isInitializationProtected(targetSubLevelId)) {
             showFailureMessage(player,
-                    Component.literal("Ship control initialization is in progress"));
+                    Component.translatable("gadgetsngizmos.text.ship_control_initialization_is_in_progress"));
             return false;
         }
         if(targetSubLevelId != null){

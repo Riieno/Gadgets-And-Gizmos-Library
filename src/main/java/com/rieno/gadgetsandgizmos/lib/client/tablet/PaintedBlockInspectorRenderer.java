@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import com.rieno.gadgetsandgizmos.lib.client.render.GuiBlockPreview;
 import com.rieno.gadgetsandgizmos.lib.client.render.GuiNineSlice;
 import com.rieno.gadgetsandgizmos.lib.client.render.GuiPoseScissor;
@@ -105,16 +106,16 @@ public class PaintedBlockInspectorRenderer implements TabletAppClientRenderer{
                 text(ctx, ctx.data().getString("Name"), 15, 111, 71, 22, .8F, true, TEXT);
             }else{
                 text(ctx, "?", 22, 52, 56, 48, 4, true, MUTED);
-                text(ctx, "No block selected", 16, 114, 69, 18, .7F, true, MUTED);
+                text(ctx, LocalizedText.get("gadgetsngizmos.text.no_block_selected"), 16, 114, 69, 18, .7F, true, MUTED);
             }
             button.draw(graphics, INSPECT.left(), INSPECT.top(), INSPECT.width(), INSPECT.height());
             if(INSPECT.contains(mouseX, mouseY)) graphics.fill(16, 141, 85, 154, 0x22FFFFFF);
-            text(ctx, "Inspect", 17, 141, 67, 13, .8F, true, TEXT);
-            text(ctx, ctx.ui().placed() ? "Attached block" : "Select a world block", 14, 158, 73, 7, .55F, true, MUTED);
+            text(ctx, LocalizedText.get("gadgetsngizmos.text.inspect"), 17, 141, 67, 13, .8F, true, TEXT);
+            text(ctx, ctx.ui().placed() ? LocalizedText.get("gadgetsngizmos.text.attached_block") : LocalizedText.get("gadgetsngizmos.text.select_a_world_block"), 14, 158, 73, 7, .55F, true, MUTED);
             if(!ctx.data().getBoolean("Available")){
-                text(ctx, "Block information", 102, 41, 203, 14, 1, false, TEXT);
-                wrapped(ctx, ctx.ui().placed() ? "Attach the tablet to a loaded block, then press Inspect."
-                        : "Press Inspect, then use the tablet on a block to see its information.", 103, 66, 195, .85F, MUTED);
+                text(ctx, LocalizedText.get("gadgetsngizmos.text.block_information"), 102, 41, 203, 14, 1, false, TEXT);
+                wrapped(ctx, ctx.ui().placed() ? LocalizedText.get("gadgetsngizmos.text.attach_the_tablet_to_a_loaded_block_then_press_inspect")
+                        : LocalizedText.get("gadgetsngizmos.text.press_inspect_then_use_the_tablet_on_a_block_to_see_its_information"), 103, 66, 195, .85F, MUTED);
             }else{
                 text(ctx, ctx.data().getString("Name"), 102, 40, 202, 13, 1, false, TEXT);
                 text(ctx, ctx.data().getString("Block"), 103, 54, 201, 10, .7F, false, MUTED);
@@ -146,7 +147,7 @@ public class PaintedBlockInspectorRenderer implements TabletAppClientRenderer{
                 if(state.scroll.maximumOffset() > 0) state.bar.render(graphics);
                 if(ctx.data().getBoolean("Controllable")){
                     int val = state.pendingSignal < 0 ? ctx.data().getInt("Signal") : state.pendingSignal;
-                    text(ctx, "Redstone signal: " + val + " / 15", 104, 139, 198, 10, .75F, false, TEXT);
+                    text(ctx, LocalizedText.get("gadgetsngizmos.text.redstone_signal") + val + " / 15", 104, 139, 198, 10, .75F, false, TEXT);
                     track.draw(graphics, SIGNAL.left(), SIGNAL.top(), SIGNAL.width(), SIGNAL.height());
                     var face = track.centerBounds(SIGNAL.left(), SIGNAL.top(), SIGNAL.width(), SIGNAL.height());
                     int filled = face.width() * val / 15;
@@ -155,7 +156,7 @@ public class PaintedBlockInspectorRenderer implements TabletAppClientRenderer{
                     graphics.fill(thumbX, 151, thumbX + 4, 161, 0xFFE3E3E3);
                 }
             }
-            if(ctx.data().contains("Error")) text(ctx, ctx.data().getString("Error"), 102, 165, 204, 7, .6F, false, 0xFFF28B8B);
+            if(ctx.data().contains("Error")) text(ctx, LocalizedText.read(ctx.data(), "Error").getString(), 102, 165, 204, 7, .6F, false, 0xFFF28B8B);
         }finally{ graphics.pose().popPose(); }
         if(tooltip != null) graphics.renderComponentTooltip(ctx.font(), tooltip, ctx.mouseX(), ctx.mouseY());
     }
@@ -221,7 +222,7 @@ public class PaintedBlockInspectorRenderer implements TabletAppClientRenderer{
     private static TabletLayout.Rect content(TabletAppClientContext ctx){ return new TabletLayout.Rect(102, 70, 202, ctx.data().getBoolean("Controllable") ? 64 : 93); }
     private static TabletLayout.Bounds bounds(TabletAppClientContext ctx){ return CANVAS.stretch(ctx.surface().left(), ctx.surface().top(), ctx.surface().width(), ctx.surface().height()); }
     private GuiTextureRegion region(int u, int v, int width, int height){ return new GuiTextureRegion(texture, 320, 300, u, v, width, height); }
-    private static State state(TabletAppClientState raw){ if(raw instanceof State state) return state; throw new IllegalArgumentException("Inspector received another application's state"); }
+    private static State state(TabletAppClientState raw){ if(raw instanceof State state) return state; throw new IllegalArgumentException(LocalizedText.get("gadgetsngizmos.text.inspector_received_another_application_s_state")); }
 
     private void configure(TabletAppClientContext ctx, State state){
         CompoundTag data = ctx.data();
@@ -237,12 +238,12 @@ public class PaintedBlockInspectorRenderer implements TabletAppClientRenderer{
             List<Row> rows = new ArrayList<>();
             if(data.getBoolean("Available")){
                 var pos = BlockPos.of(data.getLong("Pos"));
-                row(ctx, rows, "Position", pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
-                if(data.contains("Dimension")) row(ctx, rows, "Dimension", data.getString("Dimension"));
-                if(data.hasUUID("SubLevelId")) row(ctx, rows, "Sub-level", data.getUUID("SubLevelId").toString());
-                row(ctx, rows, "Hardness", Float.toString(data.getFloat("Hardness")));
-                row(ctx, rows, "Block entity", data.getBoolean("BlockEntity") ? "Yes" : "No");
-                row(ctx, rows, "Direct control", data.getBoolean("Controllable") ? "Available" : "Unavailable");
+                row(ctx, rows, LocalizedText.get("gadgetsngizmos.text.position"), pos.getX() + ", " + pos.getY() + ", " + pos.getZ());
+                if(data.contains("Dimension")) row(ctx, rows, LocalizedText.get("gadgetsngizmos.text.dimension"), data.getString("Dimension"));
+                if(data.hasUUID("SubLevelId")) row(ctx, rows, LocalizedText.get("gadgetsngizmos.text.sub_level"), data.getUUID("SubLevelId").toString());
+                row(ctx, rows, LocalizedText.get("gadgetsngizmos.text.hardness"), Float.toString(data.getFloat("Hardness")));
+                row(ctx, rows, LocalizedText.get("gadgetsngizmos.text.block_entity"), data.getBoolean("BlockEntity") ? LocalizedText.get("gadgetsngizmos.text.yes") : LocalizedText.get("gadgetsngizmos.text.no"));
+                row(ctx, rows, LocalizedText.get("gadgetsngizmos.text.direct_control"), data.getBoolean("Controllable") ? LocalizedText.get("gadgetsngizmos.text.available") : LocalizedText.get("gadgetsngizmos.text.unavailable"));
                 var properties = data.getList("Properties", Tag.TAG_COMPOUND);
                 for(int idx = 0; idx < properties.size(); idx++){
                     var property = properties.getCompound(idx);

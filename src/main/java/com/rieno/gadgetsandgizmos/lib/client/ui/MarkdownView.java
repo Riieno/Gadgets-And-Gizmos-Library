@@ -55,6 +55,13 @@ final class MarkdownView implements AutoCloseable{
     private int horizontal;
     private int y;
     private boolean dragging;
+    private boolean selectable;
+    private boolean selecting;
+    private int selectionStart = -1;
+    private int selectionEnd = -1;
+    private double selectionX;
+
+    void selectable(){ selectable = true; }
 
     MarkdownView(Function<String, URI> asset){
         this(asset, uri -> com.rieno.gadgetsandgizmos.lib.documentation.RemoteResources.shared()
@@ -100,6 +107,8 @@ final class MarkdownView implements AutoCloseable{
             layoutWidth = bounds.width();
             contentWidth = Math.max(1, layoutWidth - 14);
             draws.clear();
+            selectionStart = -1;
+            selectionEnd = -1;
             anchors.clear();
             y = 0;
             blocks(document.nodes(), 0, contentWidth);
@@ -110,9 +119,14 @@ final class MarkdownView implements AutoCloseable{
         try(var clip = GuiPoseScissor.push(graphics, bounds.x(), bounds.y(), bounds.right() - 7, bounds.bottom() - 7)){
             graphics.pose().pushPose();
             graphics.pose().translate(bounds.x() - horizontal, bounds.y() - scroll.offset(), 0);
-            for(var draw : draws){
+            for(int idx = 0; idx < draws.size(); idx++){
+                var draw = draws.get(idx);
                 if(draw.bottom() < scroll.offset() || draw.top() > scroll.offset() + bounds.height()) continue;
                 if(draw instanceof Text text){
+                    if(selectionStart >= 0 && idx >= Math.min(selectionStart, selectionEnd) && idx <= Math.max(selectionStart, selectionEnd)){
+                        graphics.fill(text.x(), text.y(), text.x() + Math.max(1, (int)Math.ceil(font.width(text.text()) * text.scale())),
+                                text.bottom(), style.border());
+                    }
                     graphics.pose().pushPose();
                     graphics.pose().translate(text.x(), text.y(), 0);
                     graphics.pose().scale(text.scale(), text.scale(), 1);
@@ -329,6 +343,13 @@ final class MarkdownView implements AutoCloseable{
             horizontal = (int)Math.round((mouseX - bounds.x()) / bounds.width() * Math.max(0, contentWidth - bounds.width() + 10));
             return;
         }
+        if(selectable){
+            selectionX = mouseX;
+            selectionStart = selectedTextAt(bounds, mouseX, mouseY);
+            selectionEnd = selectionStart;
+            selecting = selectionStart >= 0;
+            return;
+        }
         double x = mouseX - bounds.x() + horizontal;
         double y = mouseY - bounds.y() + scroll.offset();
         for(var draw : draws){
@@ -355,9 +376,52 @@ final class MarkdownView implements AutoCloseable{
 
     void drag(HelpModalFrame.Rect bounds, double mouseY){
         if(dragging) scroll.scrollToFraction((mouseY - bounds.y() - 8) / Math.max(1, bounds.height() - 16));
+        if(selecting){
+            if(mouseY < bounds.y()) scroll.scrollBy(-12);
+            if(mouseY >= bounds.bottom()) scroll.scrollBy(12);
+            selectionEnd = selectedTextAt(bounds, selectionX, mouseY);
+        }
     }
 
-    void release(){ dragging = false; }
+    void release(){ dragging = false; selecting = false; }
+
+    void selectAll(){
+        selectionStart = 0;
+        selectionEnd = draws.size() - 1;
+    }
+
+    boolean allSelected(){ return selectionStart == 0 && selectionEnd == draws.size() - 1; }
+
+    // Copy rendered text from the selected rows without exposing layout details to the host screen
+    String selectedText(){
+        if(selectionStart < 0) return "";
+        StringBuilder res = new StringBuilder();
+        int prevY = Integer.MIN_VALUE;
+        for(int idx = Math.min(selectionStart, selectionEnd); idx <= Math.max(selectionStart, selectionEnd) && idx < draws.size(); idx++){
+            if(idx < 0 || !(draws.get(idx) instanceof Text line)) continue;
+            if(!res.isEmpty()) res.append(line.y() == prevY ? " " : "\n");
+            line.text().accept((offset, style, codePoint) -> { res.appendCodePoint(codePoint); return true; });
+            prevY = line.y();
+        }
+        return res.toString();
+    }
+
+    private int selectedTextAt(HelpModalFrame.Rect bounds, double mouseX, double mouseY){
+        double x = mouseX - bounds.x() + horizontal;
+        double y = mouseY - bounds.y() + scroll.offset();
+        int best = -1;
+        double distance = Double.MAX_VALUE;
+        for(int idx = 0; idx < draws.size(); idx++){
+            if(!(draws.get(idx) instanceof Text line)) continue;
+            double dy = y < line.y() ? line.y() - y : y >= line.bottom() ? y - line.bottom() + 1 : 0;
+            double dx = x < line.x() ? line.x() - x : Math.max(0, x - line.x() - font.width(line.text()) * line.scale());
+            double score = dy * 10000 + dx;
+            if(score >= distance) continue;
+            distance = score;
+            best = idx;
+        }
+        return best;
+    }
     void scroll(double amount, boolean horizontal){
         if(horizontal) this.horizontal = Math.clamp(this.horizontal - (int)Math.round(amount * 32), 0, Math.max(0, contentWidth - layoutWidth + 10));
         else scroll.scrollBy((int)Math.round(-amount * 32));

@@ -8,6 +8,8 @@ package com.rieno.gadgetsandgizmos.lib.media;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import net.minecraft.network.chat.Component;
+import com.rieno.gadgetsandgizmos.lib.text.UserMessageException;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
@@ -54,7 +56,7 @@ public final class MediaSession{
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     public UUID create(String name){
-        if(playlists.size() >= MAX_PLAYLISTS) throw new IllegalArgumentException("Playlist limit reached");
+        if(playlists.size() >= MAX_PLAYLISTS) throw new UserMessageException(Component.translatable("gadgetsngizmos.text.playlist_limit_reached"));
         String val = checkedName(name, null);
         UUID id = UUID.randomUUID();
         playlists.add(new Playlist(id, val, List.of()));
@@ -80,8 +82,8 @@ public final class MediaSession{
         int idx = discs.indexOf(disc);
         if(idx >= 0) discs.remove(idx);
         else{
-            if(lengths.applyAsInt(disc) <= 0) throw new IllegalArgumentException("Music disc unavailable");
-            if(discs.size() >= MAX_TRACKS) throw new IllegalArgumentException("Playlist track limit reached");
+            if(lengths.applyAsInt(disc) <= 0) throw new UserMessageException(Component.translatable("gadgetsngizmos.text.music_disc_unavailable"));
+            if(discs.size() >= MAX_TRACKS) throw new UserMessageException(Component.translatable("gadgetsngizmos.text.playlist_track_limit_reached"));
             discs.add(disc);
         }
         playlists.set(playlists.indexOf(prev), new Playlist(id, prev.name(), discs));
@@ -102,7 +104,7 @@ public final class MediaSession{
     }
 
     public void play(ResourceLocation disc, long now, ToIntFunction<ResourceLocation> lengths){
-        if(lengths.applyAsInt(disc) <= 0) throw new IllegalArgumentException("Music disc unavailable");
+        if(lengths.applyAsInt(disc) <= 0) throw new UserMessageException(Component.translatable("gadgetsngizmos.text.music_disc_unavailable"));
         Playlist list = playlist(selected);
         if(list == null || !list.discs().contains(disc)) selected = null;
         start(disc, now, 0, true, lengths);
@@ -192,15 +194,15 @@ public final class MediaSession{
 
     private Playlist required(UUID id){
         Playlist res = playlist(id);
-        if(res == null) throw new IllegalArgumentException("Playlist unavailable");
+        if(res == null) throw new UserMessageException(Component.translatable("gadgetsngizmos.text.playlist_unavailable"));
         return res;
     }
 
     private String checkedName(String name, UUID except){
         String val = name == null ? "" : name.strip().replaceAll("[\\p{Cntrl}]", "");
-        if(val.isEmpty() || val.length() > MAX_NAME) throw new IllegalArgumentException("Enter a playlist name (1–48 characters)");
+        if(val.isEmpty() || val.length() > MAX_NAME) throw new UserMessageException(Component.translatable("gadgetsngizmos.text.enter_a_playlist_name_1_48_characters"));
         for(Playlist list : playlists){
-            if(!list.id().equals(except) && list.name().equalsIgnoreCase(val)) throw new IllegalArgumentException("Playlist name already used");
+            if(!list.id().equals(except) && list.name().equalsIgnoreCase(val)) throw new UserMessageException(Component.translatable("gadgetsngizmos.text.playlist_name_already_used"));
         }
         return val;
     }

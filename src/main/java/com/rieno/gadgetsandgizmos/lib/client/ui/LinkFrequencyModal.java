@@ -62,7 +62,7 @@ public final class LinkFrequencyModal{
     // Use the same registered item choices and selection logic as ACC graph frequency slots
     public static PaintedSelectionModal itemPicker(Font font, ItemStack selected, java.util.function.Consumer<ItemStack> accept, Runnable closed){
         var entries = ItemPickerScreen.registryEntries();
-        return new PaintedSelectionModal(ItemPickerScreen.defaultAppearance(), font, Component.literal("Select Frequency Item"), entries,
+        return new PaintedSelectionModal(ItemPickerScreen.defaultAppearance(), font, Component.translatable("gadgetsngizmos.text.select_frequency_item"), entries,
                 ItemPickerScreen.registrySelection(entries, selected), false, ids -> {
             if(!ids.isEmpty()) entries.stream().filter(entry -> entry.id().equals(ids.getFirst())).findFirst()
                     .ifPresent(entry -> accept.accept(entry.icon().copyWithCount(1)));

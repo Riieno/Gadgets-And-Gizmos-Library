@@ -3,6 +3,7 @@ package com.rieno.gadgetsandgizmos.lib.mixin;
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.rieno.gadgetsandgizmos.lib.physics.SubLevelAttachmentApi;
+import com.rieno.gadgetsandgizmos.lib.physics.SubLevelTransferScope;
 import dev.ryanhcode.sable.api.SubLevelAssemblyHelper;
 import dev.ryanhcode.sable.companion.math.BoundingBox3i;
 import dev.ryanhcode.sable.companion.math.BoundingBox3ic;
@@ -19,7 +20,8 @@ public abstract class SubLevelAssemblyAttachmentsMixin{
     private static ServerSubLevel gadgetsngizmos$assembleAttachments(ServerLevel level, BlockPos anchor,
             Iterable<BlockPos> blocks, BoundingBox3ic bounds, Operation<ServerSubLevel> original){
         var selected = SubLevelAttachmentApi.includeAttachments(level, blocks);
-        return original.call(level, anchor, selected, selected.isEmpty() ? bounds : BoundingBox3i.from(selected));
+        return SubLevelTransferScope.run(() -> original.call(level, anchor, selected,
+                selected.isEmpty() ? bounds : BoundingBox3i.from(selected)));
     }
 
     // Use Sable's transfer while protecting attached support checks

@@ -124,7 +124,7 @@ public final class RemoteViewClient{
         if(!isActive()) return null;
         ViewSource src = source.resolve(Minecraft.getInstance().level);
         if(src instanceof PredictedViewSource predicted && prediction != null){
-            return predicted.viewPose(partialTick, prediction.preview(pan, tilt, zoom));
+            return predicted.viewPose(partialTick, prediction.preview(pan, tilt, zoom, predicted::predictViewAim));
         }
         return src == null ? null : src.viewPose(partialTick);
     }

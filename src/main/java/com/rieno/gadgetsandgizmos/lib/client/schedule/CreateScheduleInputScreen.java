@@ -148,9 +148,9 @@ public final class CreateScheduleInputScreen extends Screen{
             addRenderableWidget(Button.builder(Component.translatable("gui.recipebook.search_hint"), button -> browseItem())
                     .bounds(left + 172, top + 92, 126, 20).build());
         }
-        addRenderableWidget(Button.builder(Component.literal("Done"), button -> commit())
+        addRenderableWidget(Button.builder(Component.translatable("gadgetsngizmos.text.done"), button -> commit())
                 .bounds(left + 12, top + 225, 136, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("Cancel"), button -> onClose())
+        addRenderableWidget(Button.builder(Component.translatable("gadgetsngizmos.text.cancel"), button -> onClose())
                 .bounds(left + 162, top + 225, 136, 20).build());
     }
 

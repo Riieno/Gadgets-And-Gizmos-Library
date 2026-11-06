@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import com.rieno.gadgetsandgizmos.lib.client.render.GuiPoseScissor;
 import com.rieno.gadgetsandgizmos.lib.client.ui.GuiControlPreviews;
 import com.rieno.gadgetsandgizmos.lib.client.ui.ColorPickerModal;
@@ -111,21 +112,21 @@ public class PaintedDeviceCardsRenderer implements TabletAppClientRenderer{
                     if(first + idx == devices.size()){
                         artwork.frame(graphics, ControlCardStyle.Size.WIDE, 0x303030, x, y, width, height);
                         artwork.addIcon(graphics, x + (width - 28) / 2, y + 9, 28, 30);
-                        text(ctx, "Add new", x + 6, y + 45, width - 12, 12, .9F, true, 0xFFFFFFFF);
-                        hit(state, x, y, width, height, "Add a remote device in Reader mode", () -> addDevice(ctx));
+                        text(ctx, LocalizedText.get("gadgetsngizmos.text.add_new"), x + 6, y + 45, width - 12, 12, .9F, true, 0xFFFFFFFF);
+                        hit(state, x, y, width, height, LocalizedText.get("gadgetsngizmos.text.add_a_remote_device_in_reader_mode"), () -> addDevice(ctx));
                     }else device(ctx, state, devices.getCompound(first + idx), x, y, width, height, mouseX, mouseY);
                 }
                 if(devices.isEmpty()){
-                    text(ctx, "No remote devices", 171, 43, 133, 14, .9F, false, 0xFFE3E3E3);
-                    GuiControlPreviews.drawFittedWrappedText(graphics, ctx.font(), Component.literal("Use Add new to pair a controller."),
+                    text(ctx, LocalizedText.get("gadgetsngizmos.text.no_remote_devices"), 171, 43, 133, 14, .9F, false, 0xFFE3E3E3);
+                    GuiControlPreviews.drawFittedWrappedText(graphics, ctx.font(), Component.translatable("gadgetsngizmos.text.use_add_new_to_pair_a_controller"),
                             171, 62, 133, 27, .75F, 3, 0xFFAAAAAA, false);
                 }
             }
             if(maximum > 0){
-                text(ctx, "Page " + (state.page + 1) + " / " + (maximum + 1), 24, 169, 90, 8, .65F, false, 0xFFAAAAAA);
-                text(ctx, "Scroll to browse devices", 197, 169, 112, 8, .6F, true, 0xFFAAAAAA);
+                text(ctx, LocalizedText.get("gadgetsngizmos.text.page") + (state.page + 1) + " / " + (maximum + 1), 24, 169, 90, 8, .65F, false, 0xFFAAAAAA);
+                text(ctx, LocalizedText.get("gadgetsngizmos.text.scroll_to_browse_devices"), 197, 169, 112, 8, .6F, true, 0xFFAAAAAA);
             }
-            if(ctx.data().contains("Error")) text(ctx, ctx.data().getString("Error"), 10, 169, 300, 8, .65F, false, 0xFFF28B8B);
+            if(ctx.data().contains("Error")) text(ctx, LocalizedText.read(ctx.data(), "Error").getString(), 10, 169, 300, 8, .65F, false, 0xFFF28B8B);
             if(state.picker != null){
                 graphics.pose().translate(0, 0, 200);
                 if(colorAppearance == null) state.picker.render(graphics, ctx.font(), 320, 180, ColorPickerModal.Chrome.DEFAULT, (int)mouseX, (int)mouseY);
@@ -151,7 +152,7 @@ public class PaintedDeviceCardsRenderer implements TabletAppClientRenderer{
         var eyedropper = new TabletLayout.Rect(x + width - 36, y + 3, 10, 10);
         ColorPickerModal.renderButton(ctx.graphics(), x + width - 35, y + 4, 8, eyedropper.contains(mouseX, mouseY));
         int initial = color;
-        hit(state, eyedropper.left(), eyedropper.top(), eyedropper.width(), eyedropper.height(), "Card color", () -> {
+        hit(state, eyedropper.left(), eyedropper.top(), eyedropper.width(), eyedropper.height(), LocalizedText.get("gadgetsngizmos.text.card_color"), () -> {
             Integer prev = state.colors.get(key);
             state.colorKey = key;
             state.picker = new ColorPickerModal(0xFF000000 | initial, val -> state.colors.put(key, val & 0xFFFFFF),
@@ -161,11 +162,11 @@ public class PaintedDeviceCardsRenderer implements TabletAppClientRenderer{
         });
         artwork.deleteIcon(ctx.graphics(), x + width - 24, y + 4, 8);
         artwork.editIcon(ctx.graphics(), x + width - 13, y + 4, 8);
-        hit(state, x + width - 25, y + 3, 10, 10, "Remove " + name, () -> removeDevice(ctx, key));
-        hit(state, x + width - 14, y + 3, 11, 10, "Rename " + name, () -> ctx.ui().editText("Device name", name, 48,
+        hit(state, x + width - 25, y + 3, 10, 10, LocalizedText.get("gadgetsngizmos.text.remove") + name, () -> removeDevice(ctx, key));
+        hit(state, x + width - 14, y + 3, 11, 10, LocalizedText.get("gadgetsngizmos.text.rename") + name, () -> ctx.ui().editText(LocalizedText.get("gadgetsngizmos.text.device_name"), name, 48,
                 val -> renameDevice(ctx, key, val)));
         hit(state, x + 5, y + 4, width - 43, 13, name, null);
-        text(ctx, online ? "Online" : "Offline", x + 6, y + 24, width - 12, 10, .75F, false, online ? 0xFF83C993 : 0xFF999999);
+        text(ctx, online ? LocalizedText.get("gadgetsngizmos.text.online") : LocalizedText.get("gadgetsngizmos.text.offline"), x + 6, y + 24, width - 12, 10, .75F, false, online ? 0xFF83C993 : 0xFF999999);
         int buttonWidth = (width - 18) / 3;
         for(View view : View.values()){
             int bx = x + 6 + view.ordinal() * (buttonWidth + 3), by = y + 46;
@@ -174,7 +175,7 @@ public class PaintedDeviceCardsRenderer implements TabletAppClientRenderer{
             if(!enabled) ctx.graphics().fill(bx + 1, by + 1, bx + buttonWidth - 1, by + 11, 0x66000000);
             else if(new TabletLayout.Rect(bx, by, buttonWidth, 12).contains(mouseX, mouseY)) ctx.graphics().fill(bx + 1, by + 1, bx + buttonWidth - 1, by + 11, 0x22FFFFFF);
             text(ctx, view.label, bx + 2, by + 1, buttonWidth - 4, 10, .75F, true, enabled ? 0xFFFFFFFF : 0xFF888888);
-            hit(state, bx, by, buttonWidth, 12, enabled ? view.label + " " + name : online ? view.label + " unavailable" : "Device offline",
+            hit(state, bx, by, buttonWidth, 12, enabled ? view.label + " " + name : online ? view.label + " unavailable" : LocalizedText.get("gadgetsngizmos.text.device_offline"),
                     enabled ? () -> openDevice(ctx, key, view) : null);
         }
     }
@@ -226,5 +227,5 @@ public class PaintedDeviceCardsRenderer implements TabletAppClientRenderer{
         GuiControlPreviews.drawFittedText(ctx.graphics(), ctx.font(), Component.literal(val), x, y, width, height, scale, color, centered);
     }
     private static TabletLayout.Bounds bounds(TabletAppClientContext ctx){ var surface = ctx.surface(); return CANVAS.stretch(surface.left(), surface.top(), surface.width(), surface.height()); }
-    private static State state(TabletAppClientState raw){ if(raw instanceof State state) return state; throw new IllegalArgumentException("Device cards received another application's state"); }
+    private static State state(TabletAppClientState raw){ if(raw instanceof State state) return state; throw new IllegalArgumentException(LocalizedText.get("gadgetsngizmos.text.device_cards_received_another_application_s_state")); }
 }

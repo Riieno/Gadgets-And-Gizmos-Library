@@ -106,7 +106,7 @@ public final class ClientSchematicSnapshots{
     private static void fail(){
         pending = null;
         var player = Minecraft.getInstance().player;
-        if(player != null) player.displayClientMessage(Component.literal("Could not save schematic block data. Please try again."), false);
+        if(player != null) player.displayClientMessage(Component.translatable("gadgetsngizmos.text.could_not_save_schematic_block_data_please_try_again"), false);
     }
 
     private static final class Pending{

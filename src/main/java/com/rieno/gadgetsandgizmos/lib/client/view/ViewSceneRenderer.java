@@ -77,7 +77,7 @@ public final class ViewSceneRenderer{
     private static final float CAPTURE_DISTANCE = 96;
     private static final float PROJECTION_DISTANCE = 1024;
     private static IntSupplier minimumRefreshRate = () -> 10;
-    // Retain GPU resources only while a display continues requesting its source
+    // Retain paused scenes within the source limit so visibility changes reuse their terrain
     private static final Map<ViewReference, Capture> CAPTURES = new LinkedHashMap<>();
     private static final ViewRefreshBudget BUDGET = new ViewRefreshBudget();
     private static @Nullable ClientLevel owningLevel;
@@ -348,7 +348,7 @@ public final class ViewSceneRenderer{
         }
         long now = System.nanoTime();
         CAPTURES.entrySet().removeIf(entry -> {
-            if(!entry.getValue().retention.isExpired(now) && entry.getKey().resolve(mc.level) != null) return false;
+            if(entry.getKey().resolve(mc.level) != null) return false;
             entry.getValue().close();
             return true;
         });
@@ -483,8 +483,6 @@ public final class ViewSceneRenderer{
     private record PendingCapture(ViewReference ref, Capture capture, long phase){}
     // Retain one source's world renderer, ship meshes and framebuffer
     private static final class Capture{
-        private final com.rieno.gadgetsandgizmos.lib.util.ResourceLease retention =
-                new com.rieno.gadgetsandgizmos.lib.util.ResourceLease(5_000_000_000L);
         private final RenderBuffers buffers = new RenderBuffers(1);
         private TextureTarget target = SceneRenderTargets.createPreciseLike(
                 Minecraft.getInstance().getMainRenderTarget(), 16, 16, Minecraft.ON_OSX);
@@ -509,7 +507,7 @@ public final class ViewSceneRenderer{
         private long rendered = -100;
         private boolean ready;
         private boolean reload;
-        private void request(){ requested = frame; retention.renew(System.nanoTime()); }
+        private void request(){ requested = frame; }
         // Register a texture wrapper that leaves framebuffer ownership with this capture
         private Capture(){
             Minecraft.getInstance().getTextureManager().register(texture, new AbstractTexture(){

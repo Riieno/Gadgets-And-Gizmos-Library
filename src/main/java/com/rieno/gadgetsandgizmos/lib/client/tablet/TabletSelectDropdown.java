@@ -1,5 +1,6 @@
 package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import com.rieno.gadgetsandgizmos.lib.client.ui.GuiDropdownControl;
 import net.minecraft.network.chat.Component;
 
@@ -16,7 +17,7 @@ public final class TabletSelectDropdown{
     private boolean projected;
 
     public TabletSelectDropdown(List<? extends Component> options){
-        if(options.isEmpty()) throw new IllegalArgumentException("A dropdown needs at least one option");
+        if(options.isEmpty()) throw new IllegalArgumentException(LocalizedText.get("gadgetsngizmos.text.a_dropdown_needs_at_least_one_option"));
         this.options = List.copyOf(options);
     }
 

@@ -52,7 +52,7 @@ public final class CommandGraphNode{
             if(host != null && host.getLevel() instanceof ServerLevel level){
                 var capture = new Output();
                 var src = new CommandSourceStack(capture, SableTransformApi.toWorldPosition(host, host.getBlockPos().getCenter()),
-                        Vec2.ZERO, level, 2, "Graph Command", Component.literal("Graph Command"), level.getServer(), null)
+                        Vec2.ZERO, level, 2, "Graph Command", Component.translatable("gadgetsngizmos.text.graph_command"), level.getServer(), null)
                         .withCallback((success, result) -> capture.success |= success);
                 String command = inputs.getOrDefault("command", GraphValue.string("")).asString().strip();
                 if(!command.isEmpty()) level.getServer().getCommands().performPrefixedCommand(src, command);

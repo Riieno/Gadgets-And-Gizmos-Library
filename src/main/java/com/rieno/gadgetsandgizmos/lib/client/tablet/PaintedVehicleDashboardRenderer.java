@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import com.rieno.gadgetsandgizmos.lib.client.render.GuiNineSlice;
 import com.rieno.gadgetsandgizmos.lib.client.render.GuiPoseScissor;
 import com.rieno.gadgetsandgizmos.lib.client.render.GuiTextureRegion;
@@ -121,7 +122,7 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
             launcher(local, state);
             if(ctx.data().contains("Error")){
                 panel.draw(ctx.graphics(), 54, 139, 214, 12);
-                text(local, ctx.data().getString("Error"), 58, 140, 206, 10, .65F, 0xFFFF9494, true);
+                text(local, LocalizedText.read(ctx.data(), "Error").getString(), 58, 140, 206, 10, .65F, 0xFFFF9494, true);
             }
         }finally{ ctx.graphics().pose().popPose(); }
     }
@@ -180,17 +181,17 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
                 try{
                     ctx.graphics().pose().translate(0, 0, 5);
                     panel.draw(ctx.graphics(), 19, 122, 125, 26);
-                    text(ctx, "Facing: " + data.getString("Facing").toUpperCase(Locale.ROOT), 30, 126, 107, 9, .75F, GREEN, false);
-                    text(ctx, String.format(Locale.ROOT, "Speed: %.1f blocks/s", data.getDouble("Speed")), 30, 136, 107, 9, .75F, 0xFFF52D7F, false);
+                    text(ctx, LocalizedText.get("gadgetsngizmos.text.facing") + data.getString("Facing").toUpperCase(Locale.ROOT), 30, 126, 107, 9, .75F, GREEN, false);
+                    text(ctx, String.format(Locale.ROOT, LocalizedText.get("gadgetsngizmos.text.speed_1f_blocks_s"), data.getDouble("Speed")), 30, 136, 107, 9, .75F, 0xFFF52D7F, false);
                 }finally{ ctx.graphics().pose().popPose(); }
             }
             telemetry(ctx);
         }else{
             state.heading.reset();
             state.headingTime = 0;
-            text(ctx, "Ship connection required", 17, 54, 128, 24, .9F, TEXT, true);
-            text(ctx, "Connect to an initialized ship with an Advanced Contraption Controller", 15, 82, 132, 48, .65F, MUTED, true);
-            text(ctx, "No ship telemetry", 194, 36, 112, 20, .8F, MUTED, true);
+            text(ctx, LocalizedText.get("gadgetsngizmos.text.ship_connection_required"), 17, 54, 128, 24, .9F, TEXT, true);
+            text(ctx, LocalizedText.get("gadgetsngizmos.text.connect_to_an_initialized_ship_with_an_advanced_contraption_controller"), 15, 82, 132, 48, .65F, MUTED, true);
+            text(ctx, LocalizedText.get("gadgetsngizmos.text.no_ship_telemetry"), 194, 36, 112, 20, .8F, MUTED, true);
         }
         fuel(ctx);
         media(ctx, state);
@@ -199,25 +200,25 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
             ctx.graphics().pose().translate(0, 0, 50);
             try{
                 panel.draw(ctx.graphics(), 54, 87, 112, 63);
-                control(ctx, state, 61, 94, 98, "Navigate to coordinates", data.getBoolean("Available"), () ->
+                control(ctx, state, 61, 94, 98, LocalizedText.get("gadgetsngizmos.text.navigate_to_coordinates"), data.getBoolean("Available"), () ->
                         ctx.ui().editText("X, Y, Z coordinates", "", 96, val -> ctx.actions().send("navigate", val)));
-                control(ctx, state, 61, 107, 47, "Hover", data.getBoolean("Available"), () -> ctx.actions().send("hover", ""));
-                control(ctx, state, 112, 107, 47, "Dock", data.getBoolean("Available"), () -> ctx.actions().send("dock", ""));
-                control(ctx, state, 61, 120, 98, "Ship statistics", true, () -> ctx.ui().selectTab("stats"));
-                text(ctx, data.getBoolean("Pilot") ? "Pilot schedule active" : "Manual trip", 62, 134, 96, 8, .65F, MUTED, true);
+                control(ctx, state, 61, 107, 47, LocalizedText.get("gadgetsngizmos.text.hover"), data.getBoolean("Available"), () -> ctx.actions().send("hover", ""));
+                control(ctx, state, 112, 107, 47, LocalizedText.get("gadgetsngizmos.text.dock"), data.getBoolean("Available"), () -> ctx.actions().send("dock", ""));
+                control(ctx, state, 61, 120, 98, LocalizedText.get("gadgetsngizmos.text.ship_statistics"), true, () -> ctx.ui().selectTab("stats"));
+                text(ctx, data.getBoolean("Pilot") ? LocalizedText.get("gadgetsngizmos.text.pilot_schedule_active") : LocalizedText.get("gadgetsngizmos.text.manual_trip"), 62, 134, 96, 8, .65F, MUTED, true);
             }finally{ ctx.graphics().pose().popPose(); }
         }
     }
 
     private void telemetry(TabletAppClientContext ctx){
         var data = ctx.data();
-        text(ctx, "Coordinates", 195, 21, 112, 11, .85F, MUTED, true);
+        text(ctx, LocalizedText.get("gadgetsngizmos.text.coordinates"), 195, 21, 112, 11, .85F, MUTED, true);
         coordinates(ctx, "", 35);
         ctx.graphics().fill(205, 45, 299, 46, 0xFF777777);
         String eta = data.getLong("EtaSeconds") < 0 ? "--" : duration(data.getLong("EtaSeconds"));
-        text(ctx, "Target  |  ETA: " + eta, 195, 49, 112, 10, .75F, GREEN, true);
+        text(ctx, LocalizedText.get("gadgetsngizmos.text.target_eta") + eta, 195, 49, 112, 10, .75F, GREEN, true);
         if(data.getBoolean("HasTarget")) coordinates(ctx, "Target", 62);
-        else text(ctx, "No destination", 196, 62, 110, 10, .75F, MUTED, true);
+        else text(ctx, LocalizedText.get("gadgetsngizmos.text.no_destination"), 196, 62, 110, 10, .75F, MUTED, true);
     }
 
     private void coordinates(TabletAppClientContext ctx, String prefix, int y){
@@ -241,7 +242,7 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
         try{
             ctx.graphics().pose().translate(159, 128, 0);
             ctx.graphics().pose().mulPose(new Quaternionf().rotationZ((float)-Math.PI / 2));
-            text(ctx, "Fuel " + (ctx.data().getBoolean("FuelInfinite") ? "∞" : Math.round(ratio * 100) + "%"), 0, 0, 83, 7, .65F, TEXT, true);
+            text(ctx, LocalizedText.get("gadgetsngizmos.text.fuel") + (ctx.data().getBoolean("FuelInfinite") ? "∞" : Math.round(ratio * 100) + "%"), 0, 0, 83, 7, .65F, TEXT, true);
         }finally{ ctx.graphics().pose().popPose(); }
     }
 
@@ -253,7 +254,7 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
             var level = Minecraft.getInstance().level;
             state.track = level == null ? null : MusicDiscCatalog.resolve(level.registryAccess(), state.disc);
         }
-        Component title = Component.literal(installed ? "Choose music in Media" : "Install Media for music");
+        Component title = Component.translatable(installed ? "gadgetsngizmos.text.choose_music_in_media" : "gadgetsngizmos.text.install_media_for_music");
         if(state.track != null) title = state.track.title();
         GuiControlPreviews.drawFittedWrappedText(ctx.graphics(), ctx.font(), title, 197, 96, 108, 18, .7F, 2, 0xFFC0DCCB, true);
         var level = Minecraft.getInstance().level;
@@ -276,17 +277,17 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
         boolean media = ctx.data().getBoolean("MediaInstalled"), manifest = ctx.data().getBoolean("ManifestInstalled");
         int count = 1 + (media ? 1 : 0) + (manifest ? 1 : 0);
         int x = 154 - (count - 1) * 12;
-        launch(ctx, state, x, 48, 280, 10, 16, "Navigation", () -> {
+        launch(ctx, state, x, 48, 280, 10, 16, LocalizedText.get("gadgetsngizmos.text.navigation"), () -> {
             if(!"drive".equals(ctx.tab().id())){ state.navigation = false; ctx.ui().selectTab("drive"); }
             else state.navigation = !state.navigation;
         });
         if(media){
             x += 24;
-            launch(ctx, state, x, 6, 258, 11, 13, "Media", () -> ctx.ui().openApp(mediaApp, mediaTab));
+            launch(ctx, state, x, 6, 258, 11, 13, LocalizedText.get("gadgetsngizmos.text.media"), () -> ctx.ui().openApp(mediaApp, mediaTab));
         }
         if(manifest){
             x += 24;
-            launch(ctx, state, x, 29, 258, 10, 13, "Ship manifest", () -> { state.navigation = false; ctx.ui().selectTab("manifest"); });
+            launch(ctx, state, x, 29, 258, 10, 13, LocalizedText.get("gadgetsngizmos.text.ship_manifest"), () -> { state.navigation = false; ctx.ui().selectTab("manifest"); });
         }
     }
 
@@ -300,13 +301,13 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
 
     private void manifest(TabletAppClientContext ctx, State state){
         panel.draw(ctx.graphics(), 7, 19, 306, 128);
-        text(ctx, ctx.data().getString("Ship") + " • Shipping manifest", 15, 23, 290, 12, .9F, TEXT, false);
+        text(ctx, ctx.data().getString("Ship") + LocalizedText.get("gadgetsngizmos.text.shipping_manifest"), 15, 23, 290, 12, .9F, TEXT, false);
         if(!ctx.data().getBoolean("Available") || !ctx.data().getBoolean("ManifestInstalled")){
-            text(ctx, "Install Manifest and connect to an initialized ship", 25, 65, 270, 30, .85F, MUTED, true);
+            text(ctx, LocalizedText.get("gadgetsngizmos.text.install_manifest_and_connect_to_an_initialized_ship"), 25, 65, 270, 30, .85F, MUTED, true);
             return;
         }
         String[] categories = {"items", "fluids", "fuel"};
-        String[] names = {"Items", "Fluids", "Fuel"};
+        String[] names = {LocalizedText.get("gadgetsngizmos.text.items"), LocalizedText.get("gadgetsngizmos.text.fluids"), LocalizedText.get("gadgetsngizmos.text.fuel_2")};
         for(int idx = 0; idx < categories.length; idx++){
             String category = categories[idx];
             control(ctx, state, 15 + idx * 48, 38, 45, names[idx], true, () -> {
@@ -317,7 +318,7 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
             if(state.category.equals(category)) ctx.graphics().fill(17 + idx * 48, 48, 58 + idx * 48, 49, GREEN);
         }
         region(178, 331, 142, 26).draw(ctx.graphics(), 164, 38, 141, 11);
-        state.panel.paintedInput(ctx, "search", 165, 38, 139, 11, "Search resources...");
+        state.panel.paintedInput(ctx, "search", 165, 38, 139, 11, LocalizedText.get("gadgetsngizmos.text.search_resources"));
         String filter = state.panel.value("search").strip();
         if(!filter.equals(state.filter)){
             state.filter = filter;
@@ -349,10 +350,10 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
                 String amount = row.getLong("Amount") + switch(type){ case "fluid" -> " mB"; case "energy" -> " FE"; default -> " items"; };
                 text(ctx, amount, 212, y + 3, 84, 10, .75F, TEXT, true);
                 long capacity = row.getLong("Capacity");
-                text(ctx, capacity > 0 ? "Capacity: " + capacity + (type.equals("fluid") ? " mB" : " FE") : row.getString("Id"),
+                text(ctx, capacity > 0 ? LocalizedText.get("gadgetsngizmos.text.capacity") + capacity + (type.equals("fluid") ? " mB" : " FE") : row.getString("Id"),
                         39, y + 13, 257, 6, .55F, MUTED, false);
             }
-            if(data.getInt("Total") == 0) text(ctx, "No matching shipping resources", 28, 80, 260, 20, .8F, MUTED, true);
+            if(data.getInt("Total") == 0) text(ctx, LocalizedText.get("gadgetsngizmos.text.no_matching_shipping_resources"), 28, 80, 260, 20, .8F, MUTED, true);
         }
         state.bar.configure(310, 53, 2, 89, state.scroll.maximumOffset(), state.scroll.offset());
         state.bar.render(ctx.graphics());
@@ -360,10 +361,10 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
 
     private void stats(TabletAppClientContext ctx, State state){
         panel.draw(ctx.graphics(), 7, 19, 306, 128);
-        text(ctx, ctx.data().getString("Ship") + " • Ship statistics", 16, 24, 285, 12, .95F, TEXT, false);
-        String[] names = {"Speed", "Weight", "Fuel", "Cargo", "Fluids", "Energy"};
-        String[] values = {String.format(Locale.ROOT, "%.1f blocks/s", ctx.data().getDouble("Speed")),
-                String.format(Locale.ROOT, "%.0f kg", ctx.data().getDouble("Weight")), Math.round(ctx.data().getDouble("Fuel") * 100) + "%",
+        text(ctx, ctx.data().getString("Ship") + LocalizedText.get("gadgetsngizmos.text.ship_statistics_2"), 16, 24, 285, 12, .95F, TEXT, false);
+        String[] names = {LocalizedText.get("gadgetsngizmos.text.speed"), LocalizedText.get("gadgetsngizmos.text.weight"), LocalizedText.get("gadgetsngizmos.text.fuel_2"), LocalizedText.get("gadgetsngizmos.text.cargo"), LocalizedText.get("gadgetsngizmos.text.fluids"), LocalizedText.get("gadgetsngizmos.text.energy")};
+        String[] values = {String.format(Locale.ROOT, LocalizedText.get("gadgetsngizmos.text.1f_blocks_s"), ctx.data().getDouble("Speed")),
+                String.format(Locale.ROOT, LocalizedText.get("gadgetsngizmos.text.0f_kg"), ctx.data().getDouble("Weight")), Math.round(ctx.data().getDouble("Fuel") * 100) + "%",
                 ctx.data().getLong("Cargo") + " items", ctx.data().getLong("Fluids") + " mB", ctx.data().getLong("Energy") + " FE"};
         for(int idx = 0; idx < names.length; idx++){
             int x = 18 + (idx % 2) * 146, y = 44 + (idx / 2) * 31;

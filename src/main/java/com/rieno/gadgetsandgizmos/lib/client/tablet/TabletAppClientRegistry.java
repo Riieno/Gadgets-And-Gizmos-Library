@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import net.minecraft.resources.ResourceLocation;
 import org.jetbrains.annotations.Nullable;
 
@@ -44,7 +45,7 @@ public final class TabletAppClientRegistry {
         Objects.requireNonNull(appId, "appId");
         Objects.requireNonNull(renderer, "renderer");
         if (RENDERERS.putIfAbsent(appId, renderer) != null) {
-            throw new IllegalStateException("Tablet app renderer already registered: " + appId);
+            throw new IllegalStateException(LocalizedText.get("gadgetsngizmos.text.tablet_app_renderer_already_registered") + appId);
         }
     }
 

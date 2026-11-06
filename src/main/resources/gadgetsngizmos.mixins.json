@@ -27,6 +27,7 @@
     "HostedBlockEntityMixin",
     "HostedSmartBlockEntityMixin",
     "RemoteViewPlayerMovementMixin",
+    "HangingPlayerMovementMixin",
     "ViewInteractionMenuReachMixin",
     "ViewInteractionPerspectiveMixin",
     "ViewInteractionHoldMixin",

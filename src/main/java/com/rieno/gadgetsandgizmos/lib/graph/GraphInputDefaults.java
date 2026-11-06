@@ -7,6 +7,29 @@ import net.minecraft.nbt.Tag;
 public final class GraphInputDefaults{
     private GraphInputDefaults(){}
 
+    // Read an authored literal or legacy property without substituting runtime values
+    public static CompoundTag configuredValue(CompoundTag data, String port){
+        if(port == null || port.isEmpty()) return new CompoundTag();
+        CompoundTag defaults = data.getCompound("Defaults");
+        if(defaults.contains(port, Tag.TAG_COMPOUND)) return defaults.getCompound(port).copy();
+        String property = Character.toUpperCase(port.charAt(0)) + port.substring(1);
+        CompoundTag encoded = new CompoundTag();
+        CompoundTag payload = new CompoundTag();
+        if(data.contains(property, Tag.TAG_DOUBLE) || data.contains(property, Tag.TAG_INT)
+                || data.contains(property, Tag.TAG_FLOAT)){
+            encoded.putString("Type", "number");
+            payload.putDouble("Value", data.getDouble(property));
+        }else if(data.contains(property, Tag.TAG_BYTE)){
+            encoded.putString("Type", "boolean");
+            payload.putBoolean("Value", data.getBoolean(property));
+        }else if(data.contains(property, Tag.TAG_STRING)){
+            encoded.putString("Type", "string");
+            payload.putString("Value", data.getString(property));
+        }else return encoded;
+        encoded.put("Payload", payload);
+        return encoded;
+    }
+
     // Connections and explicit literals own the preferred port, including false, zero and empty text
     public static String selectPort(CompoundTag data, String preferred, String fallback, boolean connected){
         if(connected || data.getCompound("Defaults").contains(preferred, Tag.TAG_COMPOUND)) return preferred;

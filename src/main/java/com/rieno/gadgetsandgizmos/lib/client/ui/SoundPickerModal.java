@@ -77,11 +77,11 @@ public final class SoundPickerModal implements AutoCloseable{
         filtered = this.entries;
         Region field = appearance.layout().search();
         search = new EditBox(font, field.x() + 3, field.y() + 3, field.width() - 6, field.height() - 6,
-                Component.literal("Search sounds by name, @mod or #tag"));
+                Component.translatable("gadgetsngizmos.text.search_sounds_by_name_mod_or_tag"));
         search.setBordered(false);
         search.setMaxLength(256);
         search.setTextColor(0xFFFFFFFF);
-        search.setHint(Component.literal("Search..."));
+        search.setHint(Component.translatable("gadgetsngizmos.text.search"));
         search.setFocused(true);
         search.setResponder(this::filter);
         configureScroll();
@@ -104,14 +104,14 @@ public final class SoundPickerModal implements AutoCloseable{
             graphics.pose().translate(transform.x(), transform.y(), 0);
             graphics.pose().scale(transform.scale(), transform.scale(), 1);
             appearance.panel().draw(graphics, 0, 0);
-            text(graphics, font, Component.literal("Sound Picker"), layout.title(), 1, 0xFFFFFFFF);
+            text(graphics, font, Component.translatable("gadgetsngizmos.text.sound_picker"), layout.title(), 1, 0xFFFFFFFF);
             search.render(graphics, (int)x, (int)y, partialTick);
             for(int slot = 0; slot < COLUMNS * ROWS; slot++){
                 int idx = scroll.offset() * COLUMNS + slot;
                 if(idx >= filtered.size()) break;
                 drawEntry(graphics, font, filtered.get(idx), slot, x, y);
             }
-            if(filtered.isEmpty()) text(graphics, font, Component.literal("No matching sounds"), layout.grid(), 1, 0xFFAAAAAA);
+            if(filtered.isEmpty()) text(graphics, font, Component.translatable("gadgetsngizmos.text.no_matching_sounds"), layout.grid(), 1, 0xFFAAAAAA);
             Region track = layout.scrollbar();
             if(scroll.maximumOffset() > 0){
                 graphics.fill(track.x(), track.y(), track.right(), track.bottom(), 0xFF202020);
@@ -250,14 +250,14 @@ public final class SoundPickerModal implements AutoCloseable{
         boolean playing = preview.isPlaying(entry.id());
         graphics.fill(button.x(), button.y(), button.right(), button.bottom(), button.contains(x, y) ? 0xFF555555 : 0xFF383838);
         graphics.renderOutline(button.x(), button.y(), button.width(), button.height(), playing ? 0xFFE5BA64 : 0xFF777777);
-        text(graphics, font, Component.literal(playing ? "Stop" : "Preview"), button, 0.8F, 0xFFFFFFFF);
+        text(graphics, font, Component.translatable(playing ? "gadgetsngizmos.text.stop" : "gadgetsngizmos.text.preview"), button, 0.8F, 0xFFFFFFFF);
     }
 
     private List<Component> tooltip(double x, double y){
-        if(appearance.layout().search().contains(x, y)) return List.of(Component.literal("Name or ID, @mod, #sound_event_tag"),
-                Component.literal("Combine terms, \"quoted phrases\", -exclude, or | alternatives"));
-        if(appearance.layout().accept().contains(x, y)) return List.of(Component.literal("Select sound"));
-        if(appearance.layout().cancel().contains(x, y)) return List.of(Component.literal("Cancel"));
+        if(appearance.layout().search().contains(x, y)) return List.of(Component.translatable("gadgetsngizmos.text.name_or_id_mod_sound_event_tag"),
+                Component.translatable("gadgetsngizmos.text.combine_terms_quoted_phrases_exclude_or_alternatives"));
+        if(appearance.layout().accept().contains(x, y)) return List.of(Component.translatable("gadgetsngizmos.text.select_sound"));
+        if(appearance.layout().cancel().contains(x, y)) return List.of(Component.translatable("gadgetsngizmos.text.cancel"));
         for(int slot = 0; slot < COLUMNS * ROWS; slot++){
             int idx = scroll.offset() * COLUMNS + slot;
             if(idx >= filtered.size()) break;

@@ -13,6 +13,8 @@ import java.util.function.LongConsumer;
 
 // Track ready Sodium chunks independently without draining the player's event queue
 public final class ViewChunkCompat{
+    // Spread cold terrain allocation across refreshes instead of rebuilding the player window at once
+    private static final int MAX_CHUNK_ADDITIONS = 16;
     private final Object manager;
     private final Object tracker;
     private final Method readyChunks;
@@ -23,6 +25,10 @@ public final class ViewChunkCompat{
 
     // Start with the chunks already populated by Sodium's renderer initialization
     public ViewChunkCompat(Object renderer){
+        this(renderer, null);
+    }
+    // Retain the actual initialization window while older Sodium variants keep their original chunk history
+    public ViewChunkCompat(Object renderer, @Nullable LongCollection initial){
         try{
             var managerField = renderer.getClass().getDeclaredField("renderSectionManager");
             var levelField = renderer.getClass().getDeclaredField("level");
@@ -36,7 +42,7 @@ public final class ViewChunkCompat{
             beforeUpdates = beforeUpdates(manager);
             addChunk = manager.getClass().getMethod("onChunkAdded", int.class, int.class);
             removeChunk = manager.getClass().getMethod("onChunkRemoved", int.class, int.class);
-            known.addAll((LongCollection) readyChunks.invoke(tracker));
+            known.addAll(initial == null ? (LongCollection)readyChunks.invoke(tracker) : initial);
         }catch(ReflectiveOperationException err){
             throw new IllegalStateException("Sodium secondary chunk tracking is unavailable", err);
         }
@@ -58,8 +64,10 @@ public final class ViewChunkCompat{
                 removeChunk.invoke(manager, ChunkPos.getX(pos), ChunkPos.getZ(pos));
                 removed.remove();
             }
+            int[] remaining = {MAX_CHUNK_ADDITIONS};
             forEachReadyChunk(ready, x, z, distance, pos -> {
-                if(known.add(pos)){
+                if(remaining[0] > 0 && known.add(pos)){
+                    remaining[0]--;
                     try{
                         addChunk.invoke(manager, ChunkPos.getX(pos), ChunkPos.getZ(pos));
                     }catch(ReflectiveOperationException err){
@@ -71,12 +79,32 @@ public final class ViewChunkCompat{
             throw new IllegalStateException("Sodium secondary chunks could not be updated", err);
         }
     }
+    // Seed only nearby terrain while a secondary renderer initializes
+    public static LongCollection initialChunks(LongCollection ready){
+        var lens = ViewSceneRenderer.capturePose();
+        if(lens == null) return ready;
+        int x = SectionPos.blockToSectionCoord(lens.position().x);
+        int z = SectionPos.blockToSectionCoord(lens.position().z);
+        int distance = (int)(ViewSceneRenderer.captureDistance() / 16) + 1;
+        return initialChunks(ready, x, z, distance);
+    }
+    // Collect the nearest initial chunks without allocating the entire loaded player window
+    static LongCollection initialChunks(LongCollection ready, int x, int z, int distance){
+        LongSet chunks = new LongOpenHashSet();
+        forEachReadyChunk(ready, x, z, distance, pos -> {
+            if(chunks.size() < MAX_CHUNK_ADDITIONS) chunks.add(pos);
+        });
+        return chunks;
+    }
     // Probe only the lens window instead of walking every chunk loaded around the player
     static void forEachReadyChunk(LongCollection ready, int x, int z, int distance, LongConsumer action){
-        for(int chunkX = x - distance; chunkX <= x + distance; chunkX++){
-            for(int chunkZ = z - distance; chunkZ <= z + distance; chunkZ++){
-                long pos = ChunkPos.asLong(chunkX, chunkZ);
-                if(ready.contains(pos)) action.accept(pos);
+        for(int ring = 0; ring <= distance; ring++){
+            for(int dx = -ring; dx <= ring; dx++){
+                for(int dz = -ring; dz <= ring; dz++){
+                    if(Math.max(Math.abs(dx), Math.abs(dz)) != ring) continue;
+                    long pos = ChunkPos.asLong(x + dx, z + dz);
+                    if(ready.contains(pos)) action.accept(pos);
+                }
             }
         }
     }

@@ -8,6 +8,7 @@ package com.rieno.gadgetsandgizmos.lib.view;
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
+import org.joml.Matrix3d;
 import org.joml.Quaterniond;
 import org.joml.Quaterniondc;
 import org.joml.Vector3d;
@@ -53,6 +54,25 @@ public final class ViewRig{
     // Apply bounded mouse motion to the retained aim
     public void turn(double panDelta, double tiltDelta){
         aim(pan + clamp(panDelta, -45, 45), tilt + clamp(tiltDelta, -45, 45));
+    }
+
+    // Apply pointer motion around the upright image axes before resolving the physical joints
+    public void turnInView(Quaterniondc mount, Orientation frame, double panDelta, double tiltDelta){
+        double dx = clamp(panDelta, -45, 45), dy = clamp(tiltDelta, -45, 45);
+        if(dx == 0 && dy == 0) return;
+        Quaterniond view = uprightOrientation(worldOrientation(mount, frame, new Angles(pan, tilt)));
+        Vector3d dir = view.rotateY(Math.toRadians(dx)).rotateX(Math.toRadians(dy))
+                .transform(new Vector3d(0, 0, -1));
+        if(frame == Orientation.LOCAL) mount.transformInverse(dir);
+        double nextPan = dir.x * dir.x + dir.z * dir.z < 1.0E-12
+                ? pan : Math.toDegrees(Math.atan2(-dir.x, -dir.z));
+        double nextTilt = Math.toDegrees(Math.atan2(Math.hypot(dir.x, dir.z), dir.y));
+        double firstTilt = clamp(-nextTilt, -135, 135), secondTilt = clamp(nextTilt, -135, 135);
+        double secondPan = wrapPan(nextPan + 180);
+        double firstCost = Math.pow(wrapPan(nextPan - pan), 2) + Math.pow(firstTilt - tilt, 2);
+        double secondCost = Math.pow(wrapPan(secondPan - pan), 2) + Math.pow(secondTilt - tilt, 2);
+        if(secondCost < firstCost) aim(secondPan, secondTilt);
+        else aim(nextPan, firstTilt);
     }
 
     // Apply scroll zoom to the retained field of view
@@ -112,6 +132,17 @@ public final class ViewRig{
     public static Quaterniond worldOrientation(Quaterniondc mount, Orientation mode, Angles angles){
         Quaterniond aim = orientation(angles);
         return mode == Orientation.GLOBAL ? aim : new Quaterniond(mount).mul(aim);
+    }
+
+    // Remove mounting roll while retaining the lens direction and a stable vertical fallback
+    public static Quaterniond uprightOrientation(Quaterniondc orientation){
+        Vector3d forward = new Quaterniond(orientation).normalize().transform(new Vector3d(0, 0, -1));
+        Vector3d right = new Vector3d(forward).cross(0, 1, 0);
+        if(right.lengthSquared() < 1.0E-12) right.set(1, 0, 0).fma(-forward.x, forward);
+        right.normalize();
+        Vector3d up = new Vector3d(right).cross(forward).normalize();
+        return new Quaterniond().setFromNormalized(new Matrix3d().set(
+                right.x, right.y, right.z, up.x, up.y, up.z, -forward.x, -forward.y, -forward.z));
     }
 
     // Split a stabilised orientation into the stand and its camera child

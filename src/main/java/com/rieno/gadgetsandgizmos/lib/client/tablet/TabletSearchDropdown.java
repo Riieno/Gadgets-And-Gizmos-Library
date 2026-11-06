@@ -1,5 +1,6 @@
 package com.rieno.gadgetsandgizmos.lib.client.tablet;
 
+import com.rieno.gadgetsandgizmos.lib.text.LocalizedText;
 import com.rieno.gadgetsandgizmos.lib.client.ui.GuiControlPreviews;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
@@ -29,7 +30,7 @@ public final class TabletSearchDropdown{
         offset = Math.clamp(offset, 0, Math.max(0, filtered.size() - 6));
         graphics.fill(x - 1, y - 1, x + width + 1, y + 83, 0xFF141414);
         graphics.fill(x, y, x + width, y + 12, 0xFF515151);
-        text(graphics, font, filter.isBlank() ? "Search timezone..." : filter + "_", x + 3, y + 2, width - 6);
+        text(graphics, font, filter.isBlank() ? LocalizedText.get("gadgetsngizmos.text.search_timezone") : filter + "_", x + 3, y + 2, width - 6);
         for(int idx = 0; idx < Math.min(6, filtered.size() - offset); idx++){
             graphics.fill(x, y + 13 + idx * 11, x + width, y + 24 + idx * 11, idx % 2 == 0 ? 0xFF303030 : 0xFF393939);
             text(graphics, font, filtered.get(offset + idx), x + 3, y + 15 + idx * 11, width - 6);
