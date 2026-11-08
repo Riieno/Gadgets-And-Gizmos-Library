@@ -24,6 +24,16 @@ public final class SplineRouteTraversal{
     public double fraction(){ return fraction; }
     public Vec3 entry(){ return spline.waypoints().getFirst(); }
 
+    // Carry the entire lane with a rigid frame without losing captured or ordered progress
+    public SplineRouteTraversal transformed(java.util.function.UnaryOperator<Vec3> transform){
+        var res = new SplineRouteTraversal(WaypointSpline.of(spline.waypoints().stream().map(transform).toList()), !captured);
+        if(res.spline.segments().size() != spline.segments().size())
+            throw new IllegalArgumentException("A route transform must preserve its legs");
+        res.segment = segment;
+        res.fraction = fraction;
+        return res;
+    }
+
     // Replace only unvisited travel; a captured ship must retain the same directed prefix
     public Optional<SplineRouteTraversal> withContinuation(WaypointSpline replacement, double tolerance){
         if(replacement == null || replacement.isEmpty()) return Optional.empty();

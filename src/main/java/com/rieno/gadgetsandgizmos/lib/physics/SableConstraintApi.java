@@ -108,7 +108,8 @@ public final class SableConstraintApi {
     public static @Nullable GenericConstraintHandle fixedFrameConstraint(PhysicsPipeline pipeline,
             @Nullable PhysicsPipelineBody bodyA, @Nullable PhysicsPipelineBody bodyB,
             Vector3dc posA, Vector3dc posB, Quaterniondc orientation){
-        if(bodyA == bodyB) return null;
+        if(bodyA == bodyB || bodyA != null && !SablePhysicsBodyApi.isLoaded(pipeline, bodyA)
+                || bodyB != null && !SablePhysicsBodyApi.isLoaded(pipeline, bodyB)) return null;
         GenericConstraintHandle handle = pipeline.addConstraint(bodyA, bodyB,
                 new GenericConstraintConfiguration(new Vector3d(posA), new Vector3d(posB),
                         new Quaterniond(orientation).normalize(), new Quaterniond(), Set.of(ConstraintJointAxis.ALL)));
@@ -120,7 +121,8 @@ public final class SableConstraintApi {
     public static @Nullable RotaryConstraintHandle rotaryConstraint(PhysicsPipeline pipeline,
             @Nullable PhysicsPipelineBody bodyA, @Nullable PhysicsPipelineBody bodyB,
             Vector3dc posA, Vector3dc posB, Vector3dc axisA, Vector3dc axisB){
-        if(bodyA == bodyB) return null;
+        if(bodyA == bodyB || bodyA != null && !SablePhysicsBodyApi.isLoaded(pipeline, bodyA)
+                || bodyB != null && !SablePhysicsBodyApi.isLoaded(pipeline, bodyB)) return null;
         RotaryConstraintHandle handle = pipeline.addConstraint(bodyA, bodyB,
                 new RotaryConstraintConfiguration(new Vector3d(posA), new Vector3d(posB),
                         new Vector3d(axisA).normalize(), new Vector3d(axisB).normalize()));
@@ -191,6 +193,9 @@ public final class SableConstraintApi {
         if (bodyA == bodyB) {
             return null;
         }
+        if(pipeline instanceof PhysicsPipeline physics
+                && (bodyA instanceof PhysicsPipelineBody first && !SablePhysicsBodyApi.isLoaded(physics, first)
+                || bodyB instanceof PhysicsPipelineBody second && !SablePhysicsBodyApi.isLoaded(physics, second))) return null;
         for (Method method : pipeline.getClass().getMethods()) {
             if (!"addConstraint".equals(method.getName()) || method.getParameterCount() != 3) {
                 continue;
@@ -214,6 +219,8 @@ public final class SableConstraintApi {
         if (body == null) {
             return;
         }
+        if(pipeline instanceof PhysicsPipeline physics && body instanceof PhysicsPipelineBody target
+                && !SablePhysicsBodyApi.isLoaded(physics, target)) return;
         for (Method method : pipeline.getClass().getMethods()) {
             if ("wakeUp".equals(method.getName()) && method.getParameterCount() == 1
                     && acceptsBody(method.getParameterTypes()[0], body)) {

@@ -46,6 +46,7 @@
     "SubLevelAssemblyAttachmentsMixin",
     "SableLevelPlotActorLookupMixin",
     "SablePhysicalConnectionMixin",
+    "SablePhysicsBodyMixin",
     "SableConstraintRemovalMixin",
     "SableCollisionPhysicsFrameMixin",
     "SubLevelArchiveAllocationMixin",

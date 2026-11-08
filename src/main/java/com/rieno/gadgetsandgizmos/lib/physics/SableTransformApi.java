@@ -13,6 +13,7 @@ import dev.ryanhcode.sable.api.entity.EntitySubLevelUtil;
 import dev.ryanhcode.sable.companion.math.BoundingBox3d;
 import dev.ryanhcode.sable.companion.math.Pose3dc;
 import dev.ryanhcode.sable.sublevel.SubLevel;
+import dev.ryanhcode.sable.mixinterface.clip_overwrite.LevelPoseProviderExtension;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
@@ -53,6 +54,22 @@ public final class SableTransformApi {
         sourcePose.transformPosition(world);
         targetPose.transformPositionInverse(world);
         return new Vec3(world.x, world.y, world.z);
+    }
+
+    // Follow the active picking or rendering poses without loading client classes on the server
+    public static Vec3 contextualPosition(@Nullable Level level, @Nullable SubLevel source, Vec3 pos,
+                                          @Nullable SubLevel target){
+        if(source == target) return pos;
+        Vector3d res = new Vector3d(pos.x, pos.y, pos.z);
+        if(source != null){
+            Pose3dc pose = level instanceof LevelPoseProviderExtension ctx ? ctx.sable$getPose(source) : source.logicalPose();
+            pose.transformPosition(res);
+        }
+        if(target != null){
+            Pose3dc pose = level instanceof LevelPoseProviderExtension ctx ? ctx.sable$getPose(target) : target.logicalPose();
+            pose.transformPositionInverse(res);
+        }
+        return new Vec3(res.x, res.y, res.z);
     }
 
     // Rotate a local vector between body frames without translating, normalizing or reversing it.

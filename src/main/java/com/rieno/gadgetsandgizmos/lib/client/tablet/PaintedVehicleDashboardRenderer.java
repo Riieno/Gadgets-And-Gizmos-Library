@@ -16,6 +16,7 @@ import com.rieno.gadgetsandgizmos.lib.client.render.LoadedTerrainMap;
 import com.rieno.gadgetsandgizmos.lib.client.render.NavigationMapLines;
 import com.rieno.gadgetsandgizmos.lib.navigation.NavigationMapData;
 import com.rieno.gadgetsandgizmos.lib.navigation.NavigationHeading;
+import com.rieno.gadgetsandgizmos.lib.navigation.NavigationDestinations;
 import com.rieno.gadgetsandgizmos.lib.client.ui.GuiControlPreviews;
 import com.rieno.gadgetsandgizmos.lib.client.ui.GuiScrollbar;
 import com.rieno.gadgetsandgizmos.lib.client.ui.ListScrollState;
@@ -61,6 +62,7 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
 
     private static final class State implements TabletAppClientState, AutoCloseable{
         private final TabletAppPanel panel = new TabletAppPanel();
+        private final TabletAppPanel navigationPanel = new TabletAppPanel();
         private final ListScrollState scroll = new ListScrollState();
         private final GuiScrollbar bar = new GuiScrollbar(0xFF202020, 0xFF888888);
         private final List<Hit> hits = new ArrayList<>();
@@ -70,6 +72,8 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
         private String category = "items";
         private String filter = "";
         private boolean navigation;
+        private int navigationPage;
+        private int destinationPage;
         private ResourceLocation disc;
         private MusicDiscCatalog.Track track;
         private CompoundTag mapTag;
@@ -115,6 +119,7 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
             ctx.graphics().pose().scale((float)bounds.scaleX(), (float)bounds.scaleY(), 1);
             region(0, 0, 320, 180).draw(ctx.graphics(), 0, 0);
             state.panel.begin(local, false);
+            state.navigationPanel.begin(local, false);
             state.hits.clear();
             if("manifest".equals(ctx.tab().id())) manifest(local, state);
             else if("stats".equals(ctx.tab().id())) stats(local, state);
@@ -182,7 +187,7 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
                     ctx.graphics().pose().translate(0, 0, 5);
                     panel.draw(ctx.graphics(), 19, 122, 125, 26);
                     text(ctx, LocalizedText.get("gadgetsngizmos.text.facing") + data.getString("Facing").toUpperCase(Locale.ROOT), 30, 126, 107, 9, .75F, GREEN, false);
-                    text(ctx, String.format(Locale.ROOT, LocalizedText.get("gadgetsngizmos.text.speed_1f_blocks_s"), data.getDouble("Speed")), 30, 136, 107, 9, .75F, 0xFFF52D7F, false);
+                    text(ctx, String.format(Locale.ROOT, LocalizedText.get("gadgetsngizmos.text.speed_1f_blocks_s"), Math.round(data.getDouble("Speed"))), 30, 136, 107, 9, .75F, 0xFFF52D7F, false);
                 }finally{ ctx.graphics().pose().popPose(); }
             }
             telemetry(ctx);
@@ -199,15 +204,78 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
             ctx.graphics().pose().pushPose();
             ctx.graphics().pose().translate(0, 0, 50);
             try{
-                panel.draw(ctx.graphics(), 54, 87, 112, 63);
-                control(ctx, state, 61, 94, 98, LocalizedText.get("gadgetsngizmos.text.navigate_to_coordinates"), data.getBoolean("Available"), () ->
-                        ctx.ui().editText("X, Y, Z coordinates", "", 96, val -> ctx.actions().send("navigate", val)));
-                control(ctx, state, 61, 107, 47, LocalizedText.get("gadgetsngizmos.text.hover"), data.getBoolean("Available"), () -> ctx.actions().send("hover", ""));
-                control(ctx, state, 112, 107, 47, LocalizedText.get("gadgetsngizmos.text.dock"), data.getBoolean("Available"), () -> ctx.actions().send("dock", ""));
-                control(ctx, state, 61, 120, 98, LocalizedText.get("gadgetsngizmos.text.ship_statistics"), true, () -> ctx.ui().selectTab("stats"));
-                text(ctx, data.getBoolean("Pilot") ? LocalizedText.get("gadgetsngizmos.text.pilot_schedule_active") : LocalizedText.get("gadgetsngizmos.text.manual_trip"), 62, 134, 96, 8, .65F, MUTED, true);
+                navigation(ctx, state);
             }finally{ ctx.graphics().pose().popPose(); }
         }
+    }
+
+    // Keep creation and saved choices in the navigation popup on every tablet host
+    private void navigation(TabletAppClientContext ctx, State state){
+        panel.draw(ctx.graphics(), 54, 35, 200, 115);
+        text(ctx, LocalizedText.get(state.navigationPage == 1 ? "gadgetsngizmos.text.create_destination"
+                : state.navigationPage == 2 ? "gadgetsngizmos.text.saved_destinations" : "gadgetsngizmos.text.navigation"),
+                61, 40, 171, 10, .85F, TEXT, false);
+        navControl(ctx, state, 238, 40, 10, "X", true, () -> { state.navigation = false; state.navigationPanel.clearFocus(); });
+        boolean available = ctx.data().getBoolean("Available");
+        if(state.navigationPage == 1){
+            var form = state.navigationPanel;
+            text(ctx, LocalizedText.get("gadgetsngizmos.text.destination_name"), 61, 54, 186, 8, .7F, MUTED, false);
+            button.draw(ctx.graphics(), 61, 64, 186, 14);
+            form.paintedInput(ctx, "destination_name", 61, 64, 186, 14, LocalizedText.get("gadgetsngizmos.text.destination_name"));
+            text(ctx, LocalizedText.get("gadgetsngizmos.text.coordinates"), 61, 81, 186, 8, .7F, MUTED, false);
+            button.draw(ctx.graphics(), 61, 91, 186, 14);
+            form.paintedInput(ctx, "destination_coordinates", 61, 91, 186, 14, "X, Y, Z");
+            navControl(ctx, state, 61, 109, 186, LocalizedText.get("gadgetsngizmos.text.use_current_location"), available,
+                    () -> form.setValue("destination_coordinates", currentCoordinates(ctx)));
+            boolean valid = !form.value("destination_name").isBlank()
+                    && form.value("destination_name").strip().length() <= NavigationDestinations.MAX_NAME_LENGTH
+                    && NavigationDestinations.parseCoordinates(form.value("destination_coordinates")).isPresent();
+            navControl(ctx, state, 61, 129, 91, LocalizedText.get("gadgetsngizmos.text.save_destination"), available && valid, () -> {
+                ctx.actions().send("destination_save", form.value("destination_name").strip() + "|" + form.value("destination_coordinates"));
+                form.clearFocus(); state.navigationPage = 2;
+            });
+            navControl(ctx, state, 156, 129, 91, LocalizedText.get("gadgetsngizmos.text.back"), true, () -> { form.clearFocus(); state.navigationPage = 0; });
+            return;
+        }
+        if(state.navigationPage == 2){
+            var saved = NavigationDestinations.fromTag(ctx.data().getCompound("SavedDestinations")).entries();
+            int pages = Math.max(1, (saved.size() + 2) / 3);
+            state.destinationPage = Math.clamp(state.destinationPage, 0, pages - 1);
+            for(int idx = state.destinationPage * 3; idx < Math.min(saved.size(), state.destinationPage * 3 + 3); idx++){
+                var entry = saved.get(idx);
+                int y = 55 + idx % 3 * 23;
+                navControl(ctx, state, 61, y, 169, entry.name(), available, () -> ctx.actions().send("destination_navigate", entry.id().toString()));
+                navControl(ctx, state, 234, y, 13, "X", available, () -> ctx.actions().send("destination_remove", entry.id().toString()));
+                text(ctx, entry.coordinates(), 63, y + 12, 182, 8, .6F, MUTED, false);
+            }
+            if(saved.isEmpty()) text(ctx, LocalizedText.get("gadgetsngizmos.text.no_saved_destinations"), 61, 75, 186, 20, .8F, MUTED, true);
+            navControl(ctx, state, 61, 129, 18, "<", state.destinationPage > 0, () -> state.destinationPage--);
+            text(ctx, (state.destinationPage + 1) + "/" + pages, 81, 131, 30, 8, .65F, MUTED, true);
+            navControl(ctx, state, 113, 129, 18, ">", state.destinationPage + 1 < pages, () -> state.destinationPage++);
+            navControl(ctx, state, 135, 129, 112, LocalizedText.get("gadgetsngizmos.text.back"), true, () -> state.navigationPage = 0);
+            return;
+        }
+        navControl(ctx, state, 61, 54, 186, LocalizedText.get("gadgetsngizmos.text.navigate_to_coordinates"), available, () ->
+                ctx.ui().editText("X, Y, Z", "", 96, val -> ctx.actions().send("navigate", val)));
+        navControl(ctx, state, 61, 67, 186, LocalizedText.get("gadgetsngizmos.text.create_destination"), available, () -> {
+            state.navigationPage = 1;
+            state.navigationPanel.setValue("destination_name", "");
+            state.navigationPanel.setValue("destination_coordinates", currentCoordinates(ctx));
+        });
+        navControl(ctx, state, 61, 80, 186, LocalizedText.get("gadgetsngizmos.text.saved_destinations"), available, () -> state.navigationPage = 2);
+        navControl(ctx, state, 61, 93, 91, LocalizedText.get("gadgetsngizmos.text.hover"), available, () -> ctx.actions().send("hover", ""));
+        navControl(ctx, state, 156, 93, 91, LocalizedText.get("gadgetsngizmos.text.dock"), available, () -> ctx.actions().send("dock", ""));
+        navControl(ctx, state, 61, 106, 186, LocalizedText.get("gadgetsngizmos.text.ship_statistics"), true, () -> { state.navigation = false; ctx.ui().selectTab("stats"); });
+        text(ctx, ctx.data().getBoolean("Pilot") ? LocalizedText.get("gadgetsngizmos.text.pilot_schedule_active")
+                : LocalizedText.get("gadgetsngizmos.text.manual_trip"), 61, 132, 186, 8, .65F, MUTED, true);
+    }
+
+    private void navControl(TabletAppClientContext ctx, State state, int x, int y, int width, String label, boolean enabled, Runnable action){
+        state.navigationPanel.paintedButton(ctx, button, x, y, width, 11, label, enabled, action);
+    }
+
+    private static String currentCoordinates(TabletAppClientContext ctx){
+        return Math.round(ctx.data().getDouble("X")) + ", " + Math.round(ctx.data().getDouble("Y")) + ", " + Math.round(ctx.data().getDouble("Z"));
     }
 
     private void telemetry(TabletAppClientContext ctx){
@@ -363,7 +431,7 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
         panel.draw(ctx.graphics(), 7, 19, 306, 128);
         text(ctx, ctx.data().getString("Ship") + LocalizedText.get("gadgetsngizmos.text.ship_statistics_2"), 16, 24, 285, 12, .95F, TEXT, false);
         String[] names = {LocalizedText.get("gadgetsngizmos.text.speed"), LocalizedText.get("gadgetsngizmos.text.weight"), LocalizedText.get("gadgetsngizmos.text.fuel_2"), LocalizedText.get("gadgetsngizmos.text.cargo"), LocalizedText.get("gadgetsngizmos.text.fluids"), LocalizedText.get("gadgetsngizmos.text.energy")};
-        String[] values = {String.format(Locale.ROOT, LocalizedText.get("gadgetsngizmos.text.1f_blocks_s"), ctx.data().getDouble("Speed")),
+        String[] values = {String.format(Locale.ROOT, LocalizedText.get("gadgetsngizmos.text.1f_blocks_s"), Math.round(ctx.data().getDouble("Speed"))),
                 String.format(Locale.ROOT, LocalizedText.get("gadgetsngizmos.text.0f_kg"), ctx.data().getDouble("Weight")), Math.round(ctx.data().getDouble("Fuel") * 100) + "%",
                 ctx.data().getLong("Cargo") + " items", ctx.data().getLong("Fluids") + " mB", ctx.data().getLong("Energy") + " FE"};
         for(int idx = 0; idx < names.length; idx++){
@@ -393,6 +461,11 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
         var bounds = bounds(ctx);
         x = (x - bounds.left()) / bounds.scaleX();
         y = (y - bounds.top()) / bounds.scaleY();
+        if(state.navigation && "drive".equals(ctx.tab().id())){
+            if(state.navigationPanel.click(x, y, btn)) return true;
+            if(new TabletLayout.Rect(54, 35, 200, 115).contains(x, y)) return true;
+            state.navigationPanel.clearFocus();
+        }
         if(state.panel.click(x, y, btn)) return true;
         if(btn != 0 && !(btn == 1 && ctx.ui().projected())) return false;
         if("manifest".equals(ctx.tab().id()) && state.bar.mouseClicked(x, y, 0)){
@@ -428,8 +501,16 @@ public class PaintedVehicleDashboardRenderer implements TabletAppClientRenderer{
     }
 
     @Override public boolean mouseReleased(TabletAppClientContext ctx, TabletAppClientState raw, double x, double y, int btn){ return ((State)raw).bar.mouseReleased(); }
-    @Override public boolean keyPressed(TabletAppClientContext ctx, TabletAppClientState raw, int key, int scan, int mods){ return ((State)raw).panel.keyPressed(key, mods); }
-    @Override public boolean chatTyped(TabletAppClientContext ctx, TabletAppClientState raw, char ch, int mods){ return ((State)raw).panel.charTyped(ch); }
+    @Override public boolean keyPressed(TabletAppClientContext ctx, TabletAppClientState raw, int key, int scan, int mods){
+        State state = (State)raw;
+        if(state.navigation && "drive".equals(ctx.tab().id()) && state.navigationPanel.keyPressed(key, mods)) return true;
+        return state.panel.keyPressed(key, mods);
+    }
+    @Override public boolean chatTyped(TabletAppClientContext ctx, TabletAppClientState raw, char ch, int mods){
+        State state = (State)raw;
+        if(state.navigation && "drive".equals(ctx.tab().id()) && state.navigationPanel.charTyped(ch)) return true;
+        return state.panel.charTyped(ch);
+    }
 
     private void control(TabletAppClientContext ctx, State state, int x, int y, int width, String label, boolean enabled, Runnable action){
         state.panel.paintedButton(ctx, button, x, y, width, 11, label, enabled, action);

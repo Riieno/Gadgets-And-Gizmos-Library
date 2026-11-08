@@ -282,7 +282,7 @@
   "gadgetsngizmos.text.edit_this_playlist_to_add_music_discs": "このプレイリストを編集して音楽ディスクを追加してください",
   "gadgetsngizmos.text.no_matching_music_discs": "一致する音楽ディスクがありません",
   "gadgetsngizmos.text.facing": "向き: ",
-  "gadgetsngizmos.text.speed_1f_blocks_s": "速度: %.1f ブロック/秒",
+  "gadgetsngizmos.text.speed_1f_blocks_s": "速度: %s ブロック/秒",
   "gadgetsngizmos.text.ship_connection_required": "船舶接続が必要です",
   "gadgetsngizmos.text.connect_to_an_initialized_ship_with_an_advanced_contraption_controller": "高度な仕掛けコントローラーを使用して初期化された船に接続します",
   "gadgetsngizmos.text.no_ship_telemetry": "船舶テレメトリなし",
@@ -313,7 +313,7 @@
   "gadgetsngizmos.text.weight": "重さ",
   "gadgetsngizmos.text.cargo": "貨物",
   "gadgetsngizmos.text.energy": "エネルギー",
-  "gadgetsngizmos.text.1f_blocks_s": "%.1f ブロック/秒",
+  "gadgetsngizmos.text.1f_blocks_s": "%s ブロック/秒",
   "gadgetsngizmos.text.0f_kg": "%.0f kg",
   "gadgetsngizmos.text.tablet_app_renderer_already_registered": "タブレット アプリ レンダラーはすでに登録されています: ",
   "gadgetsngizmos.text.cannot_release_tablet_app_state": "タブレットアプリの状態を解除できません",
@@ -331,5 +331,12 @@
   "gadgetsngizmos.text.playlist_track_limit_reached": "プレイリストのトラック制限に達しました",
   "gadgetsngizmos.text.playlist_unavailable": "プレイリストが利用できません",
   "gadgetsngizmos.text.enter_a_playlist_name_1_48_characters": "プレイリスト名を入力します (1 ～ 48 文字)",
-  "gadgetsngizmos.text.playlist_name_already_used": "プレイリスト名はすでに使用されています"
+  "gadgetsngizmos.text.playlist_name_already_used": "プレイリスト名はすでに使用されています",
+  "gadgetsngizmos.text.create_destination": "目的地を作成",
+  "gadgetsngizmos.text.saved_destinations": "保存済みの目的地",
+  "gadgetsngizmos.text.destination_name": "目的地の名前",
+  "gadgetsngizmos.text.use_current_location": "現在地を使用",
+  "gadgetsngizmos.text.save_destination": "目的地を保存",
+  "gadgetsngizmos.text.no_saved_destinations": "保存済みの目的地はありません",
+  "gadgetsngizmos.text.invalid_destination": "名前と有効なX、Y、Z座標を入力してください。"
 }

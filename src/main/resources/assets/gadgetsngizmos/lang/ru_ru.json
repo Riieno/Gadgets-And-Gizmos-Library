@@ -282,7 +282,7 @@
   "gadgetsngizmos.text.edit_this_playlist_to_add_music_discs": "Отредактируйте этот плейлист, добавив музыкальные диски.",
   "gadgetsngizmos.text.no_matching_music_discs": "Нет подходящих музыкальных дисков",
   "gadgetsngizmos.text.facing": "Облицовка: ",
-  "gadgetsngizmos.text.speed_1f_blocks_s": "Скорость: %.1f блоков/с",
+  "gadgetsngizmos.text.speed_1f_blocks_s": "Скорость: %s блоков/с",
   "gadgetsngizmos.text.ship_connection_required": "Требуется подключение к судну",
   "gadgetsngizmos.text.connect_to_an_initialized_ship_with_an_advanced_contraption_controller": "Подключитесь к инициализированному кораблю с помощью усовершенствованного хитроумного контроллера.",
   "gadgetsngizmos.text.no_ship_telemetry": "Нет корабельной телеметрии",
@@ -313,7 +313,7 @@
   "gadgetsngizmos.text.weight": "Масса",
   "gadgetsngizmos.text.cargo": "Груз",
   "gadgetsngizmos.text.energy": "Энергия",
-  "gadgetsngizmos.text.1f_blocks_s": "%.1f блоков/с",
+  "gadgetsngizmos.text.1f_blocks_s": "%s блоков/с",
   "gadgetsngizmos.text.0f_kg": "%.0f кг",
   "gadgetsngizmos.text.tablet_app_renderer_already_registered": "Средство рендеринга приложений для планшетов уже зарегистрировано: ",
   "gadgetsngizmos.text.cannot_release_tablet_app_state": "Невозможно опубликовать состояние приложения для планшета",
@@ -331,5 +331,12 @@
   "gadgetsngizmos.text.playlist_track_limit_reached": "Достигнут лимит треков в плейлисте\nПлейлист",
   "gadgetsngizmos.text.playlist_unavailable": "недоступен.",
   "gadgetsngizmos.text.enter_a_playlist_name_1_48_characters": "Введите название списка воспроизведения (1–48 символов)",
-  "gadgetsngizmos.text.playlist_name_already_used": "Название плейлиста уже использовано"
+  "gadgetsngizmos.text.playlist_name_already_used": "Название плейлиста уже использовано",
+  "gadgetsngizmos.text.create_destination": "Создать пункт назначения",
+  "gadgetsngizmos.text.saved_destinations": "Сохранённые пункты",
+  "gadgetsngizmos.text.destination_name": "Название пункта",
+  "gadgetsngizmos.text.use_current_location": "Использовать текущее место",
+  "gadgetsngizmos.text.save_destination": "Сохранить пункт",
+  "gadgetsngizmos.text.no_saved_destinations": "Нет сохранённых пунктов",
+  "gadgetsngizmos.text.invalid_destination": "Введите название и допустимые координаты X, Y, Z."
 }

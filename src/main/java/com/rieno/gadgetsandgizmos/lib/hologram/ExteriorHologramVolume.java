@@ -50,10 +50,10 @@ final class ExteriorHologramVolume implements BlockGetter{
 
 ------------------------------------------------------------##-----------------------------------------------------*/
 
-    ExteriorHologramVolume(ServerLevel level, LevelChunk chunk){
+    ExteriorHologramVolume(ServerLevel level, LevelChunk chunk, int bottom, int topY){
         x = chunk.getPos().getMinBlockX() - 1;
         z = chunk.getPos().getMinBlockZ() - 1;
-        minY = level.getMinBuildHeight();
+        minY = Math.clamp(bottom, level.getMinBuildHeight(), level.getMaxBuildHeight() - 1);
         LevelChunk[] neighbors = new LevelChunk[9];
         for(int dx = -1; dx <= 1; dx++) for(int dz = -1; dz <= 1; dz++){
             neighbors[(dz + 1) * 3 + dx + 1] = dx == 0 && dz == 0 ? chunk
@@ -62,11 +62,11 @@ final class ExteriorHologramVolume implements BlockGetter{
         int maxY = minY;
         for(int bz = 0; bz < WIDTH; bz++) for(int bx = 0; bx < WIDTH; bx++){
             LevelChunk neighbor = neighbors[neighborIndex(bx, bz)];
-            int top = neighbor == null ? minY - 1 : SurfaceHologramSampler.surfaceHeight(neighbor, (x + bx) & 15, (z + bz) & 15, minY);
+            int top = neighbor == null ? minY - 1 : SurfaceHologramSampler.surfaceHeight(neighbor, (x + bx) & 15, (z + bz) & 15, level.getMinBuildHeight());
             tops[bz * WIDTH + bx] = top;
             maxY = Math.max(maxY, top + 2);
         }
-        height = Math.max(1, Math.min(level.getMaxBuildHeight(), maxY) - minY);
+        height = Math.max(1, Math.min(Math.min(topY, level.getMaxBuildHeight()), maxY) - minY);
         states = new BlockState[AREA * height];
         exterior = new boolean[states.length];
         closedFaces = new byte[states.length];
@@ -137,7 +137,7 @@ final class ExteriorHologramVolume implements BlockGetter{
     // Skip buried solids before allocating neighbor positions for their individual face tests
     boolean exposed(BlockPos pos){
         int idx = index(pos);
-        return idx >= 0 && (exterior[idx] || idx + AREA >= states.length || exterior[idx - 1] || exterior[idx + 1]
+        return idx >= 0 && (idx < AREA || exterior[idx] || idx + AREA >= states.length || exterior[idx - 1] || exterior[idx + 1]
                 || exterior[idx - WIDTH] || exterior[idx + WIDTH] || idx >= AREA && exterior[idx - AREA]
                 || idx + AREA < states.length && exterior[idx + AREA]);
     }
@@ -149,7 +149,7 @@ final class ExteriorHologramVolume implements BlockGetter{
     }
 
     boolean exterior(BlockPos pos){
-        if(pos.getY() >= maxY()) return true;
+        if(pos.getY() < minY || pos.getY() >= maxY()) return true;
         int idx = index(pos);
         return idx >= 0 && exterior[idx];
     }

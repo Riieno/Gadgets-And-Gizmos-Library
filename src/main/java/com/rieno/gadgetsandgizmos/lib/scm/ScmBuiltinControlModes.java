@@ -136,7 +136,7 @@ public final class ScmBuiltinControlModes {
             double targetDistance = error.length();
             boolean terminalCapture = !input.transitWaypoint()
                     && targetDistance <= Math.max(2.0D, input.tolerance() * 2.0D);
-            double desiredSpeed = input.transitWaypoint()
+            double desiredSpeed = input.transitWaypoint() || input.hasPropulsionRequest()
                     ? Math.min(input.targetSpeed(), input.travelSpeedLimit())
                     : Math.min(input.travelSpeedLimit(), Math.min(input.targetSpeed(),
                     targetDistance * Math.max(0.75D, input.distanceResponse())));

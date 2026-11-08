@@ -99,7 +99,7 @@ public final class SubLevelHologramRenderer implements AutoCloseable{
                         HologramBlockEntityRenderer dynamic, Predicate<ClientSubLevel> visible, boolean retainedModelData, boolean exterior, HologramResolution resolution){
         var mc = Minecraft.getInstance();
         if(mc.level == null) return;
-        var bounds = region.bounds(slice.surface() ? -30_000_000 : slice.minY(), slice.surface() ? 30_000_000 : slice.maxY());
+        var bounds = region.bounds(Math.max(-30_000_000, slice.minY()), Math.min(30_000_000, slice.maxY()));
         var retained = new HashSet<UUID>();
         int budget = 2;
         int hullBudget = 1;
@@ -155,7 +155,7 @@ public final class SubLevelHologramRenderer implements AutoCloseable{
                                         HologramSlice slice, boolean maskOres, float tick, ExteriorHull hull){
         var mc = Minecraft.getInstance();
         List<HologramChunk.SurfaceBlock> blocks = new ArrayList<>();
-        var bounds = region.bounds(slice.surface() ? -30_000_000 : slice.minY(), slice.surface() ? 30_000_000 : slice.maxY());
+        var bounds = region.bounds(Math.max(-30_000_000, slice.minY()), Math.min(30_000_000, slice.maxY()));
         BlockPos anchor = body.getPlot().getCenterBlock();
         var frame = SubLevelClientRenderApi.worldFrame(mc.level, anchor.getCenter(), body, tick);
         var rotation = new org.joml.Quaterniond(frame.orientation());
@@ -190,7 +190,7 @@ public final class SubLevelHologramRenderer implements AutoCloseable{
     private static ExteriorHull hull(ClientSubLevel body, HologramRegion region, HologramSlice slice, float partial){
         var opaque = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
         int[] min = {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE}, max = {Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE};
-        var bounds = region.bounds(slice.surface() ? -30_000_000 : slice.minY(), slice.surface() ? 30_000_000 : slice.maxY());
+        var bounds = region.bounds(Math.max(-30_000_000, slice.minY()), Math.min(30_000_000, slice.maxY()));
         var anchor = body.getPlot().getCenterBlock();
         var frame = SubLevelClientRenderApi.worldFrame(body.getLevel(), anchor.getCenter(), body, partial);
         var rotation = new org.joml.Quaterniond(frame.orientation());

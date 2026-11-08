@@ -282,7 +282,7 @@
   "gadgetsngizmos.text.edit_this_playlist_to_add_music_discs": "Edit this playlist to add music discs",
   "gadgetsngizmos.text.no_matching_music_discs": "No matching music discs",
   "gadgetsngizmos.text.facing": "Facing: ",
-  "gadgetsngizmos.text.speed_1f_blocks_s": "Speed: %.1f blocks/s",
+  "gadgetsngizmos.text.speed_1f_blocks_s": "Speed: %s blocks/s",
   "gadgetsngizmos.text.ship_connection_required": "Ship connection required",
   "gadgetsngizmos.text.connect_to_an_initialized_ship_with_an_advanced_contraption_controller": "Connect to an initialized ship with an Advanced Contraption Controller",
   "gadgetsngizmos.text.no_ship_telemetry": "No ship telemetry",
@@ -313,7 +313,7 @@
   "gadgetsngizmos.text.weight": "Weight",
   "gadgetsngizmos.text.cargo": "Cargo",
   "gadgetsngizmos.text.energy": "Energy",
-  "gadgetsngizmos.text.1f_blocks_s": "%.1f blocks/s",
+  "gadgetsngizmos.text.1f_blocks_s": "%s blocks/s",
   "gadgetsngizmos.text.0f_kg": "%.0f kg",
   "gadgetsngizmos.text.tablet_app_renderer_already_registered": "Tablet app renderer already registered: ",
   "gadgetsngizmos.text.cannot_release_tablet_app_state": "Cannot release tablet app state",
@@ -331,5 +331,12 @@
   "gadgetsngizmos.text.playlist_track_limit_reached": "Playlist track limit reached",
   "gadgetsngizmos.text.playlist_unavailable": "Playlist unavailable",
   "gadgetsngizmos.text.enter_a_playlist_name_1_48_characters": "Enter a playlist name (1–48 characters)",
-  "gadgetsngizmos.text.playlist_name_already_used": "Playlist name already used"
+  "gadgetsngizmos.text.playlist_name_already_used": "Playlist name already used",
+  "gadgetsngizmos.text.create_destination": "Create destination",
+  "gadgetsngizmos.text.saved_destinations": "Saved destinations",
+  "gadgetsngizmos.text.destination_name": "Destination name",
+  "gadgetsngizmos.text.use_current_location": "Use current location",
+  "gadgetsngizmos.text.save_destination": "Save destination",
+  "gadgetsngizmos.text.no_saved_destinations": "No saved destinations",
+  "gadgetsngizmos.text.invalid_destination": "Enter a name and valid X, Y, Z coordinates."
 }

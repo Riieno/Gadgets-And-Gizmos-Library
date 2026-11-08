@@ -282,7 +282,7 @@
   "gadgetsngizmos.text.edit_this_playlist_to_add_music_discs": "Bearbeiten Sie diese Wiedergabeliste, um Musik-Discs hinzuzufügen",
   "gadgetsngizmos.text.no_matching_music_discs": "Keine passenden Musik-Discs",
   "gadgetsngizmos.text.facing": "-Beschichtung: ",
-  "gadgetsngizmos.text.speed_1f_blocks_s": "Geschwindigkeit: %.1f Blöcke/s",
+  "gadgetsngizmos.text.speed_1f_blocks_s": "Geschwindigkeit: %s Blöcke/s",
   "gadgetsngizmos.text.ship_connection_required": "Schiffsverbindung erforderlich",
   "gadgetsngizmos.text.connect_to_an_initialized_ship_with_an_advanced_contraption_controller": "Stellen Sie mit einem Advanced Contraption Controller eine Verbindung zu einem initialisierten Schiff her",
   "gadgetsngizmos.text.no_ship_telemetry": "Keine Schiffstelemetrie",
@@ -313,7 +313,7 @@
   "gadgetsngizmos.text.weight": "Gewicht",
   "gadgetsngizmos.text.cargo": "Fracht",
   "gadgetsngizmos.text.energy": "Energie",
-  "gadgetsngizmos.text.1f_blocks_s": "%.1f Blöcke/s",
+  "gadgetsngizmos.text.1f_blocks_s": "%s Blöcke/s",
   "gadgetsngizmos.text.0f_kg": "%.0f kg",
   "gadgetsngizmos.text.tablet_app_renderer_already_registered": "Tablet-App-Renderer bereits registriert: ",
   "gadgetsngizmos.text.cannot_release_tablet_app_state": "Tablet-App-Status kann nicht freigegeben werden",
@@ -331,5 +331,12 @@
   "gadgetsngizmos.text.playlist_track_limit_reached": "-Playlist-Titellimit erreicht",
   "gadgetsngizmos.text.playlist_unavailable": "-Playlist nicht verfügbar",
   "gadgetsngizmos.text.enter_a_playlist_name_1_48_characters": "Geben Sie einen Playlist-Namen ein (1–48 Zeichen)",
-  "gadgetsngizmos.text.playlist_name_already_used": "Playlist-Name bereits verwendet"
+  "gadgetsngizmos.text.playlist_name_already_used": "Playlist-Name bereits verwendet",
+  "gadgetsngizmos.text.create_destination": "Ziel erstellen",
+  "gadgetsngizmos.text.saved_destinations": "Gespeicherte Ziele",
+  "gadgetsngizmos.text.destination_name": "Zielname",
+  "gadgetsngizmos.text.use_current_location": "Aktuellen Standort verwenden",
+  "gadgetsngizmos.text.save_destination": "Ziel speichern",
+  "gadgetsngizmos.text.no_saved_destinations": "Keine gespeicherten Ziele",
+  "gadgetsngizmos.text.invalid_destination": "Namen und gültige X-, Y-, Z-Koordinaten eingeben."
 }

@@ -72,7 +72,8 @@ public final class GadgetsNGizmosLibraryMixinConfigPlugin implements IMixinConfi
         if(targetClassName.startsWith("org.patryk3211.powergrid.")) return MixinCompatibility.canApply(targetClassName, "powergrid");
         if(mixinClassName.endsWith(".SableClientPoseContextMixin")) return MixinCompatibility.isModLoaded("sable");
         if(mixinClassName.endsWith(".SubLevelBlockEntityFrustumMixin")) return MixinCompatibility.canApply(targetClassName, "sable");
-        if(mixinClassName.endsWith(".SablePhysicalConnectionMixin") || mixinClassName.endsWith(".SableConstraintRemovalMixin"))
+        if(mixinClassName.endsWith(".SablePhysicalConnectionMixin") || mixinClassName.endsWith(".SableConstraintRemovalMixin")
+                || mixinClassName.endsWith(".SablePhysicsBodyMixin"))
             return MixinCompatibility.canApply(targetClassName, "sable");
         if("com.rieno.gadgetsandgizmos.lib.mixin.ViewSceneEntityCullingMixin".equals(mixinClassName)){
             return MixinCompatibility.isModLoaded("entityculling");

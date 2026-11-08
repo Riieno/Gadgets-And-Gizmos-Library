@@ -108,6 +108,21 @@ public final class SubLevelClientRenderApi {
         return new Vec3(pos.x(), pos.y(), pos.z());
     }
 
+    // Convert attachment positions through the same poses used to draw both bodies
+    public static Vec3 relativePosition(SubLevel source, Vec3 position, SubLevel target, float partialTicks){
+        Vector3d res = new Vector3d(position.x, position.y, position.z);
+        if(source == target) return position;
+        if(source != null){
+            Pose3dc pose = source instanceof ClientSubLevel client ? client.renderPose(partialTicks) : source.logicalPose();
+            pose.transformPosition(res);
+        }
+        if(target != null){
+            Pose3dc pose = target instanceof ClientSubLevel client ? client.renderPose(partialTicks) : target.logicalPose();
+            pose.transformPositionInverse(res);
+        }
+        return new Vec3(res.x, res.y, res.z);
+    }
+
     // Supply a native camera with a local vehicle reference without riding or spawning an entity
     public static net.minecraft.world.entity.Entity localCameraAnchor(ClientLevel level, Vec3 pos){
         var anchor = new net.minecraft.world.entity.Marker(net.minecraft.world.entity.EntityType.MARKER, level);

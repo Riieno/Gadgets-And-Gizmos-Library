@@ -36,6 +36,7 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.phys.Vec3;
 import net.neoforged.neoforge.client.model.data.ModelData;
+import net.neoforged.neoforge.client.GlStateBackup;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
 
@@ -127,9 +128,12 @@ public final class HologramProjectionRenderer implements AutoCloseable{
     }
 
     public void render(PoseStack poses, MultiBufferSource buffers, Vec3 origin, Collection<HologramChunk> chunks, long generation, HologramResolution resolution){
+        // Render-type cleanup disables depth testing; preserve the enclosing world's render state
+        var prev = new GlStateBackup();
+        RenderSystem.backupGlState(prev);
         try(var scope = HologramRenderScope.enter()){
             renderTerrain(poses, buffers, origin, chunks, generation, resolution);
-        }
+        }finally{ RenderSystem.restoreGlState(prev); }
     }
 
     private void renderTerrain(PoseStack poses, MultiBufferSource buffers, Vec3 origin, Collection<HologramChunk> chunks, long generation, HologramResolution resolution){

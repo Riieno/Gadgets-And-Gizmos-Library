@@ -39,17 +39,26 @@ public final class SurfaceHologramSampler{
 
     // Never load or generate chunks on behalf of a projection
     public static HologramChunk sample(ServerLevel level, ChunkPos pos, boolean obfuscateOres){
+        return sample(level, pos, obfuscateOres, HologramSlice.SURFACE);
+    }
+
+    // Bound the flood and scan before allocating terrain work so deep cave systems stay outside the map
+    private static HologramChunk sampleSurface(ServerLevel level, ChunkPos pos, boolean obfuscateOres, HologramSlice slice){
         LevelChunk chunk = level.getChunkSource().getChunkNow(pos.x, pos.z);
         if(chunk == null) return new HologramChunk(pos, 0x79A94E, 0x48A13B, 0x3F76E4, List.of());
+        if(slice.minY() == Integer.MIN_VALUE){
+            slice = HologramSlice.surface(lowestAverageHeight(level, new HologramRegion(pos, 1), level.getSeaLevel()),
+                    level.getMinBuildHeight(), level.getMaxBuildHeight());
+        }
         var biome = level.getBiome(new BlockPos(pos.getMiddleBlockX(), level.getSeaLevel(), pos.getMiddleBlockZ())).value();
-        int minY = level.getMinBuildHeight();
-        ExteriorHologramVolume volume = new ExteriorHologramVolume(level, chunk);
+        int minY = Math.max(level.getMinBuildHeight(), slice.minY());
+        ExteriorHologramVolume volume = new ExteriorHologramVolume(level, chunk, minY, slice.maxY());
         List<HologramChunk.SurfaceBlock> blocks = new ArrayList<>();
         BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         scan:
         for(int x = 0; x < 16; x++) for(int z = 0; z < 16; z++){
             int surface = volume.surfaceHeight(x, z);
-            for(int y = surface; y >= minY; y--){
+            for(int y = Math.min(surface, slice.maxY() - 1); y >= minY; y--){
                 cursor.set(pos.getMinBlockX() + x, y, pos.getMinBlockZ() + z);
                 BlockState state = volume.getBlockState(cursor);
                 if(state.isAir() || state.getRenderShape() == net.minecraft.world.level.block.RenderShape.INVISIBLE && state.getFluidState().isEmpty()) continue;
@@ -57,7 +66,7 @@ public final class SurfaceHologramSampler{
                 int faces = 0;
                 for(Direction dir : Direction.values()){
                     BlockPos next = cursor.relative(dir);
-                    if(next.getY() < minY || !volume.exposesFace(cursor, dir)) continue;
+                    if(!volume.exposesFace(cursor, dir)) continue;
                     if(HologramFaceVisibility.shouldRenderFace(state, volume, cursor, dir, true)) faces |= 1 << dir.ordinal();
                 }
                 if(faces == 0) continue;
@@ -86,9 +95,28 @@ public final class SurfaceHologramSampler{
         return count == 0 ? fallback : sum / (double)count;
     }
 
+    // Use the lowest loaded chunk's mean height rather than one deep ravine or the region's mountains
+    public static double lowestAverageHeight(ServerLevel level, HologramRegion region, double fallback){
+        double lowest = Double.POSITIVE_INFINITY;
+        for(int x = region.minX(); x <= region.maxX(); x++) for(int z = region.minZ(); z <= region.maxZ(); z++){
+            LevelChunk chunk = level.getChunkSource().getChunkNow(x, z);
+            if(chunk == null) continue;
+            long sum = 0;
+            int count = 0;
+            for(int bx = 0; bx < 16; bx++) for(int bz = 0; bz < 16; bz++){
+                int top = surfaceHeight(chunk, bx, bz, level.getMinBuildHeight());
+                if(top < level.getMinBuildHeight()) continue;
+                sum += top + 1;
+                count++;
+            }
+            if(count > 0) lowest = Math.min(lowest, sum / (double)count);
+        }
+        return Double.isFinite(lowest) ? lowest : fallback;
+    }
+
     // Expose cut faces at the slice boundary while keeping true surface ore masking
     public static HologramChunk sample(ServerLevel level, ChunkPos pos, boolean obfuscateOres, HologramSlice slice){
-        if(slice.surface()) return sample(level, pos, obfuscateOres);
+        if(slice.surface()) return sampleSurface(level, pos, obfuscateOres, slice);
         LevelChunk chunk = level.getChunkSource().getChunkNow(pos.x, pos.z);
         if(chunk == null) return new HologramChunk(pos, 0x79A94E, 0x48A13B, 0x3F76E4, List.of());
         var biome = level.getBiome(new BlockPos(pos.getMiddleBlockX(), level.getSeaLevel(), pos.getMiddleBlockZ())).value();

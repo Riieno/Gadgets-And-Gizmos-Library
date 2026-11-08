@@ -282,7 +282,7 @@
   "gadgetsngizmos.text.edit_this_playlist_to_add_music_discs": "Edite esta lista de reproducción para agregar discos de música",
   "gadgetsngizmos.text.no_matching_music_discs": "No hay discos de música coincidentes",
   "gadgetsngizmos.text.facing": "Frente: ",
-  "gadgetsngizmos.text.speed_1f_blocks_s": "Velocidad: %.1f bloques/s\nEtapa",
+  "gadgetsngizmos.text.speed_1f_blocks_s": "Velocidad: %s bloques/s\nEtapa",
   "gadgetsngizmos.text.ship_connection_required": "Se requiere conexión de barco",
   "gadgetsngizmos.text.connect_to_an_initialized_ship_with_an_advanced_contraption_controller": "Conéctese a una nave inicializada con un controlador de artilugio avanzado",
   "gadgetsngizmos.text.no_ship_telemetry": "Sin telemetría de barco",
@@ -313,7 +313,7 @@
   "gadgetsngizmos.text.weight": "",
   "gadgetsngizmos.text.cargo": "Carga",
   "gadgetsngizmos.text.energy": "Energía",
-  "gadgetsngizmos.text.1f_blocks_s": "%.1f bloques/s",
+  "gadgetsngizmos.text.1f_blocks_s": "%s bloques/s",
   "gadgetsngizmos.text.0f_kg": "%.0f kg",
   "gadgetsngizmos.text.tablet_app_renderer_already_registered": "ya está registrado: ",
   "gadgetsngizmos.text.cannot_release_tablet_app_state": "No se puede liberar el estado de la aplicación de la tableta\nCapacidad",
@@ -331,5 +331,12 @@
   "gadgetsngizmos.text.playlist_track_limit_reached": "Se alcanzó el límite de pistas de la lista de reproducción",
   "gadgetsngizmos.text.playlist_unavailable": "Lista de reproducción no disponible",
   "gadgetsngizmos.text.enter_a_playlist_name_1_48_characters": "Introduzca un nombre de lista de reproducción (de 1 a 48 caracteres)",
-  "gadgetsngizmos.text.playlist_name_already_used": "El nombre de la lista de reproducción ya se utiliza"
+  "gadgetsngizmos.text.playlist_name_already_used": "El nombre de la lista de reproducción ya se utiliza",
+  "gadgetsngizmos.text.create_destination": "Crear destino",
+  "gadgetsngizmos.text.saved_destinations": "Destinos guardados",
+  "gadgetsngizmos.text.destination_name": "Nombre del destino",
+  "gadgetsngizmos.text.use_current_location": "Usar ubicación actual",
+  "gadgetsngizmos.text.save_destination": "Guardar destino",
+  "gadgetsngizmos.text.no_saved_destinations": "No hay destinos guardados",
+  "gadgetsngizmos.text.invalid_destination": "Introduce un nombre y coordenadas X, Y, Z válidas."
 }
