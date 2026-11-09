@@ -32,13 +32,20 @@ public final class AngleConversionNode{
 
     public enum Format{
         RADIANS(AngleUnit.RADIANS), DEGREES(AngleUnit.DEGREES), TURNS(AngleUnit.TURNS), GRADIANS(AngleUnit.GRADIANS),
-        AXIS_ANGLE(null), EULER(null), TAIT_BRYAN(null), QUATERNION(null);
+        AXIS_ANGLE(null), EULER(null), TAIT_BRYAN(null), QUATERNION(null), CARDINAL(null);
 
         private final AngleUnit unit;
         Format(AngleUnit unit){ this.unit = unit; }
         public String id(){ return name().toLowerCase(Locale.ROOT); }
         public boolean scalar(){ return unit != null; }
+        public boolean supportsInput(){ return this != CARDINAL; }
         public static List<String> optionIds(){ return Arrays.stream(values()).map(Format::id).toList(); }
+        public static List<String> inputOptionIds(){ return Arrays.stream(values()).filter(Format::supportsInput).map(Format::id).toList(); }
+        public static List<String> outputOptionIds(){ return optionIds(); }
+        public static Format fromInputId(String id){
+            Format format = fromId(id);
+            return format.supportsInput() ? format : RADIANS;
+        }
         public static Format fromId(String id){
             return fromId(id, RADIANS);
         }
@@ -61,14 +68,17 @@ public final class AngleConversionNode{
                 inputs(Format.RADIANS), outputs(Format.DEGREES), false), (ctx, in) -> {
             GraphValue from = ctx == null ? null : ctx.configuration(INPUT_TYPE);
             GraphValue to = ctx == null ? null : ctx.configuration(OUTPUT_TYPE);
-            return execute(Format.fromId(from == null ? null : from.asString(), Format.RADIANS),
+            return execute(Format.fromInputId(from == null ? null : from.asString()),
                     Format.fromId(to == null ? null : to.asString(), Format.DEGREES), in);
         }, defaults(), "Convert Angle", "Convert radians, degrees, turns, gradians, axis-angle, ZXZ Euler, XYZ Tait-Bryan and XYZW quaternion rotations. "
                 + "Scalar angles use Axis (default +X) when creating a rotation. Rotation outputs use radians; scalar outputs from rotations return the shortest angle and its Axis. "
-                + "Scalar unit conversions preserve signed angles, multiple turns and numeric fields in the optional Angles map. Angle from Coords Degrees is a horizontal heading; use its Axis and Angle for the full 3D rotation.");
+                + "Scalar unit conversions preserve signed angles, multiple turns and numeric fields in the optional Angles map. Angle from Coords Degrees is a horizontal heading; use its Axis and Angle for the full 3D rotation. "
+                + "Cardinal is an output-only string for the nearest world compass direction: 0 degrees South (+Z), 90 East (+X), 180 North (-Z), 270 West (-X). "
+                + "Scalar input is a heading; rotation input projects rotated +Z onto the world X/Z plane. A vertical rotation has no cardinal and sets Valid to false.");
     }
 
     public static Map<String, String> inputs(Format format){
+        if(!format.supportsInput()) throw new IllegalArgumentException("Cardinal is an output format");
         Map<String, String> res = new LinkedHashMap<>();
         if(format.scalar() || format == Format.AXIS_ANGLE){
             res.put("angle", "number");res.put("axis", "map");
@@ -78,6 +88,7 @@ public final class AngleConversionNode{
     }
 
     public static Map<String, String> outputs(Format format){
+        if(format == Format.CARDINAL) return GraphPortOrder.ports("cardinal", "string", "valid", "boolean");
         Map<String, String> res = new LinkedHashMap<>(inputs(format));
         if(format == Format.EULER) for(String key : List.of("alpha", "beta", "gamma")) res.put(key, "number");
         if(format == Format.TAIT_BRYAN) for(String key : List.of("roll", "pitch", "yaw")) res.put(key, "number");
@@ -101,7 +112,11 @@ public final class AngleConversionNode{
                 if(val == null || !port.getValue().equals(val.type())) throw new IllegalArgumentException("Incorrect angle input type");
             }
             Map<String, GraphValue> res = new LinkedHashMap<>();
-            if(from.scalar() && to.scalar()){
+            if(to == Format.CARDINAL){
+                res.put("cardinal", GraphValue.string(from.scalar()
+                        ? RotationMath.horizontalCardinal(from.unit.toRadians(number(in.get("angle"))))
+                        : RotationMath.horizontalCardinal(rotation(from, in))));
+            }else if(from.scalar() && to.scalar()){
                 res.put("angle", MathGraphValues.number(to.unit.fromRadians(from.unit.toRadians(number(in.get("angle"))))));
                 res.put("axis", in.get("axis"));
                 res.put("angles", convertMap(in.get("angles"), from.unit, to.unit));
@@ -128,7 +143,7 @@ public final class AngleConversionNode{
         }catch(IllegalArgumentException err){
             Map<String, GraphValue> res = new LinkedHashMap<>();
             outputs(to).forEach((key, type) -> res.put(key, type.equals("map") ? GraphValue.map(Map.of())
-                    : type.equals("boolean") ? GraphValue.bool(false) : GraphValue.number(0)));
+                    : type.equals("boolean") ? GraphValue.bool(false) : type.equals("string") ? GraphValue.string("") : GraphValue.number(0)));
             return GraphPortOrder.copy(res);
         }
     }

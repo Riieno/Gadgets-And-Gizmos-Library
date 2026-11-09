@@ -1,6 +1,7 @@
 package com.rieno.gadgetsandgizmos.lib.navigation;
 
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.AABB;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -20,6 +21,19 @@ public record DockingApproachAxis(Vec3 tip, Vec3 facing, double distance){
     }
 
     public Vec3 endpoint(){ return tip.add(facing.scale(distance)); }
+
+    // Select any point between the connector contact and the end of its detection range
+    public Vec3 closestPoint(Vec3 position){
+        return tip.add(facing.scale(Math.clamp(position.subtract(tip).dot(facing), 0, distance)));
+    }
+
+    // Accept contact-volume overlap anywhere on the finite detection segment
+    public boolean overlaps(AABB bounds){
+        if(bounds == null) return false;
+        AABB contact = bounds.inflate(INTERSECTION_TOLERANCE);
+        return contact.contains(tip) || contact.contains(endpoint()) || contact.clip(tip, endpoint()).isPresent();
+    }
+
     public Vec3 constrain(Vec3 position){
         return tip.add(facing.scale(Math.max(1, Math.min(distance, position.subtract(tip).dot(facing)))));
     }

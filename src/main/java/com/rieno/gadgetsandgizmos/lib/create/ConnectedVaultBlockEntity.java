@@ -4,6 +4,8 @@ import com.simibubi.create.api.connectivity.ConnectivityHandler;
 import com.simibubi.create.content.logistics.vault.ItemVaultBlockEntity;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import com.rieno.gadgetsandgizmos.lib.access.LoadedBlockEntities;
@@ -20,6 +22,19 @@ public class ConnectedVaultBlockEntity extends ItemVaultBlockEntity{
     public void initialize(){
         super.initialize();
         queueNearbyControllers();
+        MultiblockRenderUpdates.refresh(this);
+    }
+
+    // Rebuild neighbouring surfaces when received controller data changes their connections
+    @Override
+    protected void read(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket){
+        BlockPos prevController = getController();
+        int prevWidth = getWidth();
+        int prevHeight = getHeight();
+        super.read(tag, registries, clientPacket);
+        if(!prevController.equals(getController()) || prevWidth != getWidth() || prevHeight != getHeight()){
+            MultiblockRenderUpdates.refresh(this);
+        }
     }
 
     // A saved controller may arrive after its members; never create an empty replacement

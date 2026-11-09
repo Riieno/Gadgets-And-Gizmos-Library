@@ -86,6 +86,11 @@ public final class ScmControlModeRegistry {
         return List.copyOf(MODES.values());
     }
 
+    // Filter optional modes against the current host without changing saved identifiers
+    public static synchronized List<ScmControlMode> availableModes(net.minecraft.world.level.block.entity.BlockEntity host){
+        return MODES.values().stream().filter(mode -> mode.isAvailable(host)).toList();
+    }
+
     // Get the serialized ids
     public static synchronized List<String> serializedIds() {
         return MODES.keySet().stream().map(ScmControlModeRegistry::serialize).toList();

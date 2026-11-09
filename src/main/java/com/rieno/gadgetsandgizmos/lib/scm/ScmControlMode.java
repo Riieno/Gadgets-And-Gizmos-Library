@@ -11,6 +11,7 @@ package com.rieno.gadgetsandgizmos.lib.scm;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.level.block.entity.BlockEntity;
 
 // Convert one navigation sample into vehicle-specific SCM control demand
 public interface ScmControlMode {
@@ -27,6 +28,21 @@ public interface ScmControlMode {
 
     // Get the SCM control mode display name
     String displayName();
+
+    // Restrict optional vehicle modes to hosts with the required native controls
+    default boolean isAvailable(BlockEntity host){ return true; }
+
+    // Follow terrain when the vehicle's controller owns its ground locomotion
+    default boolean usesGroundNavigation(){ return false; }
+
+    // Use connector corridor handoffs for vehicles which move on land, water or another support surface
+    default boolean usesSurfaceNavigation(){ return usesGroundNavigation(); }
+
+    // Resolve native hardware capabilities for the current host
+    default ScmControlMode bind(BlockEntity host){ return this; }
+
+    // Let native locomotion handle contact with walls, terrain and ceilings
+    default boolean avoidsWorldCollisions(){ return true; }
 
     // Navigate the SCM control mode
     ControlOutput navigate(ControlInput input);

@@ -11,6 +11,9 @@ public final class RotationMath {
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     private static final double SINGULAR_EPSILON = 1.0E-10D;
+    private static final String[] HORIZONTAL_CARDINALS = {
+            "South", "South East", "East", "North East", "North", "North West", "West", "South West"
+    };
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -46,6 +49,26 @@ public final class RotationMath {
         double degrees = Math.toDegrees(Math.atan2(x, z));
         if(degrees < 0.0D) degrees += 360.0D;
         return degrees == 0.0D || degrees >= 360.0D ? 0.0D : degrees;
+    }
+
+    // Resolve the nearest world cardinal from a heading in radians measured from +Z toward +X
+    public static String horizontalCardinal(double radians){
+        if(!Double.isFinite(radians)) throw new IllegalArgumentException("A heading must be finite");
+        int sector = (int)Math.floor(radians % (2 * Math.PI) / (Math.PI / 4) + 0.5D);
+        return HORIZONTAL_CARDINALS[Math.floorMod(sector, HORIZONTAL_CARDINALS.length)];
+    }
+
+    // Project a rotation's +Z forward direction onto the world X/Z plane
+    public static String horizontalCardinal(Quaternion rotation){
+        if(rotation == null || !Double.isFinite(rotation.x()) || !Double.isFinite(rotation.y())
+                || !Double.isFinite(rotation.z()) || !Double.isFinite(rotation.w())
+                || rotation.x() == 0 && rotation.y() == 0 && rotation.z() == 0 && rotation.w() == 0){
+            throw new IllegalArgumentException("A heading requires a nonzero finite quaternion");
+        }
+        Vector3 forward = rotation.rotate(new Vector3(0, 0, 1));
+        if(Math.hypot(forward.x(), forward.z()) < SINGULAR_EPSILON)
+            throw new IllegalArgumentException("A vertical direction has no horizontal heading");
+        return horizontalCardinal(Math.atan2(forward.x(), forward.z()));
     }
 
     // Rotate +Z toward the target using the shortest arc from the origin

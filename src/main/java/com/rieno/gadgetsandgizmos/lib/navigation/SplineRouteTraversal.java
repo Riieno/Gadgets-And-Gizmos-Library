@@ -1,6 +1,7 @@
 package com.rieno.gadgetsandgizmos.lib.navigation;
 
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.Tag;
 import java.util.Optional;
@@ -9,6 +10,7 @@ import java.util.Optional;
 public final class SplineRouteTraversal{
     private final WaypointSpline spline;
     private boolean captured;
+    private boolean entryAcquired;
     private int segment;
     private double fraction;
 
@@ -20,13 +22,28 @@ public final class SplineRouteTraversal{
 
     public WaypointSpline spline(){ return spline; }
     public boolean captured(){ return captured; }
+    public boolean entryAcquired(){ return entryAcquired; }
     public int segment(){ return segment; }
     public double fraction(){ return fraction; }
     public Vec3 entry(){ return spline.waypoints().getFirst(); }
 
+    // Begin lane alignment when any physical hull member overlaps the assigned entry
+    public static boolean entryOverlaps(Vec3 entry, java.util.Collection<AABB> bounds){
+        return entry != null && bounds != null && bounds.stream().anyMatch(box ->
+                box != null && box.inflate(0.05D).contains(entry));
+    }
+
+    // Retain hull entry while the tracked connector moves into the lane
+    public boolean acquireEntry(java.util.Collection<AABB> bounds){
+        entryAcquired |= entryOverlaps(entry(), bounds);
+        return entryAcquired;
+    }
+
+
     // Carry the entire lane with a rigid frame without losing captured or ordered progress
     public SplineRouteTraversal transformed(java.util.function.UnaryOperator<Vec3> transform){
         var res = new SplineRouteTraversal(WaypointSpline.of(spline.waypoints().stream().map(transform).toList()), !captured);
+        res.entryAcquired = entryAcquired;
         if(res.spline.segments().size() != spline.segments().size())
             throw new IllegalArgumentException("A route transform must preserve its legs");
         res.segment = segment;
@@ -39,6 +56,8 @@ public final class SplineRouteTraversal{
         if(replacement == null || replacement.isEmpty()) return Optional.empty();
         if(replacement.waypoints().equals(spline.waypoints())) return Optional.of(this);
         var res = new SplineRouteTraversal(replacement, !captured);
+        if(entryAcquired && replacement.waypoints().getFirst().distanceTo(entry()) > Math.max(0.05D, tolerance)) return Optional.empty();
+        res.entryAcquired = entryAcquired;
         if(!captured) return Optional.of(res);
         double progress = spline.projectSegment(spline.segments().get(segment).pointAtFraction(fraction), segment, fraction).distanceAlongRoute();
         double radius = Math.max(0.05D, tolerance);
@@ -157,6 +176,7 @@ public final class SplineRouteTraversal{
         CompoundTag tag = new CompoundTag();
         tag.put("Points", WaypointSplineData.points(spline.waypoints()));
         tag.putBoolean("Captured", captured);
+        if(entryAcquired) tag.putBoolean("EntryAcquired", true);
         tag.putInt("Segment", segment);
         tag.putDouble("Fraction", fraction);
         return tag;
@@ -166,6 +186,7 @@ public final class SplineRouteTraversal{
         WaypointSpline spline = WaypointSpline.of(WaypointSplineData.readPoints(tag.getList("Points", Tag.TAG_COMPOUND), 131072));
         if(spline.isEmpty()) return Optional.empty();
         SplineRouteTraversal traversal = new SplineRouteTraversal(spline, !tag.getBoolean("Captured"));
+        traversal.entryAcquired = tag.getBoolean("EntryAcquired");
         traversal.segment = Math.max(0, Math.min(spline.segments().size() - 1, tag.getInt("Segment")));
         double fraction = tag.getDouble("Fraction");
         traversal.fraction = Double.isFinite(fraction) ? Math.max(0, Math.min(1, fraction)) : 0;

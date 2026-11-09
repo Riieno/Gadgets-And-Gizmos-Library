@@ -23,6 +23,13 @@ public final class ScmNavigationSpeed{
         return requested * ScmSpeedControl.stoppingSpeed(distance, tolerance, responseSeconds, brakingAcceleration);
     }
 
+    // Scale percentages against the configured maximum while preserving the destination stopping envelope
+    public static double requestedSpeed(double fraction, double distance, double tolerance,
+                                         double responseSeconds, double brakingAcceleration, ScmSpeedLimit limit){
+        double safe = ScmSpeedControl.stoppingSpeed(distance, tolerance, responseSeconds, brakingAcceleration);
+        return Math.min(safe, limit.percentage(fraction, safe));
+    }
+
     // Include the acceleration possible before the next control update in the collision scan
     public static double scanSpeed(@Nullable ScmAdaptiveStateModel model, Vec3 direction,
                                     double actualSpeed, double tickSeconds){

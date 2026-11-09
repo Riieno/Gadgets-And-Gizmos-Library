@@ -6,6 +6,7 @@
   "compatibilityLevel": "JAVA_21",
   "refmap": "gadgetsngizmos.refmap.json",
   "mixins": [
+    "BundledHeadCreatorModMixin",
     "LevelEntityQueryAccess",
     "BlockEntitySchematicSnapshotMixin",
     "CreateSchematicPlacementMixin",
@@ -70,6 +71,10 @@
     "WorkerChuteTransportMixin"
   ],
   "client": [
+    "BundledHeadEmiSearchMixin",
+    "BundledHeadEmiModQueryMixin",
+    "BundledHeadModTooltipMixin",
+    "BundledHeadJeiAliasTooltipMixin",
     "ContraptionLightsBeaconDiscoveryMixin",
     "SingleQuadParticleColorEffectMixin",
     "CreateSchematicAndQuillSnapshotMixin",

@@ -6,6 +6,17 @@ import net.minecraft.world.phys.Vec3;
 public final class ScmDockingOrientation{
     private ScmDockingOrientation(){}
 
+    // Rotate a vehicle heading by the connector's complete facing and roll correction
+    public static Vec3 alignedDirection(Vec3 direction, Vec3 facing, Vec3 up, Vec3 targetFacing, Vec3 targetUp){
+        Vec3 error = alignmentError(facing, up, targetFacing, targetUp);
+        double angle = error.length();
+        if(angle <= 1.0E-12D) return unit(direction);
+        Vec3 axis = error.scale(1 / angle);
+        double cos = Math.cos(angle);
+        return unit(direction.scale(cos).add(axis.cross(direction).scale(Math.sin(angle)))
+                .add(axis.scale(axis.dot(direction) * (1 - cos))));
+    }
+
     // Resolve facing and connector roll as one shortest rotation instead of competing cross products
     public static Vec3 alignmentError(Vec3 facing, Vec3 up, Vec3 targetFacing, Vec3 targetUp){
         if(unit(facing).lengthSqr() == 0 || unit(targetFacing).lengthSqr() == 0) return Vec3.ZERO;

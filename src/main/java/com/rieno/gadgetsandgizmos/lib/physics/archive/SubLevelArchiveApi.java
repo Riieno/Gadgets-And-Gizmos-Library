@@ -10,6 +10,7 @@ package com.rieno.gadgetsandgizmos.lib.physics.archive;
 
 import com.rieno.gadgetsandgizmos.lib.access.WorldAccessPolicy;
 import com.rieno.gadgetsandgizmos.lib.physics.SableAssemblyTopologyApi;
+import com.rieno.gadgetsandgizmos.lib.physics.SableAssemblyConnectionRegistry;
 import com.rieno.gadgetsandgizmos.lib.physics.SableSubLevelLifecycleApi;
 import com.rieno.gadgetsandgizmos.lib.scm.ShipPermission;
 import com.rieno.gadgetsandgizmos.lib.scm.ShipPermissionManager;
@@ -73,6 +74,11 @@ public final class SubLevelArchiveApi{
         long stored = store.catalogue(player.getUUID(), false).size();
         if(stored >= limits.maximumArchives()) throw new IllegalArgumentException("Your sublevel storage limit is reached");
         for(ServerSubLevel body : bodies){
+            for(var connection : SableAssemblyConnectionRegistry.connections(body)){
+                if(connection.targetSubLevelId() != null && !topology.loadedBodyIds().contains(connection.targetSubLevelId())){
+                    throw new IllegalArgumentException("Assembly contains unavailable connected sublevels");
+                }
+            }
             Vec3 point = position(body);
             if(SubLevelConstructionState.isBuilding(body)) throw new IllegalArgumentException("Wait for schematic construction to finish before storing this assembly");
             if(point.distanceToSqr(player.position()) > range * range) throw new IllegalArgumentException("Assembly is outside storage range");

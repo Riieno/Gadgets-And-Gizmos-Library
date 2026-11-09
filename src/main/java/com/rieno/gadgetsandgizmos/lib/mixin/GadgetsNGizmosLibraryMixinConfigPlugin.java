@@ -65,6 +65,8 @@ public final class GadgetsNGizmosLibraryMixinConfigPlugin implements IMixinConfi
     // Check if this should apply mixin
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
+        if(targetClassName.startsWith("dev.emi.emi.")) return MixinCompatibility.canApply(targetClassName, "emi");
+        if(targetClassName.startsWith("mezz.jei.")) return MixinCompatibility.canApply(targetClassName, "jei");
         if(mixinClassName.endsWith(".ContraptionLightsBeaconDiscoveryMixin"))
             return MixinCompatibility.canApply(targetClassName, "contraptionlights", "sable");
         if(mixinClassName.endsWith(".SubLevelShaderBlockMetadataMixin"))

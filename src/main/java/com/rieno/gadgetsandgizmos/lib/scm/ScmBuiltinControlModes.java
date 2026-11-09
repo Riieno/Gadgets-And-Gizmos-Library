@@ -13,6 +13,8 @@ import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.Set;
+import java.util.function.Predicate;
+import net.minecraft.world.level.block.entity.BlockEntity;
 
 // Define the built-in airship, ground/sea and plane SCM control modes
 public final class ScmBuiltinControlModes {
@@ -102,6 +104,21 @@ public final class ScmBuiltinControlModes {
     // Check whether the experimental IK control mode is available
     public static synchronized boolean isIkEnabled() {
         return ikEnabled;
+    }
+
+    // Reuse ground navigation for optional vehicles whose native controller owns the running gear
+    public static ScmControlMode nativeGroundMode(ResourceLocation id, String name, Predicate<BlockEntity> available){
+        java.util.Objects.requireNonNull(id);
+        java.util.Objects.requireNonNull(name);
+        java.util.Objects.requireNonNull(available);
+        return new GroundSeaMode(){
+            // Retain the consuming mod's vehicle identifier
+            @Override public ResourceLocation id(){ return id; }
+            // Show the consuming mod's vehicle label
+            @Override public String displayName(){ return name; }
+            // Require the native controller on this host's craft
+            @Override public boolean isAvailable(BlockEntity host){ return available.test(host); }
+        };
     }
 
     // Get the id
@@ -220,7 +237,9 @@ public final class ScmBuiltinControlModes {
     }
 
     // Handle the ground/sea mode
-    private static final class GroundSeaMode implements ScmControlMode {
+    private static class GroundSeaMode implements ScmControlMode {
+        // Keep native ground pilots on terrain-aware navigation
+        @Override public boolean usesGroundNavigation(){ return true; }
         // Get the id
         @Override
         public ResourceLocation id() {

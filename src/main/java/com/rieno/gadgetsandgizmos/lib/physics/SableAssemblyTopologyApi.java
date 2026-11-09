@@ -143,6 +143,11 @@ public final class SableAssemblyTopologyApi {
                 }
             }
             for (ServerSubLevel owner : loaded.values()) {
+                for(var connection : SableAssemblyConnectionRegistry.connections(owner)){
+                    if(loaded.containsKey(connection.targetSubLevelId())){
+                        merge(edgeKinds, owner.getUniqueId(), connection.targetSubLevelId(), connection.kind());
+                    }
+                }
                 for(var joint : SubLevelSchematicJoints.retained(owner)){
                     if(loaded.containsKey(joint.second())) merge(edgeKinds, joint.first(), joint.second(), SableAssemblyConnection.Kind.STRUCTURAL);
                 }

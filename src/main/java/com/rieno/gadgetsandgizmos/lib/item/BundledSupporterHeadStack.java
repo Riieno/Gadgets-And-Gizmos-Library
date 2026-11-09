@@ -93,4 +93,10 @@ public final class BundledSupporterHeadStack {
         }
         return ResourceLocation.tryParse(customTag.getCompound(ROOT_TAG).getString(TEXTURE_TAG));
     }
+
+    // Attribute a packaged head to the mod that owns its skin texture
+    public static @Nullable String creatorModId(@Nullable ItemStack stack){
+        ResourceLocation texture = texture(stack);
+        return texture == null ? null : texture.getNamespace();
+    }
 }

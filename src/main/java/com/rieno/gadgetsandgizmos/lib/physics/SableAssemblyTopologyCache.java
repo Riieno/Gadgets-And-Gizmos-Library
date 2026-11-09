@@ -49,6 +49,8 @@ public final class SableAssemblyTopologyCache {
     private @Nullable UUID rootSubLevelId;
     // Current revision
     private long revision = Long.MIN_VALUE;
+    // Registration revision used by the cached topology
+    private long connectionRevision = Long.MIN_VALUE;
     // Next safety refresh tick
     private long nextSafetyRefreshTick = Long.MIN_VALUE;
     // Current generation
@@ -96,13 +98,15 @@ public final class SableAssemblyTopologyCache {
         ServerLevel nextLevel = root == null ? null : root.getLevel();
         UUID nextRootId = root == null ? null : root.getUniqueId();
         long nextRevision = SableAssemblyTopologyInvalidation.revision(nextLevel);
+        long nextConnectionRevision = SableAssemblyConnectionRegistry.revision();
         long gameTime = nextLevel == null ? Long.MIN_VALUE : nextLevel.getGameTime();
         boolean safetyRefreshDue = nextLevel != null
                 && gameTime >= nextSafetyRefreshTick;
         if (topology != null && level == nextLevel
                 && rootSubLevel == root
                 && Objects.equals(rootSubLevelId, nextRootId)
-                && revision == nextRevision && root != null && !root.isRemoved()
+                && revision == nextRevision && connectionRevision == nextConnectionRevision
+                && root != null && !root.isRemoved()
                 && !safetyRefreshDue) {
             return topology;
         }
@@ -110,6 +114,7 @@ public final class SableAssemblyTopologyCache {
         rootSubLevel = root;
         rootSubLevelId = nextRootId;
         revision = nextRevision;
+        connectionRevision = nextConnectionRevision;
         topology = SableAssemblyTopologyApi.discover(root, filter, classifier);
         nextSafetyRefreshTick = nextSafetyRefreshTick(gameTime, nextRootId);
         generation++;

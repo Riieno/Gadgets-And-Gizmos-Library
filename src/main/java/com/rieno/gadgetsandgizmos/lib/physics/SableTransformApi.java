@@ -96,6 +96,22 @@ public final class SableTransformApi {
         return subLevel == null ? dir.normalize() : subLevel.logicalPose().transformNormal(dir).normalize();
     }
 
+    // Rotate a world vector to body space while preserving distances, speeds and null values
+    public static @Nullable Vec3 toLocalVector(@Nullable SubLevel subLevel, @Nullable Vec3 val){
+        if(subLevel == null || val == null) return val;
+        Vector3d res = new Vector3d(val.x, val.y, val.z);
+        subLevel.logicalPose().orientation().transformInverse(res);
+        return new Vec3(res.x, res.y, res.z);
+    }
+
+    // Rotate a body vector to world space without normalizing or applying body scale
+    public static @Nullable Vec3 toWorldVector(@Nullable SubLevel subLevel, @Nullable Vec3 val){
+        if(subLevel == null || val == null) return val;
+        Vector3d res = new Vector3d(val.x, val.y, val.z);
+        subLevel.logicalPose().orientation().transform(res);
+        return new Vec3(res.x, res.y, res.z);
+    }
+
     // Convert one block direction to SubLevel space
     public static Vec3 toLocalDirection(BlockEntity blockEntity, Vec3 dir) {
         return toLocalDirection(SableLevelApi.containing(blockEntity), dir);

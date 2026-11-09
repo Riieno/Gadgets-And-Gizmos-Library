@@ -160,10 +160,23 @@ public abstract class MultiFluidTankBlockEntity extends FluidTankBlockEntity imp
         }
     }
 
+    // Rebuild adjacent surfaces after saved members become available on the client
+    @Override public void initialize(){
+        super.initialize();
+        MultiblockRenderUpdates.refresh(this);
+    }
+
+    // Refresh connected surfaces when received controller data changes their connections
     @Override protected void read(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket){
+        BlockPos prevController = getController();
+        int prevWidth = getWidth();
+        int prevHeight = getHeight();
         super.read(tag, registries, clientPacket);
         if(!isController()) localTank().readFromNBT(registries, tag.getCompound("TankContent"));
         membersTick = Long.MIN_VALUE;
+        if(!prevController.equals(getController()) || prevWidth != getWidth() || prevHeight != getHeight()){
+            MultiblockRenderUpdates.refresh(this);
+        }
     }
 
     @Override public void write(CompoundTag tag, HolderLookup.Provider registries, boolean clientPacket){
