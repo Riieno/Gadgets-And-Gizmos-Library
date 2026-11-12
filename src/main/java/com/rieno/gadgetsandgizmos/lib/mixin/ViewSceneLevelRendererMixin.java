@@ -159,6 +159,18 @@ public abstract class ViewSceneLevelRendererMixin implements ViewSceneAccess{
     private void captureWithoutOutlines(CallbackInfoReturnable<Boolean> cir){
         if(ViewSceneRenderer.isCapturing()) cir.setReturnValue(false);
     }
+    // Secondary Sodium storage must not reset or repopulate the player's Voxy chunk bounds
+    @Inject(method = "voxy$getRenderSystem", at = @At("HEAD"), cancellable = true, require = 0, remap = false)
+    private void retainPlayerVoxyBounds(CallbackInfoReturnable<Object> cir){
+        if(ViewSceneRenderer.isCapturing()) cir.setReturnValue(null);
+    }
+    // Draw distant terrain behind every opaque, cutout and translucent near layer
+    @Inject(method = "renderLevel", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/LevelRenderer;renderSectionLayer(Lnet/minecraft/client/renderer/RenderType;DDDLorg/joml/Matrix4f;Lorg/joml/Matrix4f;)V", ordinal = 0))
+    private void captureDistantTerrain(DeltaTracker tracker, boolean outline, Camera camera,
+            GameRenderer renderer, LightTexture lightmap, Matrix4f view, Matrix4f projection, CallbackInfo ci){
+        ViewSceneRenderer.renderLods(view, projection);
+    }
     // Draw remaining camera layers before vanilla removes the scene's view matrix
     @Inject(method = "renderLevel", at = @At(value = "INVOKE",
             target = "Lorg/joml/Matrix4fStack;popMatrix()Lorg/joml/Matrix4fStack;", remap = false))

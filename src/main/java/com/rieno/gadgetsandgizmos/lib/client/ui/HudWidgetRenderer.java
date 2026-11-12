@@ -48,7 +48,14 @@ public final class HudWidgetRenderer{
 
     public record Style(HudControlRenderer.Palette palette, double fontSize, String fontStyle, int textColor,
                         HudStyleCatalog.ControlStyle control, HudStyleCatalog.ProgressStyle progress,
-                        boolean checkbox, GuiNineSlice textInput){}
+                        boolean checkbox, GuiNineSlice textInput){
+        public Style scaled(double scale){
+            var p = palette;
+            return new Style(new HudControlRenderer.Palette(p.background(), p.accent(), p.gradient(), p.track(), p.border(),
+                    p.borderWidth() * scale, p.radius() * scale, p.scale() * scale), fontSize * scale,
+                    fontStyle, textColor, control, progress, checkbox, textInput);
+        }
+    }
 
     // Apply the authored element transform after the caller establishes its canvas transform
     public static void transform(PoseStack poses, WidgetElementLayout.Element element){
@@ -67,26 +74,43 @@ public final class HudWidgetRenderer{
         var bounds = new HudControlRenderer.Rect(0, 0, width, height);
         var palette = style.palette();
         switch(type){
-            case "box" -> HudControlRenderer.panel(canvas, bounds, palette.background(), palette.border(),
-                    palette.borderWidth(), palette.radius());
+            case "box" -> HudControlRenderer.panel(canvas, bounds, palette);
             case "button" -> label(canvas, font, style, HudControlRenderer.button(canvas, bounds, palette,
-                    style.control(), active, hovered), label.isBlank() ? "Button" : label, true);
+                    style.control(), active, hovered), label.isEmpty() ? "Button" : label, true);
             case "toggle" -> label(canvas, font, style, HudControlRenderer.toggle(canvas, bounds, palette,
-                    style.control(), active, hovered, style.checkbox()), label.isBlank() ? "Toggle" : label, false);
+                    style.control(), active, hovered, style.checkbox()), label.isEmpty() ? "Toggle" : label, false);
             case "slider" -> HudControlRenderer.slider(canvas, bounds, palette, style.control(), amount, hovered);
             case "progress" -> label(canvas, font, style, HudControlRenderer.progress(canvas, bounds, palette,
-                    style.progress(), amount), label.isBlank() ? Math.round(amount * 100) + "%" : label, true);
+                    style.progress(), amount), label.isEmpty() ? Math.round(amount * 100) + "%" : label, true);
             case "text_input" -> {
                 if(style.textInput() != null) style.textInput().paint(canvas, 0, 0, width, height, 1);
-                else HudControlRenderer.panel(canvas, bounds, palette.background(), palette.border(),
-                        palette.borderWidth(), palette.radius());
+                else HudControlRenderer.panel(canvas, bounds, palette);
                 int innerHeight = height - 9;
                 int textHeight = Math.max(1, (int)Math.round(style.fontSize()));
                 if(textHeight <= innerHeight) label(canvas, font, style,
                         new HudControlRenderer.Rect(4, 5 + (innerHeight - textHeight) / 2, Math.max(0, width - 16), innerHeight),
-                        label.isBlank() ? "Enter text" : label, false, false);
+                        label.isEmpty() ? "Enter text" : label, false, false);
             }
             default -> label(canvas, font, style, bounds, label, false, false);
+        }
+    }
+
+    public static void dropdown(Canvas canvas, Font font, Style style, int width, int height, String text,
+            HudStyleCatalog.DropdownStyle preset, boolean open, boolean hovered){
+        if(width <= 0 || height <= 0) return;
+        label(canvas, font, style.scaled(Math.min(1, height / Math.max(0.05, style.fontSize()))), HudDropdownRenderer.control(canvas, new HudControlRenderer.Rect(0, 0, width, height),
+                style.palette(), preset, open, hovered), text, false);
+    }
+
+    // Stop before the first line that would extend outside the element
+    public static void wrappedText(Canvas canvas, Font font, Style style, HudControlRenderer.Rect bounds, String text){
+        if(text == null || text.isBlank() || bounds.width() <= 0 || bounds.height() <= 0) return;
+        float scale = (float)Math.max(0.05, style.fontSize() / font.lineHeight);
+        double y = bounds.y(), step = font.lineHeight * scale;
+        for(Component line : StyledText.wrap(font, text, style.fontStyle(), Math.max(1, (int)Math.floor(bounds.width() / scale)))){
+            if(y + step > bounds.bottom() + 0.01) break;
+            canvas.text(line, bounds.x(), y, scale, style.textColor());
+            y += step;
         }
     }
 

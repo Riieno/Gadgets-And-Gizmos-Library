@@ -7,6 +7,21 @@ import static org.junit.jupiter.api.Assertions.*;
 
 // Preserve authored zero, false and empty values when sharing configuration reads with static analysis
 class GraphInputDefaultsTest{
+    @Test void authoredWhitespaceAndEmptyTextAreNotMissingValues(){
+        var data = new CompoundTag();
+        data.putString("Text", "legacy");
+        for(String text : java.util.List.of(" ", "  ", "", " padded ")){
+            var payload = new CompoundTag(); payload.putString("Value", text);
+            var encoded = new CompoundTag(); encoded.putString("Type", "string"); encoded.put("Payload", payload);
+            var defaults = new CompoundTag(); defaults.put("text", encoded); data.put("Defaults", defaults);
+            assertEquals(text, GraphInputDefaults.text(data, "text", "fallback"));
+            assertEquals(text, GraphValueText.parse("string", GraphInputDefaults.text(data, "text", "fallback")).asString());
+        }
+        data.remove("Defaults");
+        assertEquals("legacy", GraphInputDefaults.text(data, "text", "fallback"));
+        assertEquals("fallback", GraphInputDefaults.text(data, "missing", "fallback"));
+    }
+
     @Test void authoredDefaultsTakePriorityOverLegacyProperties(){
         CompoundTag data = new CompoundTag();
         CompoundTag defaults = new CompoundTag();

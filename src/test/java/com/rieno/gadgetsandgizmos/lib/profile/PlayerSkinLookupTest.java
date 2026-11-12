@@ -13,6 +13,29 @@ import static org.junit.jupiter.api.Assertions.*;
 // Check profile decoding without depending on the live account service
 class PlayerSkinLookupTest{
     @Test
+    void uuidProfilesAcceptRenamedAccountsAndPreserveSignedProperties(){
+        UUID id = UUID.fromString("5d69650b-0622-4202-bf30-bedd76e9bcce");
+        GameProfile profile = profile("http://textures.minecraft.net/texture/test", true);
+        String textures = profile.getProperties().get("textures").iterator().next().value();
+        String json = "{\"id\":\"" + id.toString().replace("-", "") + "\",\"name\":\"Renamed_Player\",\"properties\":["
+                + "{\"name\":\"textures\",\"value\":\"" + textures + "\",\"signature\":\"signature\"}]}";
+        var res = PlayerSkinLookup.sessionProfile(id, json);
+        assertEquals(id, res.profile().getId());
+        assertEquals("Renamed_Player", res.playerName());
+        assertEquals("https://textures.minecraft.net/texture/test", res.skinUrl());
+        assertTrue(res.slim());
+        assertEquals("signature", res.profile().getProperties().get("textures").iterator().next().signature());
+        assertThrows(IllegalStateException.class, () -> PlayerSkinLookup.sessionProfile(UUID.randomUUID(), json));
+    }
+
+    @Test
+    void missingUuidFinishesWithoutANetworkRequest(){
+        var res = PlayerSkinLookup.lookupUuid(null);
+        assertTrue(res.isDone());
+        assertEquals(PlayerSkinLookup.Status.PLAYER_DOES_NOT_EXIST, res.join().status());
+    }
+
+    @Test
     void readsWideAndSlimSkinsAndSecuresLegacyUrls(){
         for(boolean slim : new boolean[]{false, true}){
             GameProfile profile = profile("http://textures.minecraft.net/texture/test", slim);

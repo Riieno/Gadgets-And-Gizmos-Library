@@ -10,6 +10,18 @@ public final class GuiLineRenderer {
     private GuiLineRenderer() {
     }
 
+    // Batch a thick segment with square caps so adjoining wire segments remain closed
+    public static void add(VertexConsumer vertices, Matrix4f pose, double x1, double y1, double x2, double y2, double width, int color){
+        double dx = x2 - x1, dy = y2 - y1, length = Math.hypot(dx, dy);
+        if(length < 1.0E-8D || width <= 0) return;
+        double half = width / 2, capX = dx * half / length, capY = dy * half / length;
+        double nx = -capY, ny = capX;
+        vertices.addVertex(pose, (float)(x1 - capX - nx), (float)(y1 - capY - ny), 0).setColor(color);
+        vertices.addVertex(pose, (float)(x1 - capX + nx), (float)(y1 - capY + ny), 0).setColor(color);
+        vertices.addVertex(pose, (float)(x2 + capX + nx), (float)(y2 + capY + ny), 0).setColor(color);
+        vertices.addVertex(pose, (float)(x2 + capX - nx), (float)(y2 + capY - ny), 0).setColor(color);
+    }
+
     public static void drawClipped(GuiGraphics graphics, int x1, int y1, int x2, int y2,
                                    int left, int top, int right, int bottom, int color) {
         ScreenLineClipper.Segment line = ScreenLineClipper.clip(

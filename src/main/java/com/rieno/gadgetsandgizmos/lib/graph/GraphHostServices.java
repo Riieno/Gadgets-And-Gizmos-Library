@@ -26,6 +26,11 @@ public final class GraphHostServices {
             ResourceLocation.fromNamespaceAndPath(GadgetsNGizmosLibrary.MOD_ID, "block_entity"),
             BlockEntity.class);
 
+    // Allow read-only world sampling during graph execution and previews
+    public static final GraphServiceKey<net.minecraft.world.level.Level> LEVEL = new GraphServiceKey<>(
+            ResourceLocation.fromNamespaceAndPath(GadgetsNGizmosLibrary.MOD_ID, "level"),
+            net.minecraft.world.level.Level.class);
+
     // Supply a live command permission policy independently of the host implementation
     public static final GraphServiceKey<CommandExecutionPolicy> COMMAND_EXECUTION = new GraphServiceKey<>(
             ResourceLocation.fromNamespaceAndPath(GadgetsNGizmosLibrary.MOD_ID, "command_execution"),

@@ -10,6 +10,16 @@ public final class HudStyleCatalog{
 
     public record Option(String id, String label){}
 
+    public enum DropdownStyle{
+        NEUMORPHIC("neumorphic_raised", "Neumorphic"), GLASSMORPHIC("glassmorphic", "Glassmorphic"),
+        MATERIAL("material_filled", "Material"), FLAT("flat", "Flat");
+
+        private final String id, label;
+        DropdownStyle(String id, String label){ this.id = id; this.label = label; }
+        public String id(){ return id; }
+        public String label(){ return label; }
+    }
+
     public enum ControlStyle{
         MATERIAL_FILLED("material_filled", "Material Filled"),
         MATERIAL_OUTLINED("material_outlined", "Material Outlined"),
@@ -54,13 +64,21 @@ public final class HudStyleCatalog{
             .map(style -> new Option(style.id(), style.label())).toList();
     public static final List<Option> PROGRESS_OPTIONS = Arrays.stream(ProgressStyle.values())
             .map(style -> new Option(style.id(), style.label())).toList();
+    public static final List<Option> DROPDOWN_OPTIONS = Arrays.stream(DropdownStyle.values())
+            .map(style -> new Option(style.id(), style.label())).toList();
 
     public static boolean supports(String type){
-        return "button".equals(type) || "toggle".equals(type) || "slider".equals(type) || "progress".equals(type);
+        return "button".equals(type) || "toggle".equals(type) || "slider".equals(type) || "progress".equals(type) || "dropdown".equals(type);
     }
 
     public static List<Option> options(String type){
-        return "progress".equals(type) ? PROGRESS_OPTIONS : supports(type) ? CONTROL_OPTIONS : List.of();
+        return "dropdown".equals(type) ? DROPDOWN_OPTIONS : "progress".equals(type) ? PROGRESS_OPTIONS : supports(type) ? CONTROL_OPTIONS : List.of();
+    }
+
+    public static DropdownStyle dropdownStyle(String requested){
+        String id = normalize(requested);
+        for(DropdownStyle style : DropdownStyle.values()) if(style.id().equals(id)) return style;
+        return DropdownStyle.MATERIAL;
     }
 
     // Migrate saved looks to the closest new family without offering the old styles in the designer.
@@ -82,7 +100,8 @@ public final class HudStyleCatalog{
     }
 
     public static String style(String type, String requested){
-        return "progress".equals(type) ? progressStyle(requested).id() : controlStyle(requested).id();
+        return "dropdown".equals(type) ? dropdownStyle(requested).id()
+                : "progress".equals(type) ? progressStyle(requested).id() : controlStyle(requested).id();
     }
 
     public static boolean checkbox(String requested){

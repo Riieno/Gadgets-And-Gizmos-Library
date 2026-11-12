@@ -1,6 +1,7 @@
 package com.rieno.gadgetsandgizmos.lib.client.ui;
 
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.rieno.gadgetsandgizmos.lib.color.ColorPaint;
 import com.rieno.gadgetsandgizmos.lib.display.HudStyleCatalog.ControlStyle;
 import com.rieno.gadgetsandgizmos.lib.display.HudStyleCatalog.ProgressStyle;
 import net.minecraft.client.gui.GuiGraphics;
@@ -15,6 +16,7 @@ public final class HudControlRenderer{
     public interface Canvas{
         void quad(double x1, double y1, double x2, double y2, double x3, double y3,
                   double x4, double y4, int color, int layer);
+        default ColorPaint paint(String property, int fallback){ return ColorPaint.solid(fallback); }
     }
 
     public record Rect(double x, double y, double width, double height){
@@ -30,6 +32,21 @@ public final class HudControlRenderer{
                           double borderWidth, double radius, double scale){
         public static final Palette DEFAULT = new Palette(0xFF202B30, 0xFF59C58B, 0xFF62B6E8,
                 0xFF34454D, 0xFF52656D, 1, 4, 1);
+    }
+
+    private record PaintPalette(ColorPaint background, ColorPaint accent, ColorPaint gradient, ColorPaint track,
+                                ColorPaint border, double borderWidth, double radius, double scale){
+        static PaintPalette of(Canvas canvas, Palette palette){
+            return new PaintPalette(canvas.paint("BackgroundColor", palette.background()), canvas.paint("AccentColor", palette.accent()),
+                    canvas.paint("GradientColor", palette.gradient()), canvas.paint("TrackColor", palette.track()),
+                    canvas.paint("BorderColor", palette.border()), palette.borderWidth(), palette.radius(), palette.scale());
+        }
+    }
+
+    // Resolve palette paints without changing existing scalar palette accessors
+    public static void panel(Canvas canvas, Rect bounds, Palette palette){
+        var p = PaintPalette.of(canvas, palette);
+        panel(canvas, bounds, p.background(), p.border(), p.borderWidth(), p.radius());
     }
 
     public static Canvas gui(GuiGraphics graphics){
@@ -57,6 +74,10 @@ public final class HudControlRenderer{
 
     // Share box fills, rounded corners and bounded borders across render targets
     public static void panel(Canvas canvas, Rect bounds, int background, int border, double borderWidth, double radius){
+        panel(canvas, bounds, ColorPaint.solid(background), ColorPaint.solid(border), borderWidth, radius);
+    }
+
+    public static void panel(Canvas canvas, Rect bounds, ColorPaint background, ColorPaint border, double borderWidth, double radius){
         if(!valid(bounds)) return;
         double limit = Math.min(bounds.width(), bounds.height()) / 2;
         double width = Math.clamp(borderWidth, 0, limit);
@@ -66,25 +87,27 @@ public final class HudControlRenderer{
     }
 
     // Return the available label rectangle; the host owns font styling and graph data.
-    public static Rect button(Canvas canvas, Rect bounds, Palette palette, ControlStyle style,
+    public static Rect button(Canvas canvas, Rect bounds, Palette colors, ControlStyle style,
                               boolean pressed, boolean hovered){
+        PaintPalette palette = PaintPalette.of(canvas, colors);
         if(!valid(bounds)) return bounds;
         surface(canvas, bounds, style == ControlStyle.SKEUOMORPHIC_GLASS
                 ? withRadius(palette, Math.min(bounds.width(), bounds.height()) / 2) : palette, style, pressed, hovered, 0);
         return bounds.inset(Math.min(8 * scale(palette), bounds.height() / 4));
     }
 
-    public static Rect toggle(Canvas canvas, Rect bounds, Palette palette, ControlStyle style,
+    public static Rect toggle(Canvas canvas, Rect bounds, Palette colors, ControlStyle style,
                               boolean active, boolean hovered, boolean checkbox){
+        PaintPalette palette = PaintPalette.of(canvas, colors);
         if(!valid(bounds)) return bounds;
         double s = scale(palette);
         double h = Math.max(0, Math.min(Math.max(bounds.height() - 4 * s, bounds.height() * 0.65), 22 * s));
         h = Math.min(h, Math.min(bounds.height(), bounds.width() / (checkbox ? 1 : 1.95)));
         double w = Math.min(bounds.width(), h * (checkbox ? 1 : 1.95));
         Rect indicator = new Rect(bounds.right() - w, bounds.y() + (bounds.height() - h) / 2, w, h);
-        int surfaceColor = style == ControlStyle.MATERIAL_OUTLINED ? palette.background()
+        ColorPaint surfaceColor = style == ControlStyle.MATERIAL_OUTLINED ? palette.background()
                 : active ? palette.accent() : palette.track();
-        Palette p = new Palette(surfaceColor, palette.accent(), palette.gradient(),
+        PaintPalette p = new PaintPalette(surfaceColor, palette.accent(), palette.gradient(),
                 palette.track(), palette.border(), palette.borderWidth(), checkbox ? 3 * s : h / 2, s);
         surface(canvas, indicator, p, style, active && style == ControlStyle.NEUMORPHIC_INSET, hovered, 0);
         double inset = Math.min(h / 4, Math.max(s * 2, h * 0.13));
@@ -105,14 +128,15 @@ public final class HudControlRenderer{
                 rounded(canvas, thumb.inset(knob * 0.28), knob / 4, 0x66FFFFFF, 19);
             }else{
                 rounded(canvas, thumb, knob / 2, style == ControlStyle.NEUMORPHIC_INSET
-                        ? mix(palette.background(), 0xFFFFFFFF, 0.35) : 0xFFF2FAFC, 18);
+                        ? mix(palette.background(), 0xFFFFFFFF, 0.35) : ColorPaint.solid(0xFFF2FAFC), 18);
             }
         }
         return new Rect(bounds.x(), bounds.y(), Math.max(0, indicator.x() - bounds.x() - 7 * s), bounds.height());
     }
 
-    public static void slider(Canvas canvas, Rect bounds, Palette p, ControlStyle style,
+    public static void slider(Canvas canvas, Rect bounds, Palette colors, ControlStyle style,
                               double requestedAmount, boolean hovered){
+        PaintPalette p = PaintPalette.of(canvas, colors);
         if(!valid(bounds)) return;
         double amount = clamp(requestedAmount);
         double s = scale(p);
@@ -144,7 +168,7 @@ public final class HudControlRenderer{
                 rounded(canvas, rail, rail.height() / 2, mix(p.track(), 0xFF000000, 0.3), 10);
                 rounded(canvas, fill, rail.height() / 2, p.accent(), 11);
                 Rect thumb = new Rect(cx - knob / 2, bounds.y() + (bounds.height() - knob) / 2, knob, knob);
-                Palette thumbPalette = new Palette(p.background(), p.accent(), p.gradient(), p.track(), p.border(), 1, knob / 2, s * 0.5);
+                PaintPalette thumbPalette = new PaintPalette(p.background(), p.accent(), p.gradient(), p.track(), p.border(), 1, knob / 2, s * 0.5);
                 surface(canvas, thumb, thumbPalette, style, false, hovered, 12);
                 rounded(canvas, thumb.inset(knob * 0.35), knob, p.accent(), 30);
             }
@@ -166,7 +190,8 @@ public final class HudControlRenderer{
         }
     }
 
-    public static Rect progress(Canvas canvas, Rect bounds, Palette p, ProgressStyle style, double requestedAmount){
+    public static Rect progress(Canvas canvas, Rect bounds, Palette colors, ProgressStyle style, double requestedAmount){
+        PaintPalette p = PaintPalette.of(canvas, colors);
         if(!valid(bounds)) return bounds;
         double amount = clamp(requestedAmount);
         double s = scale(p);
@@ -212,7 +237,7 @@ public final class HudControlRenderer{
         return inner.inset(Math.min(3 * s, inner.height() / 4));
     }
 
-    private static Rect radialProgress(Canvas c, Rect b, Palette p, ProgressStyle style, double amount){
+    private static Rect radialProgress(Canvas c, Rect b, PaintPalette p, ProgressStyle style, double amount){
         double s = scale(p);
         boolean half = style.halfCircle();
         double pad = Math.min(2 * s, Math.min(b.width(), b.height()) / 8);
@@ -243,10 +268,10 @@ public final class HudControlRenderer{
         return new Rect(cx - labelSize / 2, cy - labelSize / 2, labelSize, labelSize);
     }
 
-    private static void surface(Canvas c, Rect b, Palette p, ControlStyle style, boolean pressed, boolean hovered, int layer){
+    private static void surface(Canvas c, Rect b, PaintPalette p, ControlStyle style, boolean pressed, boolean hovered, int layer){
         double s = scale(p);
         double radius = Math.min(Math.min(b.width(), b.height()) / 2, Math.max(p.radius(), 4 * s));
-        int base = hovered ? mix(p.background(), 0xFFFFFFFF, 0.08) : p.background();
+        ColorPaint base = hovered ? mix(p.background(), 0xFFFFFFFF, 0.08) : p.background();
         if(pressed) base = mix(base, 0xFF000000, 0.2);
         switch(style){
             case MATERIAL_FILLED -> {
@@ -286,7 +311,7 @@ public final class HudControlRenderer{
             case SKEUOMORPHIC_GLASS -> {
                 rounded(c, b, radius, mix(p.border(), 0xFFFFFFFF, 0.65), layer);
                 Rect face = b.inset(Math.min(2 * s, b.height() / 5));
-                int glass = pressed ? p.accent() : mix(base, p.accent(), 0.42);
+                ColorPaint glass = pressed ? p.accent() : mix(base, p.accent(), 0.42);
                 gradient(c, face, radius, mix(glass, 0xFFFFFFFF, 0.25), mix(glass, 0xFF000000, 0.35), false, layer + 1);
                 Rect shine = new Rect(face.x() + s, face.y() + s, Math.max(0, face.width() - 2 * s), Math.max(0, face.height() * 0.4 - s));
                 gradient(c, shine, radius, alpha(0xFFFFFFFF, 0.45), alpha(0xFFFFFFFF, 0.04), false, layer + 2);
@@ -295,14 +320,14 @@ public final class HudControlRenderer{
     }
 
     private static void arc(Canvas c, double cx, double cy, double radius, double thickness,
-                            double start, double sweep, int first, int last, int layer){
+                            double start, double sweep, ColorPaint first, ColorPaint last, int layer){
         if(radius <= 0 || sweep <= 0) return;
         int segments = Math.max(2, Math.min(128, (int)Math.ceil(sweep * Math.max(8, radius) / 2)));
         double inner = Math.max(0, radius - thickness);
         for(int i = 0; i < segments; i++){
             double a = start + sweep * i / segments;
             double b = start + sweep * (i + 1) / segments;
-            c.quad(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius,
+            HudWidgetPaint.quad(c, cx + Math.cos(a) * radius, cy + Math.sin(a) * radius,
                     cx + Math.cos(a) * inner, cy + Math.sin(a) * inner,
                     cx + Math.cos(b) * inner, cy + Math.sin(b) * inner,
                     cx + Math.cos(b) * radius, cy + Math.sin(b) * radius,
@@ -311,6 +336,10 @@ public final class HudControlRenderer{
     }
 
     private static void gradient(Canvas c, Rect b, double radius, int first, int last, boolean horizontal, int layer){
+        gradient(c, b, radius, ColorPaint.solid(first), ColorPaint.solid(last), horizontal, layer);
+    }
+
+    private static void gradient(Canvas c, Rect b, double radius, ColorPaint first, ColorPaint last, boolean horizontal, int layer){
         if(!valid(b)) return;
         int rows = Math.max(1, Math.min(256, (int)Math.ceil(b.height())));
         int columns = horizontal ? Math.max(1, Math.min(64, (int)Math.ceil(b.width()))) : 1;
@@ -328,7 +357,9 @@ public final class HudControlRenderer{
         }
     }
 
-    private static void rounded(Canvas c, Rect b, double radius, int color, int layer){
+    private static void rounded(Canvas c, Rect b, double radius, int color, int layer){ rounded(c, b, radius, ColorPaint.solid(color), layer); }
+
+    private static void rounded(Canvas c, Rect b, double radius, ColorPaint color, int layer){
         if(!valid(b)) return;
         double r = Math.max(0, Math.min(radius, Math.min(b.width(), b.height()) / 2));
         if(r <= 0){ rect(c, b, color, layer); return; }
@@ -348,17 +379,21 @@ public final class HudControlRenderer{
         return radius - Math.sqrt(Math.max(0, radius * radius - dy * dy));
     }
 
-    private static void rect(Canvas c, Rect b, int color, int layer){
-        if(!valid(b) || (color >>> 24) == 0) return;
-        c.quad(b.x(), b.y(), b.x(), b.bottom(), b.right(), b.bottom(), b.right(), b.y(), color, layer);
+    private static void rect(Canvas c, Rect b, int color, int layer){ rect(c, b, ColorPaint.solid(color), layer); }
+
+    private static void rect(Canvas c, Rect b, ColorPaint color, int layer){
+        if(!valid(b) || color instanceof ColorPaint.Solid solid && (solid.color() >>> 24) == 0) return;
+        HudWidgetPaint.quad(c, b.x(), b.y(), b.x(), b.bottom(), b.right(), b.bottom(), b.right(), b.y(), color, layer);
     }
 
-    private static void line(Canvas c, double x1, double y1, double x2, double y2, double width, int color, int layer){
+    private static void line(Canvas c, double x1, double y1, double x2, double y2, double width, int color, int layer){ line(c, x1, y1, x2, y2, width, ColorPaint.solid(color), layer); }
+
+    private static void line(Canvas c, double x1, double y1, double x2, double y2, double width, ColorPaint color, int layer){
         double length = Math.hypot(x2 - x1, y2 - y1);
         if(length <= 0) return;
         double dx = (y2 - y1) / length * width / 2;
         double dy = (x1 - x2) / length * width / 2;
-        c.quad(x1 + dx, y1 + dy, x1 - dx, y1 - dy, x2 - dx, y2 - dy, x2 + dx, y2 + dy, color, layer);
+        HudWidgetPaint.quad(c, x1 + dx, y1 + dy, x1 - dx, y1 - dy, x2 - dx, y2 - dy, x2 + dx, y2 + dy, color, layer);
     }
 
     private static boolean valid(Rect b){
@@ -366,20 +401,14 @@ public final class HudControlRenderer{
                 && Double.isFinite(b.width()) && Double.isFinite(b.height()) && b.width() > 0 && b.height() > 0;
     }
 
-    private static double scale(Palette p){ return Double.isFinite(p.scale()) ? Math.max(0.05, p.scale()) : 1; }
-    private static Palette withRadius(Palette p, double radius){
-        return new Palette(p.background(), p.accent(), p.gradient(), p.track(), p.border(), p.borderWidth(), radius, p.scale());
+    private static double scale(PaintPalette p){ return Double.isFinite(p.scale()) ? Math.max(0.05, p.scale()) : 1; }
+    private static PaintPalette withRadius(PaintPalette p, double radius){
+        return new PaintPalette(p.background(), p.accent(), p.gradient(), p.track(), p.border(), p.borderWidth(), radius, p.scale());
     }
     private static double clamp(double value){ return Double.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0; }
-    private static int alpha(int color, double amount){ return (int)Math.round((color >>> 24) * clamp(amount)) << 24 | color & 0xFFFFFF; }
-
-    private static int mix(int first, int last, double amount){
-        double t = clamp(amount);
-        int result = 0;
-        for(int shift : new int[]{0, 8, 16, 24}){
-            int a = first >>> shift & 255, b = last >>> shift & 255;
-            result |= (int)Math.round(a + (b - a) * t) << shift;
-        }
-        return result;
-    }
+    private static ColorPaint alpha(int color, double amount){ return ColorPaint.alpha(ColorPaint.solid(color), amount); }
+    private static ColorPaint alpha(ColorPaint color, double amount){ return ColorPaint.alpha(color, amount); }
+    private static ColorPaint mix(int first, int last, double amount){ return ColorPaint.mix(ColorPaint.solid(first), ColorPaint.solid(last), amount); }
+    private static ColorPaint mix(ColorPaint first, int last, double amount){ return ColorPaint.mix(first, ColorPaint.solid(last), amount); }
+    private static ColorPaint mix(ColorPaint first, ColorPaint last, double amount){ return ColorPaint.mix(first, last, amount); }
 }

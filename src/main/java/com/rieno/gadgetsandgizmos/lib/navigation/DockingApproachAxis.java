@@ -22,6 +22,11 @@ public record DockingApproachAxis(Vec3 tip, Vec3 facing, double distance){
 
     public Vec3 endpoint(){ return tip.add(facing.scale(distance)); }
 
+    // Preserve the reference height along an oriented axis while removing sideways error
+    public Vec3 project(Vec3 position){
+        return tip.add(facing.scale(position.subtract(tip).dot(facing)));
+    }
+
     // Select any point between the connector contact and the end of its detection range
     public Vec3 closestPoint(Vec3 position){
         return tip.add(facing.scale(Math.clamp(position.subtract(tip).dot(facing), 0, distance)));

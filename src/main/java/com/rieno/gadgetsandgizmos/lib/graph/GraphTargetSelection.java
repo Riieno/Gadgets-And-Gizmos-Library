@@ -34,6 +34,13 @@ public final class GraphTargetSelection{
         return resolveBinding(null, type, payload);
     }
 
+    // Use the saved selection when no input is available and preserve explicit empty overrides
+    public static CompoundTag resolveNamedBinding(@Nullable CompoundTag saved, @Nullable String type,
+            @Nullable CompoundTag payload, java.util.function.Function<String, CompoundTag> names){
+        if(type == null) return saved == null ? new CompoundTag() : saved.copy();
+        return resolveNamedBinding(type, payload, names);
+    }
+
     // Unwired picker defaults may contain only an id; retain their complete saved selection
     public static CompoundTag resolveDefaultBinding(@Nullable CompoundTag saved, @Nullable String type,
                                                     @Nullable CompoundTag payload){

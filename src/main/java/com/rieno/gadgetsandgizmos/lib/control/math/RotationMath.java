@@ -1,6 +1,6 @@
 package com.rieno.gadgetsandgizmos.lib.control.math;
 
-// Convert rotations between quaternions, ZXZ Euler angles and XYZ Tait-Bryan angles
+// Convert rotations between quaternions, proper Euler angles and Tait-Bryan angles
 public final class RotationMath {
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -88,6 +88,41 @@ public final class RotationMath {
         return Quaternion.fromAxisAngle(new Vector3(-y / across, x / across, 0), Math.atan2(across, z));
     }
 
+    // Compose YXZ Tait-Bryan yaw about Y, pitch about X and roll about Z, in radians
+    public static Quaternion yawPitchRollToQuaternion(Vector3 radians){
+        return Quaternion.fromAxisAngle(new Vector3(0, 1, 0), radians.x())
+                .multiply(Quaternion.fromAxisAngle(new Vector3(1, 0, 0), radians.y()))
+                .multiply(Quaternion.fromAxisAngle(new Vector3(0, 0, 1), radians.z())).normalized();
+    }
+
+    // Resolve YXZ Tait-Bryan yaw, pitch and roll at either pitch singularity
+    public static Vector3 quaternionToYawPitchRoll(Quaternion val){
+        Matrix3 m = val.rotationMatrix();
+        double across = Math.hypot(m.m10(), m.m11());
+        double pitch = Math.atan2(-m.m12(), across);
+        return across < SINGULAR_EPSILON
+                ? new Vector3(Math.atan2(-m.m20(), m.m00()), pitch, 0)
+                : new Vector3(Math.atan2(m.m02(), m.m22()), pitch, Math.atan2(m.m10(), m.m11()));
+    }
+
+    // Compose proper ZYZ Euler alpha, beta and gamma in radians
+    public static Quaternion eulerZyzToQuaternion(Vector3 radians){
+        double a = radians.x() / 2, b = radians.y() / 2, g = radians.z() / 2;
+        return new Quaternion(-Math.sin(b) * Math.sin(a - g), Math.sin(b) * Math.cos(a - g),
+                Math.cos(b) * Math.sin(a + g), Math.cos(b) * Math.cos(a + g)).normalized();
+    }
+
+    // Resolve ZYZ Euler angles with beta in [0, pi] and gamma zero at either singularity
+    public static Vector3 quaternionToEulerZyz(Quaternion val){
+        Matrix3 m = val.rotationMatrix();
+        double across = Math.hypot(m.m02(), m.m12()), beta = Math.atan2(across, m.m22());
+        if(across < SINGULAR_EPSILON){
+            double sign = m.m22() < 0 ? -1 : 1;
+            return new Vector3(Math.atan2(sign * m.m10(), sign * m.m00()), beta, 0);
+        }
+        return new Vector3(Math.atan2(m.m12(), m.m02()), beta, Math.atan2(m.m21(), -m.m20()));
+    }
+
     // Get the euler zxz to quaternion
     public static Quaternion eulerZxzToQuaternion(Vector3 radians) {
         double alpha = radians.x() * 0.5D;
@@ -142,15 +177,12 @@ public final class RotationMath {
 
     // Get the quaternion to tait bryan xyz
     public static Vector3 quaternionToTaitBryanXyz(Quaternion value) {
-        Quaternion q = value.normalized();
-        double roll = Math.atan2(
-                2.0D * (q.w() * q.x() + q.y() * q.z()),
-                1.0D - 2.0D * (q.x() * q.x() + q.y() * q.y()));
-        double pitch = Math.asin(clampUnit(2.0D * (q.w() * q.y() - q.z() * q.x())));
-        double yaw = Math.atan2(
-                2.0D * (q.w() * q.z() + q.x() * q.y()),
-                1.0D - 2.0D * (q.y() * q.y() + q.z() * q.z()));
-        return new Vector3(roll, pitch, yaw);
+        Matrix3 m = value.rotationMatrix();
+        double across = Math.hypot(m.m00(), m.m10());
+        double pitch = Math.atan2(-m.m20(), across);
+        return across < SINGULAR_EPSILON
+                ? new Vector3(0, pitch, Math.atan2(-m.m01(), m.m11()))
+                : new Vector3(Math.atan2(m.m21(), m.m22()), pitch, Math.atan2(m.m10(), m.m00()));
     }
 
     // Get the euler zxz to tait bryan xyz

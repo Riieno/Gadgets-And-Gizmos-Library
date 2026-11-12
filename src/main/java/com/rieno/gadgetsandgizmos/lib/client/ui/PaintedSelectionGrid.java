@@ -46,6 +46,8 @@ public final class PaintedSelectionGrid<T>{
     private Predicate<ItemSearchQuery.Entry> filter = entry -> true;
     private EditBox search;
     private int row;
+    // Draw custom thumbnails only for the cards currently visible
+    private ThumbnailRenderer<T> thumbnails;
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -80,6 +82,12 @@ public final class PaintedSelectionGrid<T>{
     }
 
     public List<T> filteredEntries(){ return filtered; }
+
+    // Reuse the same searchable cards for resources which have no inventory item
+    public PaintedSelectionGrid<T> withThumbnails(ThumbnailRenderer<T> renderer){
+        thumbnails = Objects.requireNonNull(renderer);
+        return this;
+    }
     public void ensureVisible(Predicate<T> match){
         for(int idx = 0; idx < filtered.size(); idx++){
             if(!match.test(filtered.get(idx))) continue;
@@ -114,6 +122,7 @@ public final class PaintedSelectionGrid<T>{
                 T entry = filtered.get(row * COLUMNS + slot);
                 Region bounds = entryBounds(appearance.grid(), appearance.card().background(), slot);
                 drawCard(graphics, font, appearance.card(), bounds, icon.apply(entry), label.apply(entry), selected.test(entry), x, y);
+                if(thumbnails != null) thumbnails.draw(graphics, at(bounds, appearance.card().icon()), entry);
                 if(bounds.contains(x, y)) hovered = entry;
             }
             configure();
@@ -184,6 +193,12 @@ public final class PaintedSelectionGrid<T>{
         scrollbar.configure(track.x(), track.y(), track.width(), track.height(), maximum(), row);
     }
     private static Region at(Region parent, Region child){ return new Region(parent.x() + child.x(), parent.y() + child.y(), child.width(), child.height()); }
+
+    // Paint one visible resource inside the card's existing icon bounds
+    @FunctionalInterface
+    public interface ThumbnailRenderer<T>{
+        void draw(GuiGraphics graphics, Region bounds, T entry);
+    }
 
     public record CardAppearance(GuiTextureRegion background, GuiTextureRegion tick, Region checkbox, Region icon, Region label){
         public CardAppearance{

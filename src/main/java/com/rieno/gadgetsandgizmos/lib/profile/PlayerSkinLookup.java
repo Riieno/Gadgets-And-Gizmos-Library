@@ -30,7 +30,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.CompletableFuture;
 
-// Resolve a Minecraft profile name to its current signed skin texture
+// Resolve Minecraft profile names and UUIDs to their current signed skin textures
 public final class PlayerSkinLookup {
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -41,6 +41,8 @@ public final class PlayerSkinLookup {
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     private static final Cache<String, CompletableFuture<LookupResult>> LOOKUPS = CacheBuilder.newBuilder()
+            .maximumSize(128).expireAfterWrite(1, TimeUnit.MINUTES).build();
+    private static final Cache<UUID, CompletableFuture<LookupResult>> UUID_LOOKUPS = CacheBuilder.newBuilder()
             .maximumSize(128).expireAfterWrite(1, TimeUnit.MINUTES).build();
     private static final int MAX_ATTEMPTS = 3;
     private static final int MAX_RESPONSE_BYTES = 32 * 1024;
@@ -81,6 +83,16 @@ public final class PlayerSkinLookup {
         if(name.isBlank()) return CompletableFuture.completedFuture(LookupResult.notFound());
         try{
             return LOOKUPS.get(name.toLowerCase(Locale.ROOT), () -> lookup(name, 1));
+        }catch(ExecutionException err){
+            return CompletableFuture.completedFuture(LookupResult.unavailable());
+        }
+    }
+
+    // Resolve a stable account UUID without consulting the username lookup service
+    public static CompletableFuture<LookupResult> lookupUuid(UUID id){
+        if(id == null) return CompletableFuture.completedFuture(LookupResult.notFound());
+        try{
+            return UUID_LOOKUPS.get(id, () -> lookupUuid(id, 1));
         }catch(ExecutionException err){
             return CompletableFuture.completedFuture(LookupResult.unavailable());
         }
@@ -132,26 +144,49 @@ public final class PlayerSkinLookup {
             if(!id.matches("[a-fA-F0-9]{32}") || normalizePlayerName(resolvedName).isBlank()){
                 return failedLookup();
             }
-            return send(SESSION_PROFILE_URI.resolve(id + "?unsigned=false")).thenApply(sessionResponse -> {
-                if(notFound(sessionResponse.statusCode())) return LookupResult.notFound();
-                if(sessionResponse.statusCode() / 100 != 2) throw new IllegalStateException("Profile unavailable");
-                JsonObject session = jsonObject(sessionResponse.body());
-                SkinData skin = skinData(session);
-                if(skin.url().isBlank()) throw new IllegalStateException("Skin unavailable");
-                UUID uuid = UUID.fromString(id.replaceFirst(
-                        "(........)(....)(....)(....)(............)", "$1-$2-$3-$4-$5"));
-                GameProfile resolved = new GameProfile(uuid, resolvedName);
-                for(JsonElement val : session.getAsJsonArray("properties")){
-                    if(!val.isJsonObject()) continue;
-                    JsonObject property = val.getAsJsonObject();
-                    if(!"textures".equals(string(property, "name"))) continue;
-                    String value = string(property, "value"), signature = string(property, "signature");
-                    resolved.getProperties().put("textures", signature.isBlank()
-                            ? new Property("textures", value) : new Property("textures", value, signature));
-                }
-                return LookupResult.resolved(resolved, skin);
-            });
+            UUID uuid = UUID.fromString(id.replaceFirst(
+                    "(........)(....)(....)(....)(............)", "$1-$2-$3-$4-$5"));
+            return lookupProfile(uuid);
         });
+    }
+
+    // Retry temporary session-service failures without resolving a username
+    private static CompletableFuture<LookupResult> lookupUuid(UUID id, int attempt){
+        return lookupProfile(id).handle((res, err) -> {
+            if(err == null) return CompletableFuture.completedFuture(res);
+            return attempt >= MAX_ATTEMPTS ? CompletableFuture.completedFuture(LookupResult.unavailable()) : lookupUuid(id, attempt + 1);
+        }).thenCompose(res -> res);
+    }
+
+    // Read the latest signed profile directly from the account's stable UUID
+    private static CompletableFuture<LookupResult> lookupProfile(UUID id){
+        String compact = id.toString().replace("-", "");
+        return send(SESSION_PROFILE_URI.resolve(compact + "?unsigned=false")).thenApply(response -> {
+            if(notFound(response.statusCode())) return LookupResult.notFound();
+            if(response.statusCode() / 100 != 2) throw new IllegalStateException("Profile unavailable");
+            return sessionProfile(id, response.body());
+        });
+    }
+
+    // Validate the requested account identity before accepting its current name and texture
+    static LookupResult sessionProfile(UUID id, String body){
+        JsonObject session = jsonObject(body);
+        String name = string(session, "name");
+        if(!id.toString().replace("-", "").equalsIgnoreCase(string(session, "id")) || normalizePlayerName(name).isBlank()){
+            throw new IllegalStateException("Invalid profile identity");
+        }
+        SkinData skin = skinData(session);
+        if(skin.url().isBlank()) throw new IllegalStateException("Skin unavailable");
+        GameProfile profile = new GameProfile(id, name);
+        for(JsonElement val : session.getAsJsonArray("properties")){
+            if(!val.isJsonObject()) continue;
+            JsonObject property = val.getAsJsonObject();
+            if(!"textures".equals(string(property, "name"))) continue;
+            String value = string(property, "value"), signature = string(property, "signature");
+            profile.getProperties().put("textures", signature.isBlank()
+                    ? new Property("textures", value) : new Property("textures", value, signature));
+        }
+        return LookupResult.resolved(profile, skin);
     }
 
     // Send one bounded profile-service request

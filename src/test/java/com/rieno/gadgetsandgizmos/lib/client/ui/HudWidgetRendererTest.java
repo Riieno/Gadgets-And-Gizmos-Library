@@ -58,6 +58,41 @@ class HudWidgetRendererTest{
         assertEquals(2.0 / 3, label.scale, 1e-5);
     }
 
+    @Test void wrappingPreservesLineBreaksAndFitsTheElementHeight(){
+        var canvas = new Capture();
+        HudWidgetRenderer.wrappedText(canvas, font(), style(9, "italic"), new HudControlRenderer.Rect(0, 0, 60, 27), "Home\nStorage and Hangar");
+        assertEquals(3, canvas.labels.size());
+        assertEquals("Home", canvas.labels.getFirst().text.getString());
+        for(var label : canvas.labels){
+            assertTrue(label.text.getStyle().isItalic());
+            assertTrue(font().width(label.text) <= 60);
+            assertTrue(label.y + 9 <= 27);
+        }
+    }
+
+    @Test void dropdownPresetsKeepLabelsClearOfTheirArrow(){
+        for(var preset : HudStyleCatalog.DropdownStyle.values()){
+            var canvas = new Capture();
+            HudWidgetRenderer.dropdown(canvas, font(), style(9, "bold"), 100, 24, "Home - coordinates", preset, false, true);
+            assertFalse(canvas.quads.isEmpty());
+            assertEquals(1, canvas.labels.size());
+            var label = canvas.labels.getFirst();
+            assertTrue(label.x >= 0 && label.x + font().width(label.text) * label.scale < 85);
+            assertTrue(label.text.getStyle().isBold());
+        }
+    }
+
+    @Test void dropdownArrowsKeepTheirFrontFaceWhenOpened(){
+        var closed = new Capture(); var open = new Capture();
+        var bounds = new HudControlRenderer.Rect(0, 0, 100, 24);
+        HudDropdownRenderer.control(closed, bounds, HudControlRenderer.Palette.DEFAULT, HudStyleCatalog.DropdownStyle.FLAT, false, false);
+        HudDropdownRenderer.control(open, bounds, HudControlRenderer.Palette.DEFAULT, HudStyleCatalog.DropdownStyle.FLAT, true, false);
+        double[] a = closed.quads.getLast(), b = open.quads.getLast();
+        double crossA = (a[2] - a[0]) * (a[5] - a[1]) - (a[3] - a[1]) * (a[4] - a[0]);
+        double crossB = (b[2] - b[0]) * (b[5] - b[1]) - (b[3] - b[1]) * (b[4] - b[0]);
+        assertTrue(crossA * crossB > 0);
+    }
+
     @Test void smallNineSlicesRetainNonnegativePatchesWithoutAtlasGutters(){
         List<Patch> patches = new ArrayList<>();
         frame().paint((region, x, y, width, height) -> {
@@ -86,6 +121,7 @@ class HudWidgetRendererTest{
     private static Font font(){
         var splitter = new StringSplitter((codePoint, style) -> style.isBold() ? 7 : 6);
         return new Font(id -> null, false){
+            @Override public StringSplitter getSplitter(){ return splitter; }
             @Override public int width(FormattedText text){ return (int)Math.ceil(splitter.stringWidth(text)); }
             @Override public FormattedText substrByWidth(FormattedText text, int width){
                 return splitter.headByWidth(text, width, Style.EMPTY);

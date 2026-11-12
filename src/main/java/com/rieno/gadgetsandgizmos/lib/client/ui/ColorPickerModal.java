@@ -28,7 +28,7 @@ public final class ColorPickerModal {
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     private static final int MODAL_WIDTH = 306;
-    private static final int MODAL_HEIGHT = 264;
+    private static final int MODAL_HEIGHT = 288;
     private static final int COLOR_AREA_SIZE = 172;
     private static final int HUE_BAR_WIDTH = 18;
     private static final int COLOR_AREA_STEPS = 48;
@@ -64,6 +64,10 @@ public final class ColorPickerModal {
     private boolean hexFocused;
     // Replaces the complete hex field with the next typed value.
     private boolean replaceHex;
+    // Edit opacity independently of the RGB channels
+    private String alphaText = "255";
+    private boolean alphaFocused;
+    private boolean replaceAlpha;
     // Tracks dragging inside the color area.
     private boolean draggingColor;
     // Tracks dragging inside the hue bar.
@@ -151,11 +155,18 @@ public final class ColorPickerModal {
         graphics.fill(bounds.hexX() + 1, bounds.hexY() + 1, bounds.hexRight() - 1, bounds.hexBottom() - 1,
                 style.raised());
         graphics.drawString(font, hex, bounds.hexX() + 6, bounds.hexY() + 6, style.primary(), false);
-        graphics.fill(bounds.previewX(), bounds.hexY(), bounds.previewRight(), bounds.hexBottom(), currentColor());
+        drawPreview(graphics, bounds.previewX(), bounds.hexY(), bounds.previewRight(), bounds.hexBottom());
         graphics.fill(bounds.previewX(), bounds.hexY(), bounds.previewRight(), bounds.hexY() + 1, style.border());
         graphics.fill(bounds.previewX(), bounds.hexBottom() - 1, bounds.previewRight(), bounds.hexBottom(), style.border());
         graphics.fill(bounds.previewX(), bounds.hexY(), bounds.previewX() + 1, bounds.hexBottom(), style.border());
         graphics.fill(bounds.previewRight() - 1, bounds.hexY(), bounds.previewRight(), bounds.hexBottom(), style.border());
+
+        Region alphaLabel = bounds.alphaLabel(), alphaField = bounds.alphaField();
+        graphics.drawString(font, "Alpha (0-255)", alphaLabel.x(), alphaLabel.y() + 5, style.secondary(), false);
+        graphics.fill(alphaField.x(), alphaField.y(), alphaField.right(), alphaField.bottom(),
+                alphaFocused ? style.accent() : style.border());
+        graphics.fill(alphaField.x() + 1, alphaField.y() + 1, alphaField.right() - 1, alphaField.bottom() - 1, style.raised());
+        textureText(graphics, font, alphaField, alphaText, style.primary());
 
         drawButton(graphics, font, bounds.cancelX(), bounds.buttonY(), bounds.buttonWidth(), "Cancel",
                 bounds.cancelContains(mouseX, mouseY), style, false);
@@ -186,9 +197,14 @@ public final class ColorPickerModal {
         appearance.field().draw(graphics, bounds.hexX(), bounds.hexY(), bounds.hexRight() - bounds.hexX(),
                 bounds.hexBottom() - bounds.hexY(), hexFocused);
         graphics.drawString(font, hex, bounds.hexX() + 6, bounds.hexY() + 6, appearance.valueColor(), false);
-        graphics.fill(bounds.previewX(), bounds.hexY(), bounds.previewRight(), bounds.hexBottom(), currentColor());
+        drawPreview(graphics, bounds.previewX(), bounds.hexY(), bounds.previewRight(), bounds.hexBottom());
         drawOutline(graphics, bounds.previewX(), bounds.hexY(), bounds.previewRight() - bounds.previewX(),
                 bounds.hexBottom() - bounds.hexY(), appearance.borderColor());
+
+        Region alphaLabel = bounds.alphaLabel(), alphaField = bounds.alphaField();
+        graphics.drawString(font, "Alpha (0-255)", alphaLabel.x(), alphaLabel.y() + 5, appearance.labelColor(), false);
+        appearance.field().draw(graphics, alphaField.x(), alphaField.y(), alphaField.width(), alphaField.height(), alphaFocused);
+        textureText(graphics, font, alphaField, alphaText, appearance.valueColor());
 
         appearance.button().draw(graphics, font, bounds.cancelX(), bounds.buttonY(), bounds.cancelWidth(),
                 bounds.buttonHeight(), "Cancel", bounds.cancelContains(mouseX, mouseY));
@@ -238,9 +254,17 @@ public final class ColorPickerModal {
                 drawOutline(graphics, cursorX - 2, cursorY - 2, 5, 5, appearance.cursorColor());
                 drawHueCursor(graphics, strip.x(), strip.y(), strip.width(), strip.height(), appearance.cursorColor());
                 Region preview = layout.preview();
-                graphics.fill(preview.x(), preview.y(), preview.right(), preview.bottom(), currentColor());
+                drawPreview(graphics, preview.x(), preview.y(), preview.right(), preview.bottom());
                 textureText(graphics, font, layout.hexLabel(), appearance.hexLabel().getString(), appearance.textColor());
                 textureText(graphics, font, layout.hexField(), hex.startsWith("#") ? hex.substring(1) : hex, appearance.textColor());
+                if(layout.alphaField() != null){
+                    Region field = layout.alphaField();
+                    textureText(graphics, font, layout.alphaLabel(), appearance.alphaLabel().getString(), appearance.textColor());
+                    graphics.fill(field.x(), field.y(), field.right(), field.bottom(),
+                            alphaFocused ? appearance.cursorColor() : 0xFF505050);
+                    graphics.fill(field.x() + 1, field.y() + 1, field.right() - 1, field.bottom() - 1, 0xFF202020);
+                    textureText(graphics, font, field, alphaText, appearance.textColor());
+                }
                 textureButton(graphics, appearance.cancel(), layout.cancelButton(), localX, localY);
                 textureText(graphics, font, layout.cancelButton(), appearance.cancelLabel().getString(), appearance.textColor());
                 textureButton(graphics, appearance.accept(), layout.acceptButton(), localX, localY);
@@ -270,6 +294,15 @@ public final class ColorPickerModal {
         if (!open || button != GLFW.GLFW_MOUSE_BUTTON_LEFT) return open;
         mouseX = (mouseX - pointerLeft) / pointerScale;
         mouseY = (mouseY - pointerTop) / pointerScale;
+        if(bounds.alphaContains(mouseX, mouseY)){
+            alphaFocused = true;
+            replaceAlpha = true;
+            hexFocused = false;
+            replaceHex = false;
+            return true;
+        }
+        alphaFocused = false;
+        replaceAlpha = false;
         if (bounds.colorContains(mouseX, mouseY)) {
             draggingColor = true;
             updateColor(mouseX, mouseY);
@@ -332,6 +365,17 @@ public final class ColorPickerModal {
             accept();
             return true;
         }
+        if(alphaFocused){
+            if(keyCode == GLFW.GLFW_KEY_A && (modifiers & GLFW.GLFW_MOD_CONTROL) != 0){
+                replaceAlpha = true;
+            }else if(keyCode == GLFW.GLFW_KEY_BACKSPACE){
+                if(replaceAlpha) alphaText = "";
+                else if(!alphaText.isEmpty()) alphaText = alphaText.substring(0, alphaText.length() - 1);
+                replaceAlpha = false;
+                applyAlphaIfComplete();
+            }
+            return true;
+        }
         if (!hexFocused) return true;
         if (keyCode == GLFW.GLFW_KEY_A && (modifiers & GLFW.GLFW_MOD_CONTROL) != 0) {
             replaceHex = true;
@@ -348,7 +392,16 @@ public final class ColorPickerModal {
 
     // Handle typed hex characters.
     public boolean charTyped(char character, int modifiers) {
-        if (!open || !hexFocused) return open;
+        if(!open) return false;
+        if(alphaFocused){
+            if(character < '0' || character > '9') return true;
+            if(replaceAlpha){ alphaText = ""; replaceAlpha = false; }
+            if(alphaText.length() >= 3) return true;
+            alphaText += character;
+            applyAlphaIfComplete();
+            return true;
+        }
+        if (!hexFocused) return open;
         if (replaceHex) {
             hex = "";
             replaceHex = false;
@@ -399,7 +452,7 @@ public final class ColorPickerModal {
         int height = Math.min(MODAL_HEIGHT + (styled ? 16 : 0), Math.max(220, screenHeight - 16));
         int x = Math.max(8, (screenWidth - width) / 2);
         int y = Math.max(8, (screenHeight - height) / 2);
-        int colorSize = Math.min(COLOR_AREA_SIZE, Math.max(112, height - (styled ? 108 : 92)));
+        int colorSize = Math.min(COLOR_AREA_SIZE, Math.max(88, height - (styled ? 132 : 116)));
         return new Bounds(x, y, width, height, colorSize, styled);
     }
 
@@ -471,7 +524,26 @@ public final class ColorPickerModal {
     private void updateLiveColor() {
         int color = currentColor();
         hex = toHex(color);
+        alphaText = Integer.toString(alpha);
         changed.accept(color);
+    }
+
+    // Clamp a completed alpha entry without changing the selected hue or RGB channels
+    private void applyAlphaIfComplete(){
+        if(alphaText.isEmpty()) return;
+        alpha = Mth.clamp(Integer.parseInt(alphaText), 0, 255);
+        updateLiveColor();
+    }
+
+    // Show transparency over a checkerboard instead of the modal background
+    private void drawPreview(GuiGraphics graphics, int x, int y, int right, int bottom){
+        for(int py = y; py < bottom; py += 4){
+            for(int px = x; px < right; px += 4){
+                int col = ((px - x) / 4 + (py - y) / 4) % 2 == 0 ? 0xFFAAAAAA : 0xFF666666;
+                graphics.fill(px, py, Math.min(right, px + 4), Math.min(bottom, py + 4), col);
+            }
+        }
+        graphics.fill(x, y, right, bottom, currentColor());
     }
 
     // Apply a complete six or eight digit hex field.
@@ -489,6 +561,7 @@ public final class ColorPickerModal {
     // Apply an ARGB color to the HSV state.
     private void setColor(int color, boolean notify) {
         alpha = color >>> 24 & 0xFF;
+        alphaText = Integer.toString(alpha);
         float[] hsv = rgbToHsv(color);
         hue = hsv[0];
         saturation = hsv[1];
@@ -586,19 +659,34 @@ public final class ColorPickerModal {
     }
 
     public record TextureLayout(Region title, Region colorArea, Region hueBar, Region hexLabel, Region hexField,
-                                Region preview, Region cancelButton, Region acceptButton){
+                                Region preview, Region cancelButton, Region acceptButton, Region alphaLabel, Region alphaField){
+        // Preserve layouts created before optional alpha fields were available
+        public TextureLayout(Region title, Region colorArea, Region hueBar, Region hexLabel, Region hexField,
+                             Region preview, Region cancelButton, Region acceptButton){
+            this(title, colorArea, hueBar, hexLabel, hexField, preview, cancelButton, acceptButton, null, null);
+        }
+
         public TextureLayout{
             for(Region region : java.util.List.of(title, colorArea, hueBar, hexLabel, hexField, preview, cancelButton, acceptButton)){
                 java.util.Objects.requireNonNull(region);
             }
             if(colorArea.width() != colorArea.height()) throw new IllegalArgumentException("The picker color area must be square");
+            if((alphaLabel == null) != (alphaField == null)) throw new IllegalArgumentException("Alpha requires both a label and a field");
         }
     }
 
     // Texture resources and text belong to the consuming mod, independently of the picker logic
     public record TextureAppearance(GuiTextureRegion panel, GuiTextureRegion cancel, GuiTextureRegion accept,
                                     TextureLayout layout, Component title, Component hexLabel, Component cancelLabel,
-                                    int backdrop, int textColor, int cursorColor){
+                                    int backdrop, int textColor, int cursorColor, Component alphaLabel){
+        // Retain the existing host appearance constructor
+        public TextureAppearance(GuiTextureRegion panel, GuiTextureRegion cancel, GuiTextureRegion accept,
+                                 TextureLayout layout, Component title, Component hexLabel, Component cancelLabel,
+                                 int backdrop, int textColor, int cursorColor){
+            this(panel, cancel, accept, layout, title, hexLabel, cancelLabel, backdrop, textColor, cursorColor,
+                    Component.literal("Alpha (0-255)"));
+        }
+
         public TextureAppearance{
             java.util.Objects.requireNonNull(panel);
             java.util.Objects.requireNonNull(cancel);
@@ -607,8 +695,11 @@ public final class ColorPickerModal {
             java.util.Objects.requireNonNull(title);
             java.util.Objects.requireNonNull(hexLabel);
             java.util.Objects.requireNonNull(cancelLabel);
-            for(Region region : java.util.List.of(layout.title(), layout.colorArea(), layout.hueBar(), layout.hexLabel(),
-                    layout.hexField(), layout.preview(), layout.cancelButton(), layout.acceptButton())){
+            java.util.Objects.requireNonNull(alphaLabel);
+            var regions = new java.util.ArrayList<>(java.util.List.of(layout.title(), layout.colorArea(), layout.hueBar(), layout.hexLabel(),
+                    layout.hexField(), layout.preview(), layout.cancelButton(), layout.acceptButton()));
+            if(layout.alphaField() != null){ regions.add(layout.alphaLabel()); regions.add(layout.alphaField()); }
+            for(Region region : regions){
                 if(region.right() > panel.width() || region.bottom() > panel.height()){
                     throw new IllegalArgumentException("Picker regions must fit inside the texture panel");
                 }
@@ -710,6 +801,24 @@ public final class ColorPickerModal {
         private int hexBottom() {
             if(texture != null) return y + texture.hexField().bottom();
             return hexY() + (styled ? 20 : 18);
+        }
+
+        // Place alpha input beneath hex unless the host supplies its own regions
+        private Region alphaField(){
+            if(texture != null) return texture.alphaField();
+            return new Region(x + 112, hexBottom() + 4, hexRight() - x - 112, 18);
+        }
+
+        // Keep the alpha range visible beside its numeric field
+        private Region alphaLabel(){
+            if(texture != null) return texture.alphaLabel();
+            return new Region(hexLabelX(), hexBottom() + 4, 90, 18);
+        }
+
+        // Match alpha hit testing to the same scaled field used for painting
+        private boolean alphaContains(double mouseX, double mouseY){
+            Region field = alphaField();
+            return field != null && field.contains(mouseX - (texture == null ? 0 : x), mouseY - (texture == null ? 0 : y));
         }
 
         private int previewX() {

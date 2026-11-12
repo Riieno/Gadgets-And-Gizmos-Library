@@ -1,7 +1,9 @@
 package com.rieno.gadgetsandgizmos.lib.graph.math;
 
+import com.rieno.gadgetsandgizmos.lib.control.math.AngleUnit;
 import com.rieno.gadgetsandgizmos.lib.control.math.Matrix3;
 import com.rieno.gadgetsandgizmos.lib.control.math.Quaternion;
+import com.rieno.gadgetsandgizmos.lib.control.math.RotationMath;
 import com.rieno.gadgetsandgizmos.lib.control.math.Vector3;
 import com.rieno.gadgetsandgizmos.lib.graph.GraphValue;
 import com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder;
@@ -63,11 +65,69 @@ public final class MathGraphValues{
 
     // Keep XYZ aliases so existing graphs can read saved angle maps
     public static GraphValue euler(Vector3 val){
-        return angles(val, "alpha", "beta", "gamma");
+        return rotationAngles(angles(val, "alpha", "beta", "gamma"), AngleUnit.RADIANS, "zyz");
     }
 
     public static GraphValue taitBryan(Vector3 val){
-        return angles(val, "roll", "pitch", "yaw");
+        return rotationAngles(angles(val, "roll", "pitch", "yaw"), AngleUnit.RADIANS, "xyz");
+    }
+
+    // Store YXZ Tait-Bryan yaw, pitch and roll in radians with physical XYZ aliases
+    public static GraphValue yawPitchRoll(Vector3 val){
+        return rotationAngles(GraphValue.map(GraphPortOrder.entries(Map.entry("x", number(val.y())), Map.entry("y", number(val.x())),
+                Map.entry("z", number(val.z())), Map.entry("yaw", number(val.x())),
+                Map.entry("pitch", number(val.y())), Map.entry("roll", number(val.z())))), AngleUnit.RADIANS, "yxz");
+    }
+
+    public static Vector3 yawPitchRoll(GraphValue val){
+        return new Vector3(component(val, "yaw", component(val, "y", 0)),
+                component(val, "pitch", component(val, "x", 0)), component(val, "roll", component(val, "z", 0)));
+    }
+
+    // Attach a unit to an angle map without changing its numeric components
+    public static GraphValue rotationAngles(GraphValue val, AngleUnit unit){
+        Map<String, Object> res = new LinkedHashMap<>();
+        if(val != null && val.value() instanceof Map<?, ?> map) map.forEach((key, entry) -> res.put(String.valueOf(key), entry));
+        res.put("unit", GraphValue.string(unit.id()));
+        return GraphValue.map(res);
+    }
+
+    // Identify a rotation's representation, axis convention and angle unit without changing its components
+    public static GraphValue rotationAngles(GraphValue val, AngleUnit unit, String convention){
+        Map<String, Object> res = new LinkedHashMap<>();
+        ((Map<?, ?>)rotationAngles(val, unit).value()).forEach((key, entry) -> res.put(String.valueOf(key), entry));
+        res.put("convention", GraphValue.string(convention));
+        res.put("representation", GraphValue.string(representation(convention)));
+        return GraphValue.map(res);
+    }
+
+    // Decode rotation maps using explicit metadata and the host's defaults for untagged values
+    public static Quaternion rotation(GraphValue val, String fallbackConvention, AngleUnit fallbackUnit){
+        if(val == null || !"map".equals(val.type()) || !(val.value() instanceof Map<?, ?> map)) throw new IllegalArgumentException("A rotation map is required");
+        String convention = text(val, "convention");
+        if(convention.isEmpty()) convention = "zyz".equals(fallbackConvention) && (map.containsKey("yaw") || map.containsKey("YAW")) ? "yxz" : fallbackConvention;
+        String kind = representation(convention), supplied = text(val, "representation");
+        if(!supplied.isEmpty() && !kind.equals(supplied)) throw new IllegalArgumentException("The rotation representation does not match its convention");
+        for(String key : List.of("x", "y", "z", "alpha", "beta", "gamma", "roll", "pitch", "yaw")){
+            Object raw = map.containsKey(key) ? map.get(key) : map.get(key.toUpperCase(Locale.ROOT));
+            if(raw != null && !"number".equals(GraphValue.of(raw).type())) throw new IllegalArgumentException("Rotation components must be numbers");
+        }
+        String unitId = text(val, "unit");
+        if(!unitId.isEmpty() && !AngleUnit.optionIds().contains(unitId)) throw new IllegalArgumentException("Unknown rotation angle unit");
+        AngleUnit unit = unitId.isEmpty() ? fallbackUnit : AngleUnit.fromId(unitId);
+        Vector3 angles = switch(convention){
+            case "zyz", "zxz" -> euler(val);
+            case "xyz" -> taitBryan(val);
+            default -> yawPitchRoll(val);
+        };
+        if(!angles.isFinite()) throw new IllegalArgumentException("Rotation components must be finite");
+        angles = new Vector3(unit.toRadians(angles.x()), unit.toRadians(angles.y()), unit.toRadians(angles.z()));
+        return switch(convention){
+            case "zyz" -> RotationMath.eulerZyzToQuaternion(angles);
+            case "zxz" -> RotationMath.eulerZxzToQuaternion(angles);
+            case "xyz" -> RotationMath.taitBryanXyzToQuaternion(angles);
+            default -> RotationMath.yawPitchRollToQuaternion(angles);
+        };
     }
 
     public static Vector3 euler(GraphValue val){
@@ -90,6 +150,7 @@ public final class MathGraphValues{
         if(val == null || !(val.value() instanceof Map<?, ?> map)) return GraphValue.map(Map.of());
         Map<String, Object> res = new LinkedHashMap<>();
         map.forEach((key, entry) -> res.put(String.valueOf(key), convert(entry, toRadians)));
+        if(map.containsKey("unit")) res.put("unit", GraphValue.string((toRadians ? AngleUnit.RADIANS : AngleUnit.DEGREES).id()));
         return GraphValue.map(res);
     }
 
@@ -107,6 +168,20 @@ public final class MathGraphValues{
     private static GraphValue angles(Vector3 val, String x, String y, String z){
         return GraphValue.map(GraphPortOrder.entries(Map.entry("x", number(val.x())), Map.entry("y", number(val.y())),
                 Map.entry("z", number(val.z())), Map.entry(x, number(val.x())), Map.entry(y, number(val.y())), Map.entry(z, number(val.z()))));
+    }
+
+    private static String representation(String convention){
+        return switch(convention){
+            case "zyz", "zxz" -> "euler";
+            case "xyz", "yxz" -> "tait_bryan";
+            default -> throw new IllegalArgumentException("Unknown rotation convention");
+        };
+    }
+
+    private static String text(GraphValue val, String key){
+        if(!(val.value() instanceof Map<?, ?> map)) return "";
+        Object raw = map.containsKey(key) ? map.get(key) : map.get(key.toUpperCase(Locale.ROOT));
+        return raw == null ? "" : GraphValue.of(raw).asString().strip().toLowerCase(Locale.ROOT);
     }
 
     private static double numeric(Object raw){

@@ -69,6 +69,12 @@ public final class PaintedSelectionModal implements AutoCloseable{
     public boolean isOpen(){ return open; }
     public List<String> selectedIds(){ return List.copyOf(selected); }
 
+    // Supply resource previews without replacing the modal's search or selection handling
+    public PaintedSelectionModal withThumbnails(PaintedSelectionGrid.ThumbnailRenderer<Entry> renderer){
+        grid.withThumbnails(renderer);
+        return this;
+    }
+
     // Refresh available choices while retaining the search and any saved selections
     public void setEntries(List<Entry> entries){ grid.setEntries(entries); }
 

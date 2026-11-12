@@ -11,6 +11,15 @@ import java.util.Map;
 public final class HudInteractionPorts{
     private HudInteractionPorts(){}
 
+    // Identify values derived from a control's current input rather than a retained submission
+    public static boolean isValueType(CompoundTag data, String port, String type){
+        for(Tag raw : data.getList("WidgetElements", Tag.TAG_COMPOUND)){
+            CompoundTag elm = (CompoundTag)raw;
+            if(type.equals(elm.getString("Type")) && port.equals(elm.getString("ValuePort"))) return true;
+        }
+        return false;
+    }
+
     public static void synchronize(CompoundTag data){
         CompoundTag sides = data.getCompound("PortSections");
         CompoundTag sections = sides.getCompound("Outputs");

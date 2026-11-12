@@ -7,6 +7,13 @@ import net.minecraft.nbt.Tag;
 public final class GraphInputDefaults{
     private GraphInputDefaults(){}
 
+    // Preserve authored whitespace and empty strings before consulting legacy properties
+    public static String text(CompoundTag data, String port, String fallback){
+        CompoundTag val = configuredValue(data, port);
+        return val.getCompound("Payload").contains("Value", Tag.TAG_STRING)
+                ? val.getCompound("Payload").getString("Value") : fallback;
+    }
+
     // Read an authored literal or legacy property without substituting runtime values
     public static CompoundTag configuredValue(CompoundTag data, String port){
         if(port == null || port.isEmpty()) return new CompoundTag();

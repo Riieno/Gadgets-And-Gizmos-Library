@@ -15,6 +15,7 @@ import dev.ryanhcode.sable.api.physics.force.QueuedForceGroup;
 import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
 import dev.ryanhcode.sable.api.physics.mass.MassData;
 import dev.ryanhcode.sable.companion.math.Pose3dc;
+import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.system.SubLevelPhysicsSystem;
 import net.minecraft.resources.ResourceLocation;
@@ -85,6 +86,20 @@ public final class SablePhysicsTelemetry{
         }
         SNAPSHOT_CACHE.put(subLevel, new CachedSnapshot(gameTime, collected));
         return collected;
+    }
+
+    // Read Sable's pressure ratio at a world position
+    public static double airPressure(@Nullable Level level, @Nullable Vector3dc worldPosition){
+        if(level == null || worldPosition == null || !worldPosition.isFinite()) return 0.0D;
+        return Math.max(0.0D, finite(DimensionPhysicsData.getAirPressure(level, worldPosition)));
+    }
+
+    // Read the dimension's base pressure ratio before its altitude curve
+    public static double dimensionPressure(@Nullable Level level){
+        if(level == null) return 0.0D;
+        double pressure = DimensionPhysicsData.of(level).basePressure()
+                .orElseGet(() -> DimensionPhysicsData.getDefault(level).basePressure().orElse(1.0D));
+        return Math.max(0.0D, finite(pressure));
     }
 
     // Share attachment forces with diagrams and telemetry without changing the physics queues

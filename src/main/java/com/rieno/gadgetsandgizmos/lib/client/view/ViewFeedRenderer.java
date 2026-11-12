@@ -59,4 +59,22 @@ public final class ViewFeedRenderer{
         return !HologramRenderScope.isActive() && ref != null && width > 0 && height > 0
                 && ViewSceneRenderer.drawVisibleFitted(ref, width, height, z, stack, buffers);
     }
+
+    // Fill only uncovered bars so the background cannot compete with the feed's depth
+    public static boolean drawSurface(HudWidgetRenderer.Canvas canvas, Font font, @Nullable ViewReference ref,
+                                      int width, int height, float z, PoseStack stack, MultiBufferSource buffers){
+        if(HologramRenderScope.isActive() || width <= 0 || height <= 0) return false;
+        if(!drawSurface(ref, width, height, z, stack, buffers)){
+            background(canvas, width, height);
+            placeholder(canvas, font, ref, width, height);
+            return false;
+        }
+        var viewport = ViewSceneRenderer.fittedViewport(ref, width, height);
+        double right = viewport.x() + viewport.width(), bottom = viewport.y() + viewport.height();
+        if(viewport.y() > 0) canvas.quad(0, 0, 0, viewport.y(), width, viewport.y(), width, 0, 0xFF101A20, 0);
+        if(bottom < height) canvas.quad(0, bottom, 0, height, width, height, width, bottom, 0xFF101A20, 0);
+        if(viewport.x() > 0) canvas.quad(0, viewport.y(), 0, bottom, viewport.x(), bottom, viewport.x(), viewport.y(), 0xFF101A20, 0);
+        if(right < width) canvas.quad(right, viewport.y(), right, bottom, width, bottom, width, viewport.y(), 0xFF101A20, 0);
+        return true;
+    }
 }

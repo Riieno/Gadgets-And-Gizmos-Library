@@ -43,6 +43,21 @@ public final class ColorStopEditor{
         preset = new ColorEffectPreset(preset.mode(), preset.color(), stops, preset.animated(), preset.additive());
         return true;
     }
+    // Insert a sampled stop at the clicked position without moving existing colors
+    public boolean add(float position){
+        if(!Float.isFinite(position) || preset.stops().size() >= ColorEffectPreset.MAX_STOPS) return false;
+        float val = Math.clamp(position, 0, 1);
+        for(int idx = 0; idx < preset.stops().size(); idx++){
+            if(Math.abs(preset.stops().get(idx).position() - val) < .001F){ select(idx); return false; }
+        }
+        var stops = new ArrayList<>(preset.stops());
+        int idx = 0;
+        while(idx < stops.size() && stops.get(idx).position() < val) idx++;
+        stops.add(idx, new ColorEffectPreset.Stop(val, preset.samplePosition(val)));
+        selected = idx;
+        preset = new ColorEffectPreset(preset.mode(), preset.color(), stops, preset.animated(), preset.additive());
+        return true;
+    }
     public boolean move(float position){
         if(selected == 0 || selected == preset.stops().size() - 1 || !Float.isFinite(position)) return false;
         var stops = new ArrayList<>(preset.stops());

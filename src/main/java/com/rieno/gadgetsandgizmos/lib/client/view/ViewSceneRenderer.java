@@ -80,6 +80,8 @@ public final class ViewSceneRenderer{
     // Retain paused scenes within the source limit so visibility changes reuse their terrain
     private static final Map<ViewReference, Capture> CAPTURES = new LinkedHashMap<>();
     private static final ViewRefreshBudget BUDGET = new ViewRefreshBudget();
+    // Redirect distant terrain without replacing the near scene's framebuffer
+    private static RenderTarget lodTarget;
     private static @Nullable ClientLevel owningLevel;
     private static @Nullable Capture active;
     private static @Nullable ViewPose pose;
@@ -112,7 +114,9 @@ public final class ViewSceneRenderer{
     public static boolean isCapturing(){ return active != null && RenderSystem.isOnRenderThread(); }
 
     // Supply the target override only during a secondary scene render
-    public static @Nullable RenderTarget captureTarget(){ return isCapturing() ? active.target : null; }
+    public static @Nullable RenderTarget captureTarget(){ return isCapturing() ? (lodTarget == null ? active.target : lodTarget) : null; }
+    // Route optional distant terrain into its small retained layer
+    static void lodTarget(RenderTarget target){ lodTarget = target; }
     // Keep Veil and other secondary scene integrations away from pending player geometry
     public static @Nullable RenderBuffers captureBuffers(){ return isCapturing() ? active.buffers : null; }
     // Supply the camera override only during a secondary scene render
@@ -347,6 +351,7 @@ public final class ViewSceneRenderer{
             retiring = null;
         }
         long now = System.nanoTime();
+        ViewLodCompat.isEnabled();
         CAPTURES.entrySet().removeIf(entry -> {
             if(entry.getKey().resolve(mc.level) != null) return false;
             entry.getValue().close();
@@ -380,6 +385,13 @@ public final class ViewSceneRenderer{
             allowance--;
         }
     }
+    // Draw the retained distant background before near terrain writes its normal depth
+    public static void renderLods(Matrix4f view, Matrix4f projection){
+        if(!isCapturing() || active.lodFrame == frame || !ViewLodCompat.isEnabled()) return;
+        active.lodFrame = frame;
+        ViewLodCompat.render(active, view, projection, Minecraft.getInstance().getTimer().getGameTimeDeltaPartialTick(true));
+    }
+
     // Scope renderer, atmosphere and lightmap changes to one secondary scene
     private static void capture(Minecraft mc, Capture capture, ViewSource src, RenderFrameEvent.Pre evt, long phase){
         capture.distance = Math.min(CAPTURE_DISTANCE, Math.max(1, mc.options.getEffectiveRenderDistance()) * 16.0F);
@@ -477,12 +489,14 @@ public final class ViewSceneRenderer{
     public static void clear(){
         CAPTURES.values().forEach(Capture::close);
         CAPTURES.clear();
+        ViewLodCompat.clear();
         retiring = null;
         BUDGET.reset();
     }
     private record PendingCapture(ViewReference ref, Capture capture, long phase){}
     // Retain one source's world renderer, ship meshes and framebuffer
     private static final class Capture{
+        private long lodFrame = -1;
         private final RenderBuffers buffers = new RenderBuffers(1);
         private TextureTarget target = SceneRenderTargets.createPreciseLike(
                 Minecraft.getInstance().getMainRenderTarget(), 16, 16, Minecraft.ON_OSX);
@@ -556,6 +570,7 @@ public final class ViewSceneRenderer{
             Capture prev = active;
             active = this;
             try{
+                ViewLodCompat.release(this);
                 releaseScene();
                 visibility.close();
                 ViewSceneBuffers.close(buffers);

@@ -1,5 +1,6 @@
 package com.rieno.gadgetsandgizmos.lib.graph.math;
 
+import com.rieno.gadgetsandgizmos.lib.control.math.AngleUnit;
 import com.rieno.gadgetsandgizmos.lib.control.math.Kinematics;
 import com.rieno.gadgetsandgizmos.lib.control.math.Matrix3;
 import com.rieno.gadgetsandgizmos.lib.control.math.Quaternion;
@@ -48,7 +49,7 @@ public final class MathGraphNodes{
         add(res, namespace, "vector_cross", ports("a:map", "b:map"), ports("value:map"), "Return the right-handed vector cross product.");
         add(res, namespace, "angle_from_coords", ports("origin:map", "target:map"),
                 ports("euler:map", "quaternion:map", "tait_bryan:map", "axis:map", "angle:number", "degrees:number"),
-                "Degrees is the horizontal X/Z heading from Origin to Target in 0 to 360 degrees: 0 south (+Z), 90 east (+X), 180 north (-Z), 270 west (-X). Height is ignored; no horizontal displacement returns Degrees = 0. Euler (ZXZ), Quaternion (XYZW), Tait-Bryan (XYZ), Axis and Angle (radians) describe the shortest 3D rotation from +Z. Coincident or invalid coordinates set valid to false.");
+                "Degrees is the horizontal X/Z heading from Origin to Target in 0 to 360 degrees: 0 south (+Z), 90 east (+X), 180 north (-Z), 270 west (-X). Height is ignored; no horizontal displacement returns Degrees = 0. Euler (ZYZ), Quaternion (XYZW), Tait-Bryan (XYZ), Axis and Angle (radians) describe the shortest 3D rotation from +Z. Rotation maps identify their representation, convention and radian units. Coincident or invalid coordinates set valid to false.");
         add(res, namespace, "matrix_create", ports("row_x:map", "row_y:map", "row_z:map"), ports("matrix:map"), "Create a row-major 3x3 matrix from three row vectors.");
         add(res, namespace, "matrix_diagonal", ports("diagonal:map"), ports("matrix:map"), "Create a diagonal matrix from an XYZ vector.");
         add(res, namespace, "matrix_identity", Map.of(), ports("matrix:map"), "Return the identity linear transform.");
@@ -112,7 +113,7 @@ public final class MathGraphNodes{
         Map<String, String> outputs = new LinkedHashMap<>(ports(output + ":map"));
         if(!output.equals("quaternion")) outputs.putAll(output.equals("euler")
                 ? ports("alpha:number", "beta:number", "gamma:number") : ports("roll:number", "pitch:number", "yaw:number"));
-        return node(id, ports(input + ":map"), outputs, "Angles use radians. ZXZ Euler: alpha (Z), beta (X), gamma (Z). Tait-Bryan: roll (X), pitch (Y), yaw (Z).");
+        return node(id, ports(input + ":map"), outputs, "Angles use radians. ZYZ Euler: alpha (Z), beta (Y), gamma (Z). XYZ Tait-Bryan: roll (X), pitch (Y), yaw (Z). Explicit rotation map conventions and units are honored on input.");
     }
 
 
@@ -168,6 +169,8 @@ public final class MathGraphNodes{
             res.put("target", MathGraphValues.vector(new Vector3(0, 0, 1)));
         }
         if(op.equals("degrees_to_radians") || op.equals("radians_to_degrees")) res.put("angle", GraphValue.number(0));
+        res.put("euler", MathGraphValues.euler(Vector3.ZERO));
+        res.put("tait_bryan", MathGraphValues.taitBryan(Vector3.ZERO));
         for(String key : List.of("quaternion", "orientation")) res.put(key, MathGraphValues.quaternion(Quaternion.IDENTITY));
         if(op.startsWith("quaternion")){ res.put("a", res.get("quaternion")); res.put("b", res.get("quaternion")); }
         res.put("w", GraphValue.number(1));
@@ -237,12 +240,12 @@ public final class MathGraphNodes{
                     "angle", MathGraphValues.convertAngle(n(in, "angle"), op.equals("degrees_to_radians")),
                     "angles", MathGraphValues.convertAngles(in.get("angles"), op.equals("degrees_to_radians")));
             case "linear_predict", "linear_integrator", "rigid_body_predict", "rigid_body_integrator" -> motion(op, ctx, in);
-            case "quaternion_to_euler", "tait_bryan_to_euler" -> angleOutputs("euler", RotationMath.quaternionToEulerZxz(op.startsWith("quaternion")
-                    ? q(in, "quaternion") : RotationMath.taitBryanXyzToQuaternion(MathGraphValues.taitBryan(in.get("tait_bryan")))));
+            case "quaternion_to_euler", "tait_bryan_to_euler" -> angleOutputs("euler", RotationMath.quaternionToEulerZyz(op.startsWith("quaternion")
+                    ? q(in, "quaternion") : MathGraphValues.rotation(in.get("tait_bryan"), "xyz", AngleUnit.RADIANS)));
             case "quaternion_to_tait_bryan", "euler_to_tait_bryan" -> angleOutputs("tait_bryan", RotationMath.quaternionToTaitBryanXyz(op.startsWith("quaternion")
-                    ? q(in, "quaternion") : RotationMath.eulerZxzToQuaternion(MathGraphValues.euler(in.get("euler")))));
-            case "euler_to_quaternion" -> out("quaternion", MathGraphValues.quaternion(RotationMath.eulerZxzToQuaternion(MathGraphValues.euler(in.get("euler")))));
-            case "tait_bryan_to_quaternion" -> out("quaternion", MathGraphValues.quaternion(RotationMath.taitBryanXyzToQuaternion(MathGraphValues.taitBryan(in.get("tait_bryan")))));
+                    ? q(in, "quaternion") : MathGraphValues.rotation(in.get("euler"), "zyz", AngleUnit.RADIANS)));
+            case "euler_to_quaternion" -> out("quaternion", MathGraphValues.quaternion(MathGraphValues.rotation(in.get("euler"), "zyz", AngleUnit.RADIANS)));
+            case "tait_bryan_to_quaternion" -> out("quaternion", MathGraphValues.quaternion(MathGraphValues.rotation(in.get("tait_bryan"), "xyz", AngleUnit.RADIANS)));
             default -> throw new IllegalArgumentException("Unknown math operation: " + op);
         };
     }
@@ -288,7 +291,7 @@ public final class MathGraphNodes{
         Quaternion rotation = RotationMath.rotationFromCoordinates(origin, target);
         Quaternion.AxisAngle axisAngle = rotation.axisAngle();
         Map<String, GraphValue> outputs = new LinkedHashMap<>();
-        outputs.put("euler", MathGraphValues.euler(RotationMath.quaternionToEulerZxz(rotation)));
+        outputs.put("euler", MathGraphValues.euler(RotationMath.quaternionToEulerZyz(rotation)));
         outputs.put("quaternion", MathGraphValues.quaternion(rotation));
         outputs.put("tait_bryan", MathGraphValues.taitBryan(RotationMath.quaternionToTaitBryanXyz(rotation)));
         outputs.put("axis", MathGraphValues.vector(axisAngle.axis()));

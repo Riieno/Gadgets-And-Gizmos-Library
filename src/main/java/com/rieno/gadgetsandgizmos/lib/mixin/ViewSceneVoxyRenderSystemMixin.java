@@ -1,11 +1,13 @@
 package com.rieno.gadgetsandgizmos.lib.mixin;
 
 import com.rieno.gadgetsandgizmos.lib.client.view.ViewSceneRenderer;
+import com.rieno.gadgetsandgizmos.lib.client.view.ViewLodCompat;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Pseudo;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 // Keep global shader LOD lookups from reusing the player's temporal viewport in a feed
 @Pseudo
@@ -15,5 +17,10 @@ public abstract class ViewSceneVoxyRenderSystemMixin{
     @Inject(method = {"getViewport", "setupViewport"}, at = @At("HEAD"), cancellable = true, require = 0, remap = false)
     private void keepMainViewport(CallbackInfoReturnable<Object> cir){
         if(ViewSceneRenderer.isCapturing()) cir.setReturnValue(null);
+        else ViewLodCompat.observeVoxy(this);
     }
+
+    // Release secondary buffers before Voxy retires the shared world geometry
+    @Inject(method = "shutdown", at = @At("HEAD"), require = 0, remap = false)
+    private void retireSharedTerrain(CallbackInfo ci){ ViewLodCompat.retireVoxy(this); }
 }

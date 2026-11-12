@@ -7,7 +7,7 @@ public record ElementInspectorLayout(boolean hasFontControls, boolean pairedStyl
         return switch(type == null ? "" : type){
             case "value" -> new ElementInspectorLayout(true, false, 65, 84, 144);
             case "text" -> new ElementInspectorLayout(true, false, 49, 68, 128);
-            case "button", "toggle", "text_input" ->
+            case "button", "toggle", "text_input", "dropdown" ->
                     new ElementInspectorLayout(true, true, 49, 68, 128);
             default -> new ElementInspectorLayout(false, false, 49, 0, 128);
         };

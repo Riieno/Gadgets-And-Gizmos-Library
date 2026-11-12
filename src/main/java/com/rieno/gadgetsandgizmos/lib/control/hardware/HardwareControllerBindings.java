@@ -10,6 +10,7 @@ package com.rieno.gadgetsandgizmos.lib.control.hardware;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -25,9 +26,12 @@ public final class HardwareControllerBindings {
     ------------------------------------------------------------##-----------------------------------------------------*/
 
     public static final String PREFIX = "hardware:";
+    public static final String DEVICE_SELECTOR = "DeviceSelector";
+    public static final String AUTOMATIC_DEVICE = "automatic";
     public static final double DEFAULT_DEADZONE = 0.12D;
     public static final int MAX_RAW_AXES = 16;
     public static final int MAX_RAW_BUTTONS = 32;
+    public static final int MAX_RAW_HATS = 4;
 
     private static final List<String> STANDARD_AXIS_IDS = List.of(
             "left_x", "left_y", "right_x", "right_y", "left_trigger", "right_trigger");
@@ -65,6 +69,12 @@ public final class HardwareControllerBindings {
         return id != null && id.startsWith(PREFIX);
     }
 
+    // Scope one input to a selected device while preserving existing automatic binding ids
+    public static String forDevice(String binding, String device){
+        if(!isHardwareBinding(binding) || device == null || device.isEmpty() || AUTOMATIC_DEVICE.equals(device)) return binding;
+        return PREFIX + device + "/" + binding.substring(PREFIX.length());
+    }
+
     // Get the options
     public static List<BindingOption> options() {
         List<BindingOption> opts = new ArrayList<>();
@@ -84,7 +94,17 @@ public final class HardwareControllerBindings {
         for (int idx = 0; idx < MAX_RAW_BUTTONS; idx++) {
             opts.add(new BindingOption(PREFIX + "button_" + idx, "Controller Button " + idx));
         }
+        for(int idx = 0; idx < MAX_RAW_HATS; idx++){
+            for(String direction : List.of("up", "right", "down", "left")) opts.add(new BindingOption(
+                    PREFIX + "hat_" + idx + "_" + direction, "Controller Hat " + idx + " " + direction));
+        }
         return List.copyOf(opts);
+    }
+
+    // List only controls reported by the selected device, retaining stable labels and order
+    public static List<BindingOption> options(Collection<String> available){
+        if(available == null || available.isEmpty()) return List.of();
+        return options().stream().filter(option -> available.contains(option.id())).toList();
     }
 
     // Get the values

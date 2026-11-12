@@ -5,6 +5,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
 
 import java.util.Locale;
+import java.util.List;
 
 // Style and fit single-line labels consistently across GUI and world renderers
 public final class StyledText{
@@ -32,5 +33,13 @@ public final class StyledText{
         if(availableWidth <= 0) return literal("", fontStyle);
         if(font.width(full) <= availableWidth) return full;
         return Component.literal(font.substrByWidth(full, availableWidth).getString()).setStyle(full.getStyle());
+    }
+
+    // Wrap words and explicit line breaks using the styled glyph widths
+    public static List<Component> wrap(Font font, String text, String fontStyle, int availableWidth){
+        if(availableWidth <= 0) return List.of();
+        MutableComponent full = literal(text, fontStyle);
+        return font.getSplitter().splitLines(full, availableWidth, full.getStyle()).stream()
+                .<Component>map(line -> Component.literal(line.getString()).setStyle(full.getStyle())).toList();
     }
 }
