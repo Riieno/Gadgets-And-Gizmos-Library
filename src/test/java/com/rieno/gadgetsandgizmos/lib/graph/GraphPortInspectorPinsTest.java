@@ -74,4 +74,15 @@ class GraphPortInspectorPinsTest{
         assertNull(pins.state("graph", port));
         assertTrue(pins.ports("graph").contains(port));
     }
+
+    // Keep dimensions through movement and mode changes and reopen older placement files
+    @Test void retainsResizedBoundsAndMigratesOlderStates() throws Exception{
+        Path file = dir.resolve("pins.json");
+        Files.writeString(file, "[{\"scope\":\"graph\",\"port\":{\"nodeId\":\"node\",\"name\":\"map\",\"output\":true},\"state\":{\"x\":12,\"y\":34,\"mode\":\"ADVANCED\"}}]");
+        var pins = new GraphPortInspectorPins(file); var port = pins.ports("graph").iterator().next();
+        assertEquals(0, pins.state("graph", port).width());
+        var resized = pins.state("graph", port).resized(520, 420).translated(80, -12).withMode(GraphPortInspectorPins.Mode.GUI);
+        pins.setState("graph", port, resized);
+        assertEquals(new GraphPortInspectorPins.State(92, 22, GraphPortInspectorPins.Mode.GUI, 520, 420), new GraphPortInspectorPins(file).state("graph", port));
+    }
 }

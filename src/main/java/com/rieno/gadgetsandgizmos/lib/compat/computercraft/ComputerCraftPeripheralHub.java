@@ -18,6 +18,7 @@ import dan200.computercraft.api.peripheral.IComputerAccess;
 import dan200.computercraft.api.peripheral.IPeripheral;
 import dan200.computercraft.api.peripheral.NotAttachedException;
 import dan200.computercraft.api.peripheral.WorkMonitor;
+import com.rieno.gadgetsandgizmos.lib.script.ScriptPeripheral;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -48,11 +49,14 @@ public final class ComputerCraftPeripheralHub{
     }
 
     // Resolve loaded targets on the server thread and keep their keys independent of labels
-    public record Target(String key, IPeripheral peripheral, Map<String, Method> methods){
+    public record Target(String key, IPeripheral peripheral, Map<String, Method> methods, Set<String> aliases, Set<String> references){
+        public Target(String key, IPeripheral peripheral, Map<String, Method> methods){ this(key, peripheral, methods, Set.of(), Set.of()); }
         public Target{
             if(key == null || key.isBlank()) throw new IllegalArgumentException("A target key is required");
             Objects.requireNonNull(peripheral, "peripheral");
             methods = Map.copyOf(methods);
+            aliases = Set.copyOf(aliases);
+            references = Set.copyOf(references);
         }
     }
 
@@ -71,6 +75,7 @@ public final class ComputerCraftPeripheralHub{
     private final Map<IComputerAccess, Map<String, RemoteAccess>> computers = new ConcurrentHashMap<>();
     private volatile Map<String, Target> targets = Map.of();
     private volatile Map<String, String> names = Map.of();
+    private volatile Map<String, String> aliases = Map.of();
 
     public ComputerCraftPeripheralHub(String namespace, Supplier<? extends Collection<Target>> source){
         if(namespace == null || namespace.isBlank()) throw new IllegalArgumentException("A hub namespace is required");
@@ -88,7 +93,8 @@ public final class ComputerCraftPeripheralHub{
 
     // Track each computer separately; target attachment happens on the next server refresh
     public synchronized void attach(IComputerAccess computer){
-        computers.putIfAbsent(computer, new ConcurrentHashMap<>());
+        Map<String, RemoteAccess> attached = computers.computeIfAbsent(computer, ignored -> new ConcurrentHashMap<>());
+        reconcile(computer, attached, targets);
     }
 
     public synchronized void detach(IComputerAccess computer){
@@ -104,6 +110,8 @@ public final class ComputerCraftPeripheralHub{
     public synchronized void refresh(){
         Map<String, Target> next = new LinkedHashMap<>();
         Map<String, String> nextNames = new LinkedHashMap<>();
+        Map<String, String> nextAliases = new LinkedHashMap<>();
+        Set<String> ambiguous = new LinkedHashSet<>();
         for(Target target : source.get()){
             if(target.methods().isEmpty()) continue;
             String type = target.peripheral().getType();
@@ -115,57 +123,67 @@ public final class ComputerCraftPeripheralHub{
             if(prev != null && sameTarget(prev, target)) target = prev;
             next.putIfAbsent(name, target);
             nextNames.putIfAbsent(id, name);
+            for(String alias : target.aliases()){
+                if(alias.isBlank() || Set.of("top", "bottom", "left", "right", "front", "back").contains(alias)) continue;
+                String prevName = nextAliases.putIfAbsent(alias, name);
+                if(prevName != null && !prevName.equals(name)) ambiguous.add(alias);
+            }
         }
+        nextAliases.entrySet().removeIf(entry -> ambiguous.contains(entry.getKey()) || next.containsKey(entry.getKey())
+                || nextNames.containsKey(entry.getKey()) && !nextNames.get(entry.getKey()).equals(entry.getValue()));
+        nextAliases.forEach(nextNames::putIfAbsent);
         targets = Collections.unmodifiableMap(next);
         names = Collections.unmodifiableMap(nextNames);
-        computers.forEach((computer, attached) -> {
-            for(var entry : List.copyOf(attached.entrySet())){
-                if(next.get(entry.getKey()) == entry.getValue().target) continue;
-                attached.remove(entry.getKey());
-                entry.getValue().close();
-                computer.queueEvent("peripheral_detach", entry.getKey());
-            }
-            next.forEach((name, target) -> {
-                if(attached.containsKey(name)) return;
-                RemoteAccess access = new RemoteAccess(computer, name, target);
-                attached.put(name, access);
-                try{
-                    target.peripheral().attach(access);
-                }catch(RuntimeException ex){
-                    attached.remove(name);
-                    access.close();
-                    throw ex;
-                }
-                computer.queueEvent("peripheral", name);
-            });
+        aliases = Collections.unmodifiableMap(nextAliases);
+        computers.forEach((computer, attached) -> reconcile(computer, attached, next));
+    }
+
+    private void reconcile(IComputerAccess computer, Map<String, RemoteAccess> attached, Map<String, Target> next){
+        for(var entry : List.copyOf(attached.entrySet())){
+            if(next.get(entry.getKey()) == entry.getValue().target) continue;
+            attached.remove(entry.getKey()); entry.getValue().close(); computer.queueEvent("peripheral_detach", entry.getKey());
+        }
+        next.forEach((name, target) -> {
+            if(attached.containsKey(name)) return;
+            RemoteAccess access = new RemoteAccess(computer, name, target);
+            attached.put(name, access);
+            try{ target.peripheral().attach(access); }
+            catch(RuntimeException ex){ attached.remove(name); access.close(); throw ex; }
+            computer.queueEvent("peripheral", name);
         });
     }
 
     // Both lookup forms return the same native peripheral name
     public Map<String, String> getPeripherals(){
-        refresh();
         return names;
     }
 
     public String peripheral(String id) throws LuaException{
         String name = getPeripherals().get(id);
+        if(name == null && targets.containsKey(id)) name = id;
         if(name == null) throw new LuaException("unknown or unavailable peripheral '" + id + "'");
         return name;
     }
 
     public List<String> getNamesRemote(){
-        refresh();
         return List.copyOf(targets.keySet());
     }
 
+    // Supply the same resolved aliases and native methods used by runtime calls
+    public List<ScriptPeripheral> catalog(){
+        return targets.entrySet().stream().map(entry -> new ScriptPeripheral(entry.getKey(), entry.getValue().peripheral().getType(),
+                aliases.entrySet().stream().filter(alias -> alias.getValue().equals(entry.getKey())).map(Map.Entry::getKey).toList(),
+                List.copyOf(entry.getValue().methods().keySet()), List.copyOf(entry.getValue().references()))).toList();
+    }
+
+    private String resolveName(String name){ return aliases.getOrDefault(name, name); }
+
     public boolean isPresentRemote(String name){
-        refresh();
-        return targets.containsKey(name);
+        return targets.containsKey(resolveName(name));
     }
 
     public Object[] getTypeRemote(String name){
-        refresh();
-        Target target = targets.get(name);
+        Target target = targets.get(resolveName(name));
         if(target == null) return null;
         Set<String> types = new LinkedHashSet<>();
         types.add(target.peripheral().getType());
@@ -179,37 +197,24 @@ public final class ComputerCraftPeripheralHub{
     }
 
     public List<String> getMethodsRemote(String name){
-        refresh();
-        Target target = targets.get(name);
+        Target target = targets.get(resolveName(name));
         return target == null ? null : target.methods().keySet().stream().sorted().toList();
     }
 
-    // Resolve on the server thread, then invoke on the Lua thread so yielding methods stay native
+    // Use published attachments directly and preserve only the native method's own yields
     public MethodResult callRemote(IComputerAccess computer, ILuaContext ctx, IArguments args) throws LuaException{
-        String name = args.getString(0);
-        String method = args.getString(1);
+        String name = args.getString(0), method = args.getString(1);
+        Map<String, RemoteAccess> attached = computers.get(computer);
+        RemoteAccess access = attached == null ? null : attached.get(resolveName(name));
+        if(access == null) throw new LuaException("peripheral '" + name + "' is no longer available");
+        access.checkAttached();
+        Method fn = access.target.methods().get(method);
+        if(fn == null) throw new LuaException("No such method '" + method + "'");
         args.escapes();
-        RemoteAccess[] resolved = new RemoteAccess[1];
-        MethodResult lookup = ctx.executeMainThreadTask(() -> {
-            refresh();
-            Map<String, RemoteAccess> attached = computers.get(computer);
-            RemoteAccess access = attached == null ? null : attached.get(name);
-            if(access == null) throw new LuaException("peripheral '" + name + "' is no longer available");
-            resolved[0] = access;
-            return null;
+        ILuaContext guarded = task -> ctx.issueMainThreadTask(() -> {
+            access.checkAttached(); return task.execute();
         });
-        return after(lookup, () -> {
-            RemoteAccess access = resolved[0];
-            access.checkAttached();
-            Method fn = access.target.methods().get(method);
-            if(fn == null) throw new LuaException("No such method '" + method + "'");
-            ILuaContext guarded = task -> ctx.issueMainThreadTask(() -> {
-                refresh();
-                if(!access.active) throw new LuaException("peripheral '" + name + "' is no longer available");
-                return task.execute();
-            });
-            return fn.call(access.target.peripheral(), access, guarded, args.drop(2));
-        });
+        return fn.call(access.target.peripheral(), access, guarded, args.drop(2));
     }
 
     /*--------------------------------------------------------##---------------------------------------------------------
@@ -223,17 +228,8 @@ public final class ComputerCraftPeripheralHub{
     private static boolean sameTarget(Target prev, Target next){
         return prev.key().equals(next.key()) && prev.peripheral().equals(next.peripheral())
                 && prev.peripheral().getAdditionalTypes().equals(next.peripheral().getAdditionalTypes())
+                && prev.aliases().equals(next.aliases()) && prev.references().equals(next.references())
                 && prev.methods().keySet().equals(next.methods().keySet());
-    }
-
-    @FunctionalInterface
-    private interface Continuation{
-        MethodResult run() throws LuaException;
-    }
-
-    private static MethodResult after(MethodResult res, Continuation next) throws LuaException{
-        if(res.getCallback() == null) return next.run();
-        return MethodResult.yield(res.getResult(), event -> after(res.getCallback().resume(event), next));
     }
 
     // Give targets their remote name, shared target lookup, events and owned filesystem mounts
@@ -326,7 +322,7 @@ public final class ComputerCraftPeripheralHub{
         @Override
         public IPeripheral getAvailablePeripheral(String name){
             checkAttached();
-            Target entry = targets.get(name);
+            Target entry = targets.get(resolveName(name));
             return entry == null ? computer.getAvailablePeripheral(name) : entry.peripheral();
         }
 

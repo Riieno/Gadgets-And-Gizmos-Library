@@ -3,6 +3,8 @@ package com.rieno.gadgetsandgizmos.lib.compat;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.loading.LoadingModList;
 import org.spongepowered.asm.service.MixinService;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.tree.ClassNode;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -31,6 +33,27 @@ public final class MixinCompatibility{
         }catch(IOException ignored){
             return false;
         }
+    }
+
+    // Check optional target fields without loading or transforming the target class
+    public static boolean hasField(String targetClassName, String name, String descriptor){
+        var target = shape(targetClassName);
+        return target != null && target.fields.stream().anyMatch(field -> field.name.equals(name) && field.desc.equals(descriptor));
+    }
+
+    // Check an injection signature against the installed dependency instead of its version label
+    public static boolean hasMethod(String targetClassName, String name, String descriptor){
+        var target = shape(targetClassName);
+        return target != null && target.methods.stream().anyMatch(method -> method.name.equals(name) && method.desc.equals(descriptor));
+    }
+
+    private static ClassNode shape(String targetClassName){
+        try(InputStream stream = MixinService.getService().getResourceAsStream(targetClassName.replace('.', '/') + ".class")){
+            if(stream == null) return null;
+            var target = new ClassNode();
+            new ClassReader(stream).accept(target, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            return target;
+        }catch(IOException | IllegalArgumentException ignored){ return null; }
     }
 }
 

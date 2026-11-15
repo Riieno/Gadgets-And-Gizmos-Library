@@ -99,18 +99,28 @@ public final class GraphPortInspectorPins{
     }
 
     // Distinguish input and output ports even when their serialized names match
-    public record Port(String nodeId, String name, boolean output){}
+    public record Port(String nodeId, String name, boolean output){
+        // Use a separate identity so node inspectors follow the current primary output
+        public static Port node(String nodeId){ return new Port(nodeId, "\u0000node", true); }
+        public boolean isNode(){ return "\u0000node".equals(name); }
+    }
 
     // Choose between a compact live value and the full typed media and tree preview
-    public enum Mode{ SIMPLE, ADVANCED }
+    public enum Mode{ SIMPLE, ADVANCED, GUI }
 
     // Store authored graph coordinates independently of viewport pan and zoom
-    public record State(double x, double y, Mode mode){
+    public record State(double x, double y, Mode mode, int width, int height){
+        public State(double x, double y, Mode mode){ this(x, y, mode, 0, 0); }
         // Reject invalid placement while preserving visibility files written before modes existed
         public State{
             if(!Double.isFinite(x) || !Double.isFinite(y)) throw new IllegalArgumentException("Inspector coordinates must be finite");
             mode = mode == null ? Mode.ADVANCED : mode;
+            width = width == 0 ? 0 : Math.clamp(width, 144, 1600);
+            height = height == 0 ? 0 : Math.clamp(height, 60, 1200);
         }
+        public State translated(double dx, double dy){ return new State(x + dx, y + dy, mode, width, height); }
+        public State resized(int width, int height){ return new State(x, y, mode, width, height); }
+        public State withMode(Mode mode){ return new State(x, y, mode, width, height); }
     }
 
     // Keep graph identity separate from a node's stable port identity

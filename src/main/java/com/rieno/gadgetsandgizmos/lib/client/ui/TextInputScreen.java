@@ -38,6 +38,9 @@ public abstract class TextInputScreen extends Screen{
         this.maximumLength = Math.max(1, maximumLength);
     }
 
+    // Let live response handlers reach the screen behind this dialog
+    public Screen parent(){ return parent; }
+
     // Register and focus the consumer's field, preserving text across screen resizing
     protected final void initializeInput(EditBox field){
         String text = input == null ? initialText : input.getValue();

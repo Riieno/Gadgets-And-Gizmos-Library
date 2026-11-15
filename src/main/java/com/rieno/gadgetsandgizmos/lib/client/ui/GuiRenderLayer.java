@@ -22,8 +22,14 @@ public final class GuiRenderLayer implements AutoCloseable{
 
     // Keep vanilla slots, carried items, text and widgets just above their modal background
     public static GuiRenderLayer pushFlattened(GuiGraphics graphics, float depth){
+        return pushFlattened(graphics, depth, ITEM_DEPTH_SCALE);
+    }
+
+    // Bound one complete panel's child depths before drawing the next panel above it
+    public static GuiRenderLayer pushFlattened(GuiGraphics graphics, float depth, float depthScale){
+        if(!Float.isFinite(depthScale) || depthScale <= 0) throw new IllegalArgumentException("GUI depth scale must be positive and finite");
         GuiRenderLayer layer = new GuiRenderLayer(graphics, depth);
-        scaleDepth(graphics, ITEM_DEPTH_SCALE);
+        scaleDepth(graphics, depthScale);
         return layer;
     }
 

@@ -15,7 +15,10 @@ import java.util.Map;
 
 // Describe one port without evaluating its graph or retaining another port's values
 public record GraphPortInspection(String label, String declaredType, boolean output, String source,
-                                  GraphValue value, Preview preview){
+                                  GraphValue value, Preview preview, GraphValue gui){
+    public GraphPortInspection(String label, String declaredType, boolean output, String source, GraphValue value, Preview preview){
+        this(label, declaredType, output, source, value, preview, null);
+    }
     /*--------------------------------------------------------##---------------------------------------------------------
 
 =======================================================================================================================
@@ -105,6 +108,7 @@ public record GraphPortInspection(String label, String declaredType, boolean out
     // Preserve full numeric precision and summarize structured values separately from their entries
     public String summary(){
         if(value == null) return "No value available";
+        if(preview == Preview.CODE) return value.asString().isBlank() ? "Empty script" : value.asString().split("\n", -1).length + " lines of Lua";
         if(preview == Preview.COLOR){
             int col = color(value);
             return String.format(Locale.ROOT, "#%08X  R %d  G %d  B %d  A %d", col,
@@ -196,7 +200,7 @@ public record GraphPortInspection(String label, String declaredType, boolean out
     }
 
     // Select the visual preview independently of the serialized graph value type
-    public enum Preview{ NONE, COLOR, IMAGE, GRADIENT, WIDGET }
+    public enum Preview{ NONE, COLOR, IMAGE, GRADIENT, WIDGET, CODE }
 
     // Carry one bounded collection entry and its optional rich value
     public record Row(String path, String type, String text, GraphValue value){}

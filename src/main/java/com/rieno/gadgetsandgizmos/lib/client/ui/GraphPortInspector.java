@@ -40,9 +40,18 @@ public final class GraphPortInspector{
     // Place transient hover details near the pointer without changing graph state
     public static void render(GuiGraphics graphics, Font font, int screenWidth, int screenHeight,
                               int mouseX, int mouseY, GraphPortInspection port, Appearance appearance, ImagePreview images){
+        render(graphics, font, screenWidth, screenHeight, mouseX, mouseY, port, appearance, images, null);
+    }
+
+    // Prefer a live GUI for transient inspection and retain Advanced details when no feed is available
+    public static void render(GuiGraphics graphics, Font font, int screenWidth, int screenHeight,
+                              int mouseX, int mouseY, GraphPortInspection port, Appearance appearance, ImagePreview images, GuiPreview preview){
+        var bubble = new Bubble();
+        bubble.guiPreview(preview);
+        int width = bubble.liveGui(port) ? 340 : 300;
         int x = mouseX + 14;
-        if(x + 300 > screenWidth - 8) x = mouseX - 314;
-        new Bubble().render(graphics, font, screenWidth, screenHeight, x, mouseY - 12, port, appearance, images,
+        if(x + width > screenWidth - 8) x = mouseX - width - 14;
+        bubble.render(graphics, font, screenWidth, screenHeight, x, mouseY - 12, port, appearance, images,
                 false, mouseX, mouseY, List.of(), () -> {});
     }
 
@@ -61,6 +70,7 @@ public final class GraphPortInspector{
         private State state;
         private Rect bounds, clip, modeButton, closeButton, treeArea, verticalTrack, horizontalTrack;
         private double originX, originY, scale = 1;
+        private float layerDepth = 180, layerScale = .001F;
         private GraphViewport viewport;
         private Consumer<State> changed = val -> {};
         private Runnable closed = () -> {};
@@ -68,9 +78,31 @@ public final class GraphPortInspector{
         private final List<Hit> rows = new ArrayList<>();
         private GraphValue value;
         private GraphPortInspection port;
+        private Rect codeArea;
+        private int codeLine;
+        private int codeHorizontal;
+        private CodeEditor codeEditor;
+        private Consumer<String> codeChanged;
+        private List<String> completions = List.of();
+        private List<com.rieno.gadgetsandgizmos.lib.script.ScriptPeripheral> peripherals = List.of();
+        private boolean editing;
+        private Consumer<com.rieno.gadgetsandgizmos.lib.script.ScriptInput> terminalInput;
+        private boolean terminalFocused;
+        private Rect terminalArea;
+        private com.rieno.gadgetsandgizmos.lib.script.ScriptTerminal terminal;
+        private GuiPreview guiPreview;
+        private int terminalButton = -1;
+        private final java.util.Set<Integer> terminalKeys = new java.util.HashSet<>();
+        private double terminalX, terminalY;
         private int scrollY, scrollX, contentHeight, contentWidth;
+        private Rect textArea;
+        private int textScroll, textHeight;
         private boolean pressed, dragging, moved, draggingVertical, draggingHorizontal;
         private double prevX, prevY;
+        private boolean resizing;
+        private int drawnWidth, drawnHeight, resizeWidth, resizeHeight;
+        private Rect resizeHandle;
+        private double anchorX = Double.NaN, anchorY;
 
         // Create independent tree and placement state for one pinned port
         public Bubble(){}
@@ -89,6 +121,52 @@ public final class GraphPortInspector{
         // Return the current authored position and mode for persistence and verification
         public State state(){ return state; }
 
+        // Follow host node movement in graph coordinates while keeping manual bubble offsets
+        public void follow(double x, double y, boolean moving){
+            if(state != null && Double.isFinite(anchorX) && (x != anchorX || y != anchorY)){
+                state = state.translated(x - anchorX, y - anchorY); moved = true;
+            }
+            anchorX = x; anchorY = y;
+            if(moved && !moving && !pressed){ changed.accept(state); moved = false; }
+        }
+
+        // Bind editable code only for hosts that own a persistent script document
+        public void codeEditing(Consumer<String> changed, List<String> completions){ this.codeChanged = changed; this.completions = completions; }
+        public void peripherals(List<com.rieno.gadgetsandgizmos.lib.script.ScriptPeripheral> vals){ peripherals = List.copyOf(vals); }
+        public void guiPreview(GuiPreview preview){ guiPreview = preview; }
+        private boolean hasGui(GraphPortInspection port){ return port.preview() == GraphPortInspection.Preview.CODE || port.gui() != null || guiPreview != null; }
+        private boolean liveGui(GraphPortInspection port){ return guiPreview != null || com.rieno.gadgetsandgizmos.lib.script.ScriptTerminal.fromValue(port.gui()) != null; }
+        private boolean showingGui(GraphPortInspection port){ return state != null && state.mode() == Mode.GUI && hasGui(port); }
+        public void terminalInput(Consumer<com.rieno.gadgetsandgizmos.lib.script.ScriptInput> input){ terminalInput = input; }
+        public void blur(){
+            if(terminalInput != null) for(int key : terminalKeys) terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("key_up", 0, 0, key));
+            if(terminalInput != null && terminalButton >= 0) terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("release", terminalX, terminalY, terminalButton));
+            terminalButton = -1;
+            terminalKeys.clear(); editing = false; terminalFocused = false; if(codeEditor != null) codeEditor.focused(false);
+        }
+        public boolean editing(){ return editing; }
+        public boolean terminalFocused(){ return terminalFocused; }
+        public boolean keyPressed(int key){
+            if(terminalFocused && terminalInput != null){
+                if(key < 0 || key > 512) return true;
+                if(key == org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE){ blur(); return true; }
+                if(key == org.lwjgl.glfw.GLFW.GLFW_KEY_V && net.minecraft.client.gui.screens.Screen.hasControlDown()){
+                    String text = net.minecraft.client.Minecraft.getInstance().keyboardHandler.getClipboard();
+                    terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("paste", 0, 0, 0, text.substring(0, Math.min(16384, text.length()))));
+                }
+                else{ terminalKeys.add(key); terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("key", 0, 0, key)); }
+                return true;
+            }
+            if(!editing || codeEditor == null) return false;
+            if(key == org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE){ blur(); return true; }
+            codeEditor.keyPressed(key); return true;
+        }
+        public boolean charTyped(char ch){
+            if(terminalFocused && terminalInput != null){ if(ch >= 32 && ch <= 255) terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("char", 0, 0, ch)); return true; }
+            return editing && codeEditor != null && codeEditor.charTyped(ch);
+        }
+        public boolean keyReleased(int key){ if(!terminalFocused || terminalInput == null) return false; if(terminalKeys.remove(key)) terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("key_up", 0, 0, key)); return true; }
+
         // Preserve selected-row access without changing which tree root is displayed
         public List<String> path(){ return outline.selected(); }
 
@@ -97,9 +175,10 @@ public final class GraphPortInspector{
 
         // Release pointer capture when another graph or modal owns input
         public void hide(){
+            blur();
             if(moved && state != null) changed.accept(state);
             bounds = null; pressed = false; dragging = false; moved = false;
-            draggingVertical = false; draggingHorizontal = false;
+            draggingVertical = false; draggingHorizontal = false; resizing = false;
         }
 
         // Preserve the screen-coordinate overload for callers outside graph canvases
@@ -107,9 +186,10 @@ public final class GraphPortInspector{
                            GraphPortInspection port, Appearance appearance, ImagePreview images, boolean interactive,
                            int mouseX, int mouseY, List<Rect> occupied, Runnable closed){
             viewport = null; scale = 1;
+            layerDepth = 600; layerScale = .001F;
             clip = new Rect(8, 8, Math.max(0, screenWidth - 16), Math.max(0, screenHeight - 16));
             this.closed = Objects.requireNonNull(closed);
-            if(state == null) state = new State(anchorX, anchorY, Mode.ADVANCED);
+            if(!interactive || state == null) state = new State(anchorX, anchorY, !interactive && liveGui(port) ? Mode.GUI : Mode.ADVANCED);
             int width = width(font, port, appearance, interactive);
             Layout layout = layout(font, port, interactive, width, Math.max(80, screenHeight - 16));
             originX = Math.clamp(interactive ? state.x() : anchorX, clip.x(), Math.max(clip.x(), clip.right() - width));
@@ -121,6 +201,14 @@ public final class GraphPortInspector{
         public void renderGraph(GuiGraphics graphics, Font font, Rect canvas, GraphViewport viewport, State initial,
                                 GraphPortInspection port, Appearance appearance, ImagePreview images, int mouseX, int mouseY,
                                 Consumer<State> changed, Runnable closed){
+            renderGraph(graphics, font, canvas, viewport, initial, port, appearance, images, mouseX, mouseY, changed, closed, 180, .001F);
+        }
+
+        // Let a host reserve ordered depth bands above nodes and below its modals
+        public void renderGraph(GuiGraphics graphics, Font font, Rect canvas, GraphViewport viewport, State initial,
+                                GraphPortInspection port, Appearance appearance, ImagePreview images, int mouseX, int mouseY,
+                                Consumer<State> changed, Runnable closed, float depth, float depthScale){
+            layerDepth = depth; layerScale = depthScale;
             this.viewport = Objects.requireNonNull(viewport);
             this.clip = Objects.requireNonNull(canvas);
             this.changed = Objects.requireNonNull(changed); this.closed = Objects.requireNonNull(closed);
@@ -134,7 +222,9 @@ public final class GraphPortInspector{
 
         // Keep Simple mode small while reserving explicit mode and close controls
         private int width(Font font, GraphPortInspection port, Appearance appearance, boolean interactive){
-            if(!interactive || state == null || state.mode() == Mode.ADVANCED) return 300;
+            if(interactive && state != null && state.width() > 0) return state.width();
+            if(showingGui(port)) return 340;
+            if(!interactive || state == null || state.mode() != Mode.SIMPLE) return 300;
             return Math.clamp(Math.max(font.width(compact(port)) + 18, Math.min(110, font.width(appearance.title())) + 92), 144, 230);
         }
 
@@ -143,14 +233,17 @@ public final class GraphPortInspector{
             this.port = port; value = port.value();
             outline.selectedValue(value);
             boolean simple = interactive && state.mode() == Mode.SIMPLE;
-            if(simple) return new Layout(List.of(), port, 0, null, 0, 38, true);
+            int requestedHeight = interactive ? state.height() : 0;
+            if(simple) return new Layout(List.of(), port, 0, null, 0, requestedHeight > 0 ? requestedHeight : 38, true);
+            if(showingGui(port))
+                return new Layout(List.of(), port, 0, null, 0, requestedHeight > 0 ? requestedHeight : 222, false);
             List<FormattedCharSequence> lines = new ArrayList<>();
             var label = font.split(Component.literal((port.output() ? "Output: " : "Input: ") + port.label()), width - 20);
             lines.addAll(label.subList(0, Math.min(2, label.size())));
             lines.add(Component.literal("Type: " + typeLabel(port.resolvedType())).getVisualOrderText());
-            if(!GraphValueOutline.isCollection(value)){
+            if(!GraphValueOutline.isCollection(value) && port.preview() != GraphPortInspection.Preview.CODE){
                 var summary = font.split(Component.literal("Value: " + port.summary()), width - 20);
-                lines.addAll(summary.subList(0, Math.min(3, summary.size())));
+                lines.addAll(summary.subList(0, Math.min(interactive ? 4096 : 3, summary.size())));
             }
             GraphPortInspection previewPort = port;
             if(!outline.selected().isEmpty()){
@@ -165,24 +258,36 @@ public final class GraphPortInspector{
                 case COLOR, GRADIENT -> 28;
                 case IMAGE -> 90;
                 case WIDGET -> 120;
+                case CODE -> interactive && codeChanged != null ? 216 : Math.min(216, Math.max(40, port.value().asString().split("\n", -1).length * (font.lineHeight + 3) + 8));
                 default -> 0;
             };
             GraphValueOutline.Snapshot snapshot = GraphValueOutline.isCollection(value) ? outline.snapshot(value, 2048) : null;
-            int base = 32 + lines.size() * (font.lineHeight + 3) + (preview == 0 ? 0 : preview + 6);
+            int base = 42 + lines.size() * (font.lineHeight + 3) + (preview == 0 ? 0 : preview + 6);
+            if(requestedHeight > 0 && preview > 0){
+                int available = Math.max(16, requestedHeight - (base - preview) - (snapshot == null ? 0 : 53));
+                preview = available; base = 42 + lines.size() * (font.lineHeight + 3) + preview + 6;
+            }
             int treeHeight = snapshot == null ? 0 : Math.min(Math.max(18, maximumHeight - base - 20),
                     Math.min(216, snapshot.rows().size() * 18));
-            return new Layout(List.copyOf(lines), previewPort, preview, snapshot, treeHeight, base + treeHeight + (snapshot == null ? 0 : 17), false);
+            if(requestedHeight > 0 && snapshot != null) treeHeight = Math.max(18, requestedHeight - base - 17);
+            int height = base + treeHeight + (snapshot == null ? 0 : 17);
+            if(snapshot == null && preview == 0 && interactive) height = requestedHeight > 0 ? requestedHeight : Math.min(maximumHeight, height);
+            else height = Math.max(height, requestedHeight);
+            return new Layout(List.copyOf(lines), previewPort, preview, snapshot, treeHeight, height, false);
         }
 
         // Paint local geometry through the same pan, zoom and clipping used for graph nodes
         private void draw(GuiGraphics graphics, Font font, GraphPortInspection port, Appearance appearance, ImagePreview images,
                           boolean interactive, int mouseX, int mouseY, int width, Layout layout){
+            drawnWidth = width; drawnHeight = layout.height();
             bounds = new Rect((int)Math.floor(originX), (int)Math.floor(originY), (int)Math.ceil(width * scale), (int)Math.ceil(layout.height() * scale));
+            codeArea = null; terminalArea = null; textArea = null;
+            resizeHandle = interactive ? new Rect(width - 12, layout.height() - 12, 12, 12) : null;
             rows.clear(); treeArea = null; modeButton = null; closeButton = null; verticalTrack = null; horizontalTrack = null;
             if(!bounds.intersects(clip)){ bounds = null; return; }
             double localX = localX(mouseX), localY = localY(mouseY);
             var style = appearance.style();
-            try(var layer = GuiRenderLayer.push(graphics, viewport == null ? 600 : 180);
+            try(var layer = GuiRenderLayer.pushFlattened(graphics, layerDepth, layerScale);
                 var canvasClip = GuiPoseScissor.push(graphics, clip.x(), clip.y(), clip.right(), clip.bottom())){
                 graphics.pose().pushPose();
                 try{
@@ -197,7 +302,7 @@ public final class GraphPortInspector{
                     int titleRight = width - 8;
                     if(interactive){
                         closeButton = new Rect(width - 19, 3, 14, titleHeight - 6);
-                        String mode = layout.simple() ? "Simple" : "Advanced";
+                        String mode = layout.simple() ? "Simple" : state.mode() == Mode.GUI && hasGui(port) ? "GUI" : "Advanced";
                         modeButton = new Rect(width - 25 - font.width(mode) - 8, 3, font.width(mode) + 8, titleHeight - 6);
                         button(graphics, font, modeButton, mode, appearance, localX, localY);
                         button(graphics, font, closeButton, "x", appearance, localX, localY);
@@ -209,16 +314,53 @@ public final class GraphPortInspector{
                         graphics.drawString(font, font.plainSubstrByWidth(compact(port), width - 16), 8, 24, style.text(), false);
                         return;
                     }
+                    if(showingGui(port)){
+                        terminal = com.rieno.gadgetsandgizmos.lib.script.ScriptTerminal.fromValue(port.gui());
+                        terminalArea = new Rect(10, 32, width - 20, Math.max(1, layout.height() - 42));
+                        if(terminal != null) TerminalPreview.render(graphics, terminal, terminalArea.x(), terminalArea.y(), terminalArea.width(), terminalArea.height());
+                        else if(guiPreview != null) guiPreview.draw(graphics, font, terminalArea);
+                        else graphics.drawCenteredString(font, "Computer screen unavailable", width / 2, 112, style.muted());
+                        return;
+                    }
                     int top = 30;
                     if(layout.previewHeight() > 0){
-                        drawPreview(graphics, font, layout.previewPort(), images, 10, top, width - 20, layout.previewHeight(), style);
+                        if(layout.previewPort().preview() == GraphPortInspection.Preview.CODE){
+                            codeArea = new Rect(10, top, width - 20, layout.previewHeight());
+                            if(interactive && codeChanged != null){
+                                if(codeEditor == null){ codeEditor = new CodeEditor(font, val -> codeChanged.accept(val)); codeEditor.focused(false); }
+                                codeEditor.source(value.asString()); codeEditor.appearance(style); codeEditor.completions(completions);
+                                codeEditor.peripherals(peripherals);
+                                codeEditor.bounds(codeArea.x(), codeArea.y(), codeArea.width(), codeArea.height());
+                                codeEditor.render(graphics);
+                            }else{
+                                codeLine = Math.clamp(codeLine, 0, Math.max(0, value.asString().split("\n", -1).length - (layout.previewHeight() - 8) / (font.lineHeight + 3)));
+                                CodePreview.render(graphics, font, value.asString(), 10, top, width - 20, layout.previewHeight(), codeLine, codeHorizontal, style);
+                            }
+                        }else drawPreview(graphics, font, layout.previewPort(), images, 10, top, width - 20, layout.previewHeight(), style);
                         top += layout.previewHeight() + 6;
                     }
-                    for(var line : layout.lines()){
+                    if(layout.outline() == null && layout.previewHeight() == 0){
+                        textArea = new Rect(10, top, width - 20, Math.max(1, layout.height() - top - 12));
+                        textHeight = layout.lines().size() * (font.lineHeight + 3);
+                        textScroll = Math.clamp(textScroll, 0, Math.max(0, textHeight - textArea.height()));
+                        try(var textClip = GuiPoseScissor.push(graphics, textArea.x(), textArea.y(), textArea.right(), textArea.bottom())){
+                            int lineY = top - textScroll;
+                            for(var line : layout.lines()){
+                                if(lineY + font.lineHeight >= textArea.y() && lineY < textArea.bottom()) graphics.drawString(font, line, 10, lineY, style.text(), false);
+                                lineY += font.lineHeight + 3;
+                            }
+                        }
+                    }else for(var line : layout.lines()){
                         graphics.drawString(font, line, 10, top, style.text(), false); top += font.lineHeight + 3;
                     }
                     if(layout.outline() != null) drawTree(graphics, font, appearance, layout, width, top + 3, localX, localY, interactive);
-                }finally{ graphics.pose().popPose(); }
+                }finally{
+                    if(resizeHandle != null) for(int idx = 0; idx < 3; idx++) for(int step = 0; step <= 2 + idx * 3; step++){
+                        int x = width - 3 - step, y = layout.height() - 3 - (2 + idx * 3 - step);
+                        graphics.fill(x, y, x + 1, y + 1, appearance.style().muted());
+                    }
+                    graphics.pose().popPose();
+                }
             }
         }
 
@@ -302,15 +444,34 @@ public final class GraphPortInspector{
 
         // Toggle tree branches and presentation mode before the graph receives the same pointer press
         public boolean mouseClicked(double x, double y, int button){
-            if(!contains(x, y)) return false;
+            if(!contains(x, y)){ blur(); return false; }
             pressed = true;
+            if(button == 0 && resizeHandle != null && resizeHandle.contains(localX(x), localY(y))){
+                blur(); resizing = true; prevX = x; prevY = y;
+                resizeWidth = drawnWidth; resizeHeight = drawnHeight;
+                state = state.resized(resizeWidth, resizeHeight); return true;
+            }
+            if(state.mode() == Mode.GUI && terminal != null && terminalInput != null && terminalArea != null && terminalArea.contains(localX(x), localY(y))){
+                var point = terminalPoint(x, y);
+                if(point != null && button >= 0 && button <= 2){
+                    editing = false; terminalFocused = true; terminalButton = button; terminalX = point[0]; terminalY = point[1];
+                    terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("click", terminalX, terminalY, button));
+                }
+                return true;
+            }
             if(button != 0) return true;
             double localX = localX(x), localY = localY(y);
             if(closeButton != null && closeButton.contains(localX, localY)){ closed.run(); hide(); return true; }
             if(modeButton != null && modeButton.contains(localX, localY)){
-                state = new State(state.x(), state.y(), state.mode() == Mode.SIMPLE ? Mode.ADVANCED : Mode.SIMPLE);
+                blur();
+                state = state.withMode(state.mode() == Mode.SIMPLE ? Mode.ADVANCED
+                        : state.mode() == Mode.ADVANCED && hasGui(port) ? Mode.GUI : Mode.SIMPLE);
                 changed.accept(state); return true;
             }
+            if(codeArea != null && codeEditor != null && codeChanged != null && codeArea.contains(localX, localY)){
+                editing = true; return codeEditor.mouseClicked(localX, localY, button);
+            }
+            blur();
             if(treeArea != null && treeArea.contains(localX, localY)) for(Hit row : rows){
                 if(!row.bounds().contains(localX, localY)) continue;
                 outline.select(value, row.path());
@@ -330,8 +491,18 @@ public final class GraphPortInspector{
         // Convert pointer movement into authored graph distances at every zoom level
         public boolean mouseDragged(double x, double y, int button){
             if(!pressed) return false;
+            if(button == 0 && resizing){
+                state = state.resized(resizeWidth + (int)Math.round((x - prevX) / scale), resizeHeight + (int)Math.round((y - prevY) / scale));
+                moved = true; return true;
+            }
+            if(terminalButton >= 0 && terminalInput != null){
+                var point = terminalPoint(x, y);
+                if(point != null){ terminalX = point[0]; terminalY = point[1]; terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("drag", terminalX, terminalY, terminalButton)); }
+                return true;
+            }
+            if(editing && codeEditor != null && codeEditor.mouseDragged(localX(x), localY(y))) return true;
             if(button == 0 && dragging){
-                state = new State(state.x() + (x - prevX) / scale, state.y() + (y - prevY) / scale, state.mode());
+                state = state.translated((x - prevX) / scale, (y - prevY) / scale);
                 prevX = x; prevY = y; moved = true;
             }else if(button == 0 && (draggingVertical || draggingHorizontal)) scrollAt(localX(x), localY(y));
             return true;
@@ -339,9 +510,12 @@ public final class GraphPortInspector{
 
         // Save a completed move once instead of writing preferences for every drag event
         public boolean mouseReleased(){
+            if(terminalButton >= 0 && terminalInput != null) terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("release", terminalX, terminalY, terminalButton));
+            terminalButton = -1;
+            if(codeEditor != null) codeEditor.mouseReleased();
             boolean handled = pressed;
             if(moved) changed.accept(state);
-            pressed = false; dragging = false; moved = false; draggingVertical = false; draggingHorizontal = false;
+            pressed = false; dragging = false; moved = false; draggingVertical = false; draggingHorizontal = false; resizing = false;
             return handled;
         }
 
@@ -350,6 +524,19 @@ public final class GraphPortInspector{
 
         // Scroll the tree horizontally with Shift and vertically with the ordinary wheel
         public boolean mouseScrolled(double x, double y, double horizontal, double vertical, boolean shift){
+            if(contains(x, y) && textArea != null && textArea.contains(localX(x), localY(y))){
+                textScroll = Math.clamp(textScroll - (int)Math.round(vertical * 24), 0, Math.max(0, textHeight - textArea.height())); return true;
+            }
+            if(contains(x, y) && state.mode() == Mode.GUI && terminal != null && terminalInput != null){
+                var point = terminalPoint(x, y);
+                if(point != null){ terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("scroll", point[0], point[1], vertical > 0 ? -1 : 1)); return true; }
+            }
+            if(contains(x, y) && codeArea != null && codeArea.contains(localX(x), localY(y))){
+                if(codeChanged != null && codeEditor != null) return codeEditor.mouseScrolled(horizontal, vertical, shift);
+                if(shift || horizontal != 0) codeHorizontal = Math.max(0, codeHorizontal - (int)Math.round((horizontal != 0 ? horizontal : vertical) * 24));
+                else codeLine = Math.max(0, codeLine - (int)Math.round(vertical * 3));
+                return true;
+            }
             if(!contains(x, y) || treeArea == null || !treeArea.contains(localX(x), localY(y))) return false;
             if(shift || horizontal != 0) scrollX = Math.clamp(scrollX - (int)Math.round((horizontal != 0 ? horizontal : vertical) * 24),
                     0, Math.max(0, contentWidth - treeArea.width()));
@@ -358,6 +545,11 @@ public final class GraphPortInspector{
         }
 
         // Position a scrollbar thumb from the same local coordinates used to draw it
+        private double[] terminalPoint(double x, double y){
+            return terminalArea == null || terminal == null ? null : com.rieno.gadgetsandgizmos.lib.script.ScriptInput.point(
+                    localX(x) - terminalArea.x(), localY(y) - terminalArea.y(), terminalArea.width(), terminalArea.height(), terminal.width(), terminal.height());
+        }
+
         private void scrollAt(double x, double y){
             if(draggingVertical) scrollY = (int)Math.clamp((y - treeArea.y()) / treeArea.height() * contentHeight - treeArea.height() / 2.0,
                     0, Math.max(0, contentHeight - treeArea.height()));
@@ -432,6 +624,11 @@ public final class GraphPortInspector{
     // Draw rich content while leaving image ownership with the host
     private static void drawPreview(GuiGraphics graphics, Font font, GraphPortInspection port, ImagePreview images,
                                     int x, int y, int width, int height, HelpModalStyle style){
+        if(port.preview() == GraphPortInspection.Preview.COLOR || port.preview() == GraphPortInspection.Preview.GRADIENT){
+            double fit = Math.min(width / 280.0, height / 28.0);
+            int w = Math.max(1, (int)Math.round(280 * fit)), h = Math.max(1, (int)Math.round(28 * fit));
+            x += (width - w) / 2; y += (height - h) / 2; width = w; height = h;
+        }
         if(port.preview() == GraphPortInspection.Preview.WIDGET) graphics.fill(x, y, x + width, y + height, style.panel());
         else for(int row = 0; row < height; row += 6) for(int col = 0; col < width; col += 6)
                 graphics.fill(x + col, y + row, x + Math.min(width, col + 6), y + Math.min(height, row + 6),
@@ -447,6 +644,10 @@ public final class GraphPortInspector{
         }else if(images == null || !images.draw(graphics, port.value(), x, y, width, height))
             graphics.drawCenteredString(font, "Image unavailable or loading", x + width / 2, y + (height - font.lineHeight) / 2, style.text());
         graphics.renderOutline(x - 1, y - 1, width + 2, height + 2, style.border());
+    }
+
+    @FunctionalInterface public interface GuiPreview{
+        void draw(GuiGraphics graphics, Font font, Rect bounds);
     }
 
     // Let the host supply its node title, current theme and existing control painters
