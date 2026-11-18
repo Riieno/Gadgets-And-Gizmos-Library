@@ -13,6 +13,8 @@ import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -167,6 +169,58 @@ public final class GraphNodePresentationRegistry{
         }
         ports.forEach(ordered::putIfAbsent);
         return java.util.Collections.unmodifiableMap(ordered);
+    }
+
+    // Expose MAP fields through the same collapsible output sections used by data targets
+    public static void mapOutputSections(CompoundTag data, String source, Map<String, String> fields,
+            List<Section> sections, Set<String> primary){
+        CompoundTag dynamic = data.getCompound("DynamicOutputs");
+        CompoundTag mappings = data.getCompound("InlineMapOutputs");
+        CompoundTag schemas = data.getCompound("DataPortGroups");
+        CompoundTag schema = new CompoundTag();
+        List<String> children = new ArrayList<>();
+        Map<String, String> ordered = new LinkedHashMap<>();
+        for(Section section : sections) for(String field : section.ports()){
+            if(fields.containsKey(field)) ordered.putIfAbsent(field, fields.get(field));
+        }
+        fields.forEach(ordered::putIfAbsent);
+        for(var field : ordered.entrySet()){
+            if(primary.contains(field.getKey())) continue;
+            String port = source + "." + field.getKey();
+            CompoundTag mapping = new CompoundTag();
+            mapping.putString("Source", source); mapping.putString("Key", field.getKey());
+            mappings.put(port, mapping); dynamic.putString(port, field.getValue());
+            if(!mappings.contains(field.getKey()) || source.equals(mappings.getCompound(field.getKey()).getString("Source"))){
+                mappings.put(field.getKey(), mapping.copy()); dynamic.putString(field.getKey(), field.getValue());
+            }
+            schema.putString(field.getKey(), field.getValue()); children.add(port);
+        }
+        schemas.put(source, schema);
+        CompoundTag sides = data.getCompound("PortSections");
+        CompoundTag outputs = sides.getCompound("Outputs");
+        CompoundTag collapsed = data.getCompound("CollapsedPortSections");
+        for(Section section : sections){
+            ListTag ports = new ListTag();
+            for(String field : section.ports()){
+                if(!schema.contains(field)) continue;
+                ports.add(StringTag.valueOf(source + "." + field));
+                ports.add(StringTag.valueOf(field));
+            }
+            if(ports.isEmpty()) continue;
+            String id = source + "_" + section.id();
+            CompoundTag encoded = new CompoundTag();
+            encoded.putString("Label", section.label()); encoded.put("Ports", ports);
+            outputs.put(id, encoded);
+            if(!collapsed.contains("O:" + id)) collapsed.putBoolean("O:" + id, true);
+        }
+        sides.put("Outputs", outputs);
+        data.put("DynamicOutputs", dynamic); data.put("InlineMapOutputs", mappings);
+        data.put("DataPortGroups", schemas); data.put("PortSections", sides);
+        data.put("CollapsedPortSections", collapsed);
+        Set<String> order = new LinkedHashSet<>(primary);
+        order.addAll(GraphPortOrder.read(data, GraphPortOrder.OUTPUT_ORDER));
+        order.addAll(children);
+        GraphPortOrder.write(data, GraphPortOrder.OUTPUT_ORDER, GraphPortOrder.withChildren(order, source, children));
     }
 
     public record Presentation(Map<String, GraphValue> defaults, List<Section> sections, Map<String, List<String>> options){

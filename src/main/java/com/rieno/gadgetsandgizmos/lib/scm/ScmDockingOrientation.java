@@ -1,10 +1,42 @@
 package com.rieno.gadgetsandgizmos.lib.scm;
 
 import net.minecraft.world.phys.Vec3;
+import com.rieno.gadgetsandgizmos.lib.navigation.SplineConstraintFrame;
+import org.joml.Quaterniond;
+import org.joml.Vector3d;
 
 // Score a ship connector by the body rotation needed to face a docking connector
 public final class ScmDockingOrientation{
+    public static final double ROLL_STEP_DEGREES = 45.0D;
     private ScmDockingOrientation(){}
+
+    // Keep the nearest relative roll while aligning the mating faces
+    public static Vec3 alignedDirection(Vec3 direction, Vec3 facing, Vec3 up, Vec3 targetFacing, Vec3 targetUp, double rollStepDegrees){
+        return alignedDirection(direction, facing, up, targetFacing,
+                nearestTargetUp(facing, up, targetFacing, targetUp, rollStepDegrees));
+    }
+
+    // Measure the shortest correction to a stepped connector frame
+    public static Vec3 alignmentError(Vec3 facing, Vec3 up, Vec3 targetFacing, Vec3 targetUp, double rollStepDegrees){
+        return alignmentError(facing, up, targetFacing,
+                nearestTargetUp(facing, up, targetFacing, targetUp, rollStepDegrees));
+    }
+
+    // Select an equivalent roll in the target connector's live coordinate frame
+    public static Vec3 nearestTargetUp(Vec3 facing, Vec3 up, Vec3 targetFacing, Vec3 targetUp, double rollStepDegrees){
+        double steps = 360.0D / rollStepDegrees;
+        if(!Double.isFinite(steps) || steps < 1 || steps > 360 || Math.abs(steps - Math.rint(steps)) > 1.0E-8D){
+            throw new IllegalArgumentException("The roll step must divide 360 degrees into at most 360 steps");
+        }
+        if(unit(facing).lengthSqr() == 0 || unit(targetFacing).lengthSqr() == 0) return unit(targetUp);
+        var current = SplineConstraintFrame.orientation(facing, up);
+        var target = SplineConstraintFrame.orientation(targetFacing, targetUp);
+        var relative = new Quaterniond(target).conjugate().mul(current);
+        double step = Math.toRadians(rollStepDegrees);
+        double roll = Math.rint(2.0D * Math.atan2(relative.z, relative.w) / step) * step;
+        var snapped = target.rotateZ(roll).transform(new Vector3d(0, 1, 0));
+        return new Vec3(snapped.x, snapped.y, snapped.z);
+    }
 
     // Rotate a vehicle heading by the connector's complete facing and roll correction
     public static Vec3 alignedDirection(Vec3 direction, Vec3 facing, Vec3 up, Vec3 targetFacing, Vec3 targetUp){
@@ -20,8 +52,8 @@ public final class ScmDockingOrientation{
     // Resolve facing and connector roll as one shortest rotation instead of competing cross products
     public static Vec3 alignmentError(Vec3 facing, Vec3 up, Vec3 targetFacing, Vec3 targetUp){
         if(unit(facing).lengthSqr() == 0 || unit(targetFacing).lengthSqr() == 0) return Vec3.ZERO;
-        var current = com.rieno.gadgetsandgizmos.lib.navigation.SplineConstraintFrame.orientation(facing, up);
-        var target = com.rieno.gadgetsandgizmos.lib.navigation.SplineConstraintFrame.orientation(targetFacing, targetUp);
+        var current = SplineConstraintFrame.orientation(facing, up);
+        var target = SplineConstraintFrame.orientation(targetFacing, targetUp);
         var error = target.mul(current.conjugate()).normalize();
         if(error.w < 0) error.mul(-1.0D);
         double sin = Math.sqrt(error.x * error.x + error.y * error.y + error.z * error.z);

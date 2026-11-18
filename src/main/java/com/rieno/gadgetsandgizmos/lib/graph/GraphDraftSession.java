@@ -15,6 +15,7 @@ public final class GraphDraftSession<G>{
     private long revision = -1;
     private long lastTick = Long.MIN_VALUE;
     private boolean closed;
+    private boolean visible = true, hostOpen = true;
 
     public GraphDraftSession(Host<G> host){ this.host = Objects.requireNonNull(host, "host"); }
 
@@ -22,7 +23,7 @@ public final class GraphDraftSession<G>{
     public boolean replace(long expectedRevision, long nextRevision, G next){
         if(closed || expectedRevision != revision || nextRevision <= revision) return false;
         Objects.requireNonNull(next, "graph");
-        host.reconcile(graph, next);
+        if(visible){ host.reconcile(graph, next); hostOpen = true; }
         graph = next;
         revision = nextRevision;
         return true;
@@ -30,18 +31,27 @@ public final class GraphDraftSession<G>{
 
     // The owning server tick drives timers independently of editor render frequency
     public void tick(long tick){
-        if(closed || graph == null || lastTick == tick) return;
+        if(closed || !visible || graph == null || lastTick == tick) return;
         lastTick = tick;
         host.tick(graph);
     }
 
     public long revision(){ return revision; }
     public G graph(){ return graph; }
+    public boolean visible(){ return visible; }
+
+    // Release preview engines while hidden and rebuild from the retained graph when shown
+    public void visible(boolean val){
+        if(closed || visible == val) return;
+        visible = val; lastTick = Long.MIN_VALUE;
+        if(!val){ if(hostOpen) host.close(); hostOpen = false; }
+        else if(graph != null){ host.reconcile(null, graph); hostOpen = true; }
+    }
 
     public void close(){
         if(closed) return;
         closed = true;
         graph = null;
-        host.close();
+        if(hostOpen) host.close(); hostOpen = false;
     }
 }

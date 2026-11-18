@@ -27,6 +27,7 @@ public final class GraphNodeRegistry {
 
     // Tracked definitions
     private final Map<String, GraphNodeDefinition> definitions = new LinkedHashMap<>();
+    private final Map<String, String> replacements = new LinkedHashMap<>();
 
     /*--------------------------------------------------------##---------------------------------------------------------
 
@@ -78,6 +79,28 @@ public final class GraphNodeRegistry {
     // Get the definitions
     public synchronized Collection<GraphNodeDefinition> definitions() {
         return definitions.values().stream().toList();
+    }
+
+    // Retain the runtime definition while preventing new instances of a deprecated type
+    public synchronized void deprecate(String id, String replacement){
+        if(!definitions.containsKey(id) || !definitions.containsKey(replacement)){
+            throw new IllegalArgumentException("Deprecated nodes and their replacements must be registered");
+        }
+        String prev = replacements.putIfAbsent(id, replacement);
+        if(prev != null && !prev.equals(replacement)) throw new IllegalStateException("Node replacement is already registered: " + id);
+    }
+
+    public synchronized boolean deprecated(String id){ return replacements.containsKey(id); }
+
+    public synchronized String replacement(String id){ return replacements.getOrDefault(id, ""); }
+
+    // Apply the marker to saved custom labels as well as default names
+    public synchronized String label(String id, String label){
+        return deprecated(id) && !label.endsWith(" [Deprecated]") ? label + " [Deprecated]" : label;
+    }
+
+    public synchronized Collection<GraphNodeDefinition> creatableDefinitions(){
+        return definitions.values().stream().filter(definition -> !deprecated(definition.id())).toList();
     }
 
     // Get the snapshot

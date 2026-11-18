@@ -239,6 +239,7 @@ public final class ComputerCraftPeripheralHub{
         private final Target target;
         private final Set<String> mounts = new LinkedHashSet<>();
         private volatile boolean active = true;
+        private boolean closing;
 
         private RemoteAccess(IComputerAccess computer, String name, Target target){
             this.computer = computer;
@@ -251,11 +252,12 @@ public final class ComputerCraftPeripheralHub{
         }
 
         private synchronized void close(){
-            if(!active) return;
-            active = false;
+            if(!active || closing) return;
+            closing = true;
             try{
                 target.peripheral().detach(this);
             }finally{
+                active = false;
                 for(String mount : mounts) computer.unmount(mount);
                 mounts.clear();
             }

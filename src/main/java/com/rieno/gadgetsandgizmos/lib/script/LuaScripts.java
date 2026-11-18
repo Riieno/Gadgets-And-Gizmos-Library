@@ -21,8 +21,8 @@ public final class LuaScripts{
                 .replace("\n", "\\n").replace("\r", "\\r") + "\"]";
     }
 
-    public static String inputSnippet(String port){ return "local value = " + access("ports", port) + "\n"; }
-    public static String outputSnippet(String port){ return access("output", port) + " = value\n"; }
+    public static String inputSnippet(String port){ return "local value = " + access("inputs", port) + "\n"; }
+    public static String outputSnippet(String port){ return access("outputs", port) + " = value\n"; }
 
     // Show snapshots as Lua literals rather than Java collection text
     public static String value(GraphValue val){ return literal(ScriptValues.encode(val), 0); }
@@ -49,10 +49,10 @@ public final class LuaScripts{
     }
 
     // Keep exactly one generated line so runtime errors can report the player's source line
-    public static String source(String code){ return "local ports, output = ...;\n" + code; }
+    public static String source(String code){ return "local inputs, outputs = ...; local ports, output = inputs, outputs;\n" + code; }
 
     // Compile once while supplying an isolated environment and port tables on each pulse
-    public static String function(String code){ return "return function(ports, output, _ENV)\n" + code + "\nend"; }
+    public static String function(String code){ return "return function(inputs, outputs, _ENV) local ports, output = inputs, outputs;\n" + code + "\nend"; }
 
     // Preserve the previous Java API without enabling the removed Lua execution mode
     @Deprecated public static boolean passive(String source){ return false; }

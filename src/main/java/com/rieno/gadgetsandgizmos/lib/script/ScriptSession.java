@@ -21,6 +21,9 @@ public interface ScriptSession extends AutoCloseable{
     default ScriptPortChange pollPort(){ return null; }
     default ScriptOutputChange pollOutput(){ return null; }
     default boolean running(){ return false; }
+    // Hosts authorize physical input before forwarding it to an interactive script session
+    default boolean input(ScriptInput input){ return false; }
+    default boolean monitorInput(String name, ScriptInput input){ return false; }
     // Admit a named callback only while its handler slot is available
     default boolean acceptsPulse(String port){ return false; }
     default void namedEvent(String name, GraphValue data){}

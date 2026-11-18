@@ -12,7 +12,7 @@ import java.util.LinkedHashMap;
 public final class LuaGraphNode{
     public static final String SOURCE = "LuaSource";
     public static final String INSTANCE = "cc_tweaked_instance";
-    public static final String DEFAULT_SOURCE = "output.result = ports.value\n";
+    public static final String DEFAULT_SOURCE = "outputs.result = inputs.value\n";
 
     private LuaGraphNode(){}
 

@@ -44,7 +44,8 @@ public final class ScriptValues{
             if("list".equals(type) && val instanceof Map<?, ?> map) val = array(map);
             val = normalize(val, !"any".equals(type));
             boolean valid = switch(type){
-                case "number", "color" -> val instanceof Number;
+                case "number" -> val instanceof Number;
+                case "color" -> val instanceof Number || val instanceof String;
                 case "boolean" -> val instanceof Boolean;
                 case "string", "direction" -> val instanceof String;
                 case "list" -> val instanceof List<?>;
@@ -54,7 +55,7 @@ public final class ScriptValues{
             if(!valid) throw new IllegalArgumentException("Output '" + port + "' must be " + type);
             res.put(port, switch(type){
                 case "any" -> inferred(val);
-                case "color" -> GraphValue.number((int)((Number)val).longValue());
+                case "color" -> GraphValue.number(val instanceof String text ? ScriptHexColors.parse(text) : (int)((Number)val).longValue());
                 case "target", "frequency" -> {
                     Map<Object, Object> tagged = new LinkedHashMap<>((Map<?, ?>)val);
                     tagged.remove("__gng_type");
@@ -128,6 +129,7 @@ public final class ScriptValues{
     private static Object copy(Object val, int depth, int[] budget, IdentityHashMap<Object, Boolean> active){
         if(depth > 16 || ++budget[0] > 4096) throw new IllegalArgumentException("Script values exceed the table limit");
         if(val instanceof GraphValue graph){
+            if("color".equals(graph.type()) && graph.value() instanceof Number number) return ScriptHexColors.format(number.intValue());
             Object encoded = copy(graph.value(), depth, budget, active);
             if(encoded instanceof Map<?, ?> map && List.of("target", "frequency", "player", "image", "widget").contains(graph.type())){
                 Map<Object, Object> res = new LinkedHashMap<>(map);

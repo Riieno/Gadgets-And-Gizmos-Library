@@ -13,6 +13,9 @@ public final class VirtualDisplaySources{
     private static final Map<MinecraftServer, Map<UUID, Source>> SOURCES = new WeakHashMap<>();
     private static final Map<MinecraftServer, Map<UUID, Input>> INPUTS = new WeakHashMap<>();
     private static final Map<MinecraftServer, Map<UUID, java.util.function.Predicate<net.minecraft.server.level.ServerPlayer>>> ACCESS = new WeakHashMap<>();
+    static{
+        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.server.ServerStoppedEvent evt) -> clear(evt.getServer()));
+    }
     private VirtualDisplaySources(){}
     @FunctionalInterface public interface Source{ CompoundTag frame(int width, int height); }
     @FunctionalInterface public interface Input{ boolean accept(net.minecraft.server.level.ServerPlayer player, com.rieno.gadgetsandgizmos.lib.script.ScriptInput input); }

@@ -1,5 +1,13 @@
 package com.rieno.gadgetsandgizmos.lib.inventory;
 
+/*--------------------------------------------------------##---------------------------------------------------------
+
+=======================================================================================================================
+                                                        IMPORTS
+=======================================================================================================================
+
+------------------------------------------------------------##-----------------------------------------------------*/
+
 import com.rieno.gadgetsandgizmos.lib.worker.WorkerContainerAccess;
 import com.rieno.gadgetsandgizmos.lib.power.CombinedEnergyStorage;
 import com.rieno.gadgetsandgizmos.lib.power.LongEnergyStorage;
@@ -38,6 +46,14 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
     private ItemPort lastItem;
     private FluidPort lastFluid;
 
+    /*--------------------------------------------------------##---------------------------------------------------------
+
+    =======================================================================================================================
+                                                            FUNCTIONS
+    =======================================================================================================================
+
+    ------------------------------------------------------------##-----------------------------------------------------*/
+
     public ContainerNetworkAccess(BlockEntity entry){
         this.entry = entry;
         entryAvailability = new Availability(entry);
@@ -60,6 +76,14 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
         return ResourceRouting.combine(pools);
     }
 
+    /*--------------------------------------------------------##---------------------------------------------------------
+
+    =======================================================================================================================
+                                                            HELPERS
+    =======================================================================================================================
+
+    ------------------------------------------------------------##-----------------------------------------------------*/
+
     private boolean refresh(){
         if(entry == null || entry.getLevel() == null) return false;
         Level current = entry.getLevel();
@@ -68,6 +92,26 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
         if(tick == time && revision == version && routedLevel == current
                 && entry.getBlockPos().equals(routedPos) && !entry.isRemoved() && !current.isClientSide) return true;
         if(!entryAvailability.available(current, time, version)) return false;
+        Routing route = ContainerStorageNetworks.routing(entry);
+        if(route == null) return false;
+        endpoints = route.endpoints();
+        items = route.items();
+        fluids = route.fluids();
+        energy = route.energy();
+        energyMembers = route.energyMembers();
+        combined = null;
+        lastItem = null;
+        lastFluid = null;
+        slots = route.slots();
+        tanks = route.tanks();
+        tick = time;
+        revision = version;
+        routedLevel = entry.getLevel();
+        routedPos = entry.getBlockPos().immutable();
+        return true;
+    }
+
+    static Routing routing(List<BlockEntity> members){
         List<Endpoint> next = new ArrayList<>();
         List<ItemPort> nextItems = new ArrayList<>();
         List<FluidPort> nextFluids = new ArrayList<>();
@@ -77,9 +121,9 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
         Set<Object> seenEnergy = Collections.newSetFromMap(new IdentityHashMap<>());
         int nextSlots = 0;
         int nextTanks = 0;
-        for(BlockEntity target : ContainerStorageNetworks.connected(entry)){
+        for(BlockEntity target : members){
             var pool = ResourceRouting.access(target, null);
-            Availability availability = target == entry ? entryAvailability : new Availability(target);
+            Availability availability = new Availability(target);
             next.add(new Endpoint(availability, pool));
             for(var handler : pool.items()){
                 if(!seenItems.add(handler)) continue;
@@ -100,21 +144,8 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
                 nextEnergy.add(new EnergyPort(availability, storage));
             }
         }
-        endpoints = List.copyOf(next);
-        items = List.copyOf(nextItems);
-        fluids = List.copyOf(nextFluids);
-        energy = List.copyOf(nextEnergy);
-        energyMembers = energy.stream().map(EnergyPort::storage).toList();
-        combined = null;
-        lastItem = null;
-        lastFluid = null;
-        slots = nextSlots;
-        tanks = nextTanks;
-        tick = time;
-        revision = version;
-        routedLevel = entry.getLevel();
-        routedPos = entry.getBlockPos().immutable();
-        return true;
+        return new Routing(List.copyOf(next), List.copyOf(nextItems), List.copyOf(nextFluids), List.copyOf(nextEnergy),
+                nextEnergy.stream().map(EnergyPort::storage).toList(), nextSlots, nextTanks);
     }
 
     private List<LongEnergyStorage> activeEnergy(){
@@ -272,6 +303,8 @@ public final class ContainerNetworkAccess implements IItemHandler, IFluidHandler
     }
 
     private record Endpoint(Availability availability, ResourceRouting.Pool pool){}
+    record Routing(List<Endpoint> endpoints, List<ItemPort> items, List<FluidPort> fluids,
+                   List<EnergyPort> energy, List<LongEnergyStorage> energyMembers, int slots, int tanks){}
     private record ItemPort(Availability availability, IItemHandler handler, int start, int end){}
     private record FluidPort(Availability availability, IFluidHandler handler, int start, int end){}
     private record EnergyPort(Availability availability, LongEnergyStorage storage){}

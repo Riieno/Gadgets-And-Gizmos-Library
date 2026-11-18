@@ -6,22 +6,53 @@ import java.util.Map;
 
 // Transfer a bounded immutable character terminal without exposing an engine implementation
 public record ScriptTerminal(int width, int height, List<String> text, List<String> foreground, List<String> background,
-                             List<Integer> palette, int cursorX, int cursorY, boolean blink, int cursorColor){
+                             List<Integer> palette, int cursorX, int cursorY, boolean blink, int cursorColor,
+                             List<String> foregroundHex, List<String> backgroundHex, String cursorHex){
     public static final String PORT = "__lua_terminal";
+    public ScriptTerminal(int width, int height, List<String> text, List<String> foreground, List<String> background,
+                          List<Integer> palette, int cursorX, int cursorY, boolean blink, int cursorColor){
+        this(width, height, text, foreground, background, palette, cursorX, cursorY, blink, cursorColor, List.of(), List.of(), "");
+    }
     public ScriptTerminal{
-        if(width < 1 || width > 160 || height < 1 || height > 80 || width * height > 8192) throw new IllegalArgumentException("Invalid terminal dimensions");
+        ScriptTerminalSize.validate(width, height);
         text = List.copyOf(text); foreground = List.copyOf(foreground); background = List.copyOf(background); palette = List.copyOf(palette);
         if(text.size() != height || foreground.size() != height || background.size() != height || palette.size() != 16) throw new IllegalArgumentException("Invalid terminal rows");
         for(int idx = 0; idx < height; idx++){
             if(text.get(idx).length() != width || foreground.get(idx).length() != width || background.get(idx).length() != width
-                    || !foreground.get(idx).matches("[0-9a-f]+") || !background.get(idx).matches("[0-9a-f]+")) throw new IllegalArgumentException("Invalid terminal row");
+                    || !colors(foreground.get(idx)) || !colors(background.get(idx))) throw new IllegalArgumentException("Invalid terminal row");
         }
         cursorColor = Math.clamp(cursorColor, 0, 15);
+        foregroundHex = hexRows(foregroundHex, width, height); backgroundHex = hexRows(backgroundHex, width, height);
+        cursorHex = cursorHex == null ? "" : cursorHex;
+        if(!cursorHex.isEmpty() && (cursorHex.length() != 8 || !colors(cursorHex.toLowerCase(java.util.Locale.ROOT)))) throw new IllegalArgumentException("Invalid cursor color");
     }
 
     public GraphValue toValue(){
-        return GraphValue.map(Map.of("width", width, "height", height, "text", text, "foreground", foreground, "background", background,
+        var data = new java.util.LinkedHashMap<String, Object>(Map.of("width", width, "height", height, "text", text, "foreground", foreground, "background", background,
                 "palette", palette, "cursorX", cursorX, "cursorY", cursorY, "blink", blink, "cursorColor", cursorColor));
+        if(hasHexColors()){ data.put("foregroundHex", foregroundHex); data.put("backgroundHex", backgroundHex); data.put("cursorHex", cursorHex); }
+        return GraphValue.map(data);
+    }
+    public boolean hasHexColors(){ return !foregroundHex.isEmpty() || !backgroundHex.isEmpty() || !cursorHex.isEmpty(); }
+    public int foregroundArgb(int row, int col){ return argb(foregroundHex, foreground, row, col); }
+    public int backgroundArgb(int row, int col){ return argb(backgroundHex, background, row, col); }
+    public int cursorArgb(){ return cursorHex.isEmpty() ? palette.get(cursorColor) | 0xFF000000 : (int)Long.parseLong(cursorHex, 16); }
+    private int argb(List<String> hex, List<String> indices, int row, int col){
+        String cell = hex.isEmpty() ? "--------" : hex.get(row).substring(col * 8, col * 8 + 8);
+        return cell.equals("--------") ? palette.get(Character.digit(indices.get(row).charAt(col), 16)) | 0xFF000000 : (int)Long.parseLong(cell, 16);
+    }
+    private static List<String> hexRows(List<String> rows, int width, int height){
+        if(rows == null || rows.isEmpty()) return List.of();
+        rows = rows.stream().map(row -> row.toLowerCase(java.util.Locale.ROOT)).toList();
+        if(rows.size() != height) throw new IllegalArgumentException("Invalid hex terminal rows");
+        for(String row : rows){
+            if(row.length() != width * 8) throw new IllegalArgumentException("Invalid hex terminal width");
+            for(int col = 0; col < width; col++){
+                String cell = row.substring(col * 8, col * 8 + 8);
+                if(!cell.equals("--------") && !colors(cell)) throw new IllegalArgumentException("Invalid hex terminal color");
+            }
+        }
+        return rows;
     }
 
     // Adapt optional terminal implementations without exposing their classes through the library API
@@ -42,6 +73,10 @@ public record ScriptTerminal(int width, int height, List<String> text, List<Stri
 
     // Preserve the native terminal frame contract used by external display renderers
     public net.minecraft.nbt.CompoundTag displayFrame(){
+        return displayFrame("CC:Tweaked");
+    }
+
+    public net.minecraft.nbt.CompoundTag displayFrame(String source){
         var frame = new net.minecraft.nbt.CompoundTag();
         var terminal = new net.minecraft.nbt.CompoundTag();
         terminal.putInt("term_cursorX", cursorX); terminal.putInt("term_cursorY", cursorY);
@@ -56,19 +91,34 @@ public record ScriptTerminal(int width, int height, List<String> text, List<Stri
         int[] rgb = new int[16];
         for(int idx = 0; idx < 16; idx++) rgb[idx] = palette.get(15 - idx) & 0xFFFFFF;
         terminal.putIntArray("term_palette", rgb);
-        frame.putString("Format", "terminal"); frame.putString("Source", "CC:Tweaked"); frame.putBoolean("PreserveAspect", true); frame.putInt("Width", width); frame.putInt("Height", height);
+        frame.putString("Format", "terminal"); frame.putString("Source", source); frame.putBoolean("PreserveAspect", true); frame.putInt("Width", width); frame.putInt("Height", height);
         frame.put("Terminal", terminal); frame.put("Lines", lines); frame.put("Foreground", foreground); frame.put("Background", background);
         frame.putIntArray("Palette", palette.stream().mapToInt(Integer::intValue).toArray());
+        if(hasHexColors()){
+            var colors = new TerminalColors(width, height);
+            colors.foreground(direct(cursorHex));
+            for(int row = 0; row < height; row++) for(int col = 0; col < width; col++){
+                colors.paint(col, row, 1, direct(foregroundHex, row, col), direct(backgroundHex, row, col));
+            }
+            terminal.putByteArray("gadgetsngizmos:terminal_colors", colors.encode());
+            var fgHex = new net.minecraft.nbt.ListTag(); var bgHex = new net.minecraft.nbt.ListTag();
+            foregroundHex.forEach(row -> fgHex.add(net.minecraft.nbt.StringTag.valueOf(row)));
+            backgroundHex.forEach(row -> bgHex.add(net.minecraft.nbt.StringTag.valueOf(row)));
+            frame.put("ForegroundHex", fgHex); frame.put("BackgroundHex", bgHex); frame.putString("CursorHex", cursorHex);
+        }
         return frame;
     }
+
+    private static long direct(List<String> rows, int row, int col){
+        return rows.isEmpty() ? TerminalColors.PALETTE : direct(rows.get(row).substring(col * 8, col * 8 + 8));
+    }
+    private static long direct(String hex){ return hex.isEmpty() || hex.equals("--------") ? TerminalColors.PALETTE : Long.parseLong(hex, 16); }
 
     public static ScriptTerminal fromValue(GraphValue value){
         if(value == null) return null;
         try{
-            if(!(ScriptValues.encode(value) instanceof Map<?, ?> data)) return null;
-            return new ScriptTerminal(number(data, "width"), number(data, "height"), strings(data.get("text")), strings(data.get("foreground")),
-                    strings(data.get("background")), ((List<?>)data.get("palette")).stream().map(val -> ((Number)val).intValue()).toList(),
-                    number(data, "cursorX"), number(data, "cursorY"), Boolean.TRUE.equals(data.get("blink")), number(data, "cursorColor"));
+            if(!(value.value() instanceof Map<?, ?> data)) return null;
+            return fromData(data);
         }catch(RuntimeException ignored){ return null; }
     }
 
@@ -89,11 +139,37 @@ public record ScriptTerminal(int width, int height, List<String> text, List<Stri
                 fg.add(nativeTag.isEmpty() ? frame.getList("Foreground", 8).getString(idx) : nativeTag.getString("term_textColour_" + idx));
                 bg.add(nativeTag.isEmpty() ? frame.getList("Background", 8).getString(idx) : nativeTag.getString("term_textBgColour_" + idx));
             }
+            var colors = new TerminalColors(width, height);
+            colors.decode(nativeTag.getByteArray("gadgetsngizmos:terminal_colors"));
             return new ScriptTerminal(width, height, lines, fg, bg, palette, nativeTag.getInt("term_cursorX"), nativeTag.getInt("term_cursorY"),
-                    nativeTag.getBoolean("term_cursorBlink"), nativeTag.getInt("term_textColour"));
+                    nativeTag.getBoolean("term_cursorBlink"), nativeTag.getInt("term_textColour"),
+                    frame.contains("ForegroundHex") ? frame.getList("ForegroundHex", 8).stream().map(net.minecraft.nbt.Tag::getAsString).toList() : colors.rows(true),
+                    frame.contains("BackgroundHex") ? frame.getList("BackgroundHex", 8).stream().map(net.minecraft.nbt.Tag::getAsString).toList() : colors.rows(false),
+                    frame.contains("CursorHex") ? frame.getString("CursorHex") : colors.foreground() == TerminalColors.PALETTE ? "" : TerminalColors.hex(colors.foreground()));
         }catch(RuntimeException ex){ return null; }
     }
 
-    private static int number(Map<?, ?> data, String key){ return ((Number)data.get(key)).intValue(); }
-    private static List<String> strings(Object val){ return ((List<?>)val).stream().map(entry -> (String)entry).toList(); }
+    public static ScriptTerminal fromData(Map<?, ?> data){
+        ScriptTerminalSize.validate(number(data,"width"), number(data,"height"));
+        return new ScriptTerminal(number(data,"width"), number(data,"height"), rows(data.get("text")), rows(data.get("foreground")), rows(data.get("background")),
+                entries(data.get("palette")).stream().map(val -> ((Number)unwrap(val)).intValue()).toList(), number(data,"cursorX"), number(data,"cursorY"),
+                Boolean.TRUE.equals(unwrap(data.get("blink"))), number(data,"cursorColor"), rows(data.get("foregroundHex")), rows(data.get("backgroundHex")), java.util.Objects.toString(unwrap(data.get("cursorHex")), ""));
+    }
+    private static List<String> rows(Object data){ return entries(data).stream().map(val -> (String)unwrap(val)).toList(); }
+    private static List<?> entries(Object data){
+        data = unwrap(data);
+        if(data == null) return List.of();
+        if(data instanceof List<?> list){ if(list.size() > 80) throw new IllegalArgumentException("Invalid terminal array"); return list; }
+        if(!(data instanceof Map<?,?> map) || map.size() > 80) throw new IllegalArgumentException("Invalid terminal array");
+        return map.entrySet().stream().sorted(java.util.Comparator.comparingDouble(entry -> ((Number)entry.getKey()).doubleValue())).map(Map.Entry::getValue).toList();
+    }
+    private static Object unwrap(Object val){ while(val instanceof GraphValue graph) val = graph.value(); return val; }
+    private static int number(Map<?, ?> data, String key){ return ((Number)unwrap(data.get(key))).intValue(); }
+    private static boolean colors(String text){
+        for(int idx = 0; idx < text.length(); idx++){
+            char ch = text.charAt(idx);
+            if((ch < '0' || ch > '9') && (ch < 'a' || ch > 'f')) return false;
+        }
+        return true;
+    }
 }

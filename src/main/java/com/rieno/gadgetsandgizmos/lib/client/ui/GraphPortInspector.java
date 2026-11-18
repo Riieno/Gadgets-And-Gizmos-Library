@@ -135,7 +135,10 @@ public final class GraphPortInspector{
         public void peripherals(List<com.rieno.gadgetsandgizmos.lib.script.ScriptPeripheral> vals){ peripherals = List.copyOf(vals); }
         public void guiPreview(GuiPreview preview){ guiPreview = preview; }
         private boolean hasGui(GraphPortInspection port){ return port.preview() == GraphPortInspection.Preview.CODE || port.gui() != null || guiPreview != null; }
-        private boolean liveGui(GraphPortInspection port){ return guiPreview != null || com.rieno.gadgetsandgizmos.lib.script.ScriptTerminal.fromValue(port.gui()) != null; }
+        private boolean liveGui(GraphPortInspection port){
+            return guiPreview != null || port.gui() != null && (port.preview() != GraphPortInspection.Preview.CODE
+                    || com.rieno.gadgetsandgizmos.lib.script.ScriptTerminal.fromValue(port.gui()) != null);
+        }
         private boolean showingGui(GraphPortInspection port){ return state != null && state.mode() == Mode.GUI && hasGui(port); }
         public void terminalInput(Consumer<com.rieno.gadgetsandgizmos.lib.script.ScriptInput> input){ terminalInput = input; }
         public void blur(){
@@ -146,7 +149,8 @@ public final class GraphPortInspector{
         }
         public boolean editing(){ return editing; }
         public boolean terminalFocused(){ return terminalFocused; }
-        public boolean keyPressed(int key){
+        public boolean keyPressed(int key){ return keyPressed(key, 0); }
+        public boolean keyPressed(int key, int modifiers){
             if(terminalFocused && terminalInput != null){
                 if(key < 0 || key > 512) return true;
                 if(key == org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE){ blur(); return true; }
@@ -159,11 +163,12 @@ public final class GraphPortInspector{
             }
             if(!editing || codeEditor == null) return false;
             if(key == org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE){ blur(); return true; }
-            codeEditor.keyPressed(key); return true;
+            codeEditor.keyPressed(key, modifiers); return true;
         }
-        public boolean charTyped(char ch){
+        public boolean charTyped(char ch){ return charTyped(ch, 0); }
+        public boolean charTyped(char ch, int modifiers){
             if(terminalFocused && terminalInput != null){ if(ch >= 32 && ch <= 255) terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("char", 0, 0, ch)); return true; }
-            return editing && codeEditor != null && codeEditor.charTyped(ch);
+            return editing && codeEditor != null && codeEditor.charTyped(ch, modifiers);
         }
         public boolean keyReleased(int key){ if(!terminalFocused || terminalInput == null) return false; if(terminalKeys.remove(key)) terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("key_up", 0, 0, key)); return true; }
 
@@ -319,7 +324,7 @@ public final class GraphPortInspector{
                         terminalArea = new Rect(10, 32, width - 20, Math.max(1, layout.height() - 42));
                         if(terminal != null) TerminalPreview.render(graphics, terminal, terminalArea.x(), terminalArea.y(), terminalArea.width(), terminalArea.height());
                         else if(guiPreview != null) guiPreview.draw(graphics, font, terminalArea);
-                        else graphics.drawCenteredString(font, "Computer screen unavailable", width / 2, 112, style.muted());
+                        else graphics.drawWordWrap(font, net.minecraft.network.chat.Component.literal("Terminal unavailible, use \"terminal.attach()\" to enable it"), 10, 72, width - 20, style.muted());
                         return;
                     }
                     int top = 30;
@@ -451,7 +456,7 @@ public final class GraphPortInspector{
                 resizeWidth = drawnWidth; resizeHeight = drawnHeight;
                 state = state.resized(resizeWidth, resizeHeight); return true;
             }
-            if(state.mode() == Mode.GUI && terminal != null && terminalInput != null && terminalArea != null && terminalArea.contains(localX(x), localY(y))){
+            if(state.mode() == Mode.GUI && (terminal != null || guiPreview != null) && terminalInput != null && terminalArea != null && terminalArea.contains(localX(x), localY(y))){
                 var point = terminalPoint(x, y);
                 if(point != null && button >= 0 && button <= 2){
                     editing = false; terminalFocused = true; terminalButton = button; terminalX = point[0]; terminalY = point[1];
@@ -524,10 +529,11 @@ public final class GraphPortInspector{
 
         // Scroll the tree horizontally with Shift and vertically with the ordinary wheel
         public boolean mouseScrolled(double x, double y, double horizontal, double vertical, boolean shift){
+            if(editing && codeEditor != null && contains(x, y) && codeEditor.scrollSuggestions(localX(x), localY(y), vertical)) return true;
             if(contains(x, y) && textArea != null && textArea.contains(localX(x), localY(y))){
                 textScroll = Math.clamp(textScroll - (int)Math.round(vertical * 24), 0, Math.max(0, textHeight - textArea.height())); return true;
             }
-            if(contains(x, y) && state.mode() == Mode.GUI && terminal != null && terminalInput != null){
+            if(contains(x, y) && state.mode() == Mode.GUI && (terminal != null || guiPreview != null) && terminalInput != null){
                 var point = terminalPoint(x, y);
                 if(point != null){ terminalInput.accept(new com.rieno.gadgetsandgizmos.lib.script.ScriptInput("scroll", point[0], point[1], vertical > 0 ? -1 : 1)); return true; }
             }
@@ -546,6 +552,7 @@ public final class GraphPortInspector{
 
         // Position a scrollbar thumb from the same local coordinates used to draw it
         private double[] terminalPoint(double x, double y){
+            if(terminalArea != null && terminal == null && guiPreview != null) return guiPreview.point(terminalArea, localX(x), localY(y));
             return terminalArea == null || terminal == null ? null : com.rieno.gadgetsandgizmos.lib.script.ScriptInput.point(
                     localX(x) - terminalArea.x(), localY(y) - terminalArea.y(), terminalArea.width(), terminalArea.height(), terminal.width(), terminal.height());
         }
@@ -648,6 +655,11 @@ public final class GraphPortInspector{
 
     @FunctionalInterface public interface GuiPreview{
         void draw(GuiGraphics graphics, Font font, Rect bounds);
+
+        // Hosts with letterboxed surfaces can supply the inverse of their own drawing transform
+        default double[] point(Rect bounds, double x, double y){
+            return bounds.contains(x, y) ? new double[]{(x - bounds.x()) / bounds.width(), (y - bounds.y()) / bounds.height()} : null;
+        }
     }
 
     // Let the host supply its node title, current theme and existing control painters

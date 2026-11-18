@@ -39,6 +39,13 @@ public record DockingApproachAxis(Vec3 tip, Vec3 facing, double distance){
         return contact.contains(tip) || contact.contains(endpoint()) || contact.clip(tip, endpoint()).isPresent();
     }
 
+    // Accept a nearby occupied hull without filling gaps between its separate members
+    public boolean overlapsHull(Iterable<AABB> bounds, double clearance){
+        if(bounds == null || !Double.isFinite(clearance) || clearance < 0) return false;
+        for(AABB box : bounds) if(box != null && overlaps(box.inflate(clearance))) return true;
+        return false;
+    }
+
     public Vec3 constrain(Vec3 position){
         return tip.add(facing.scale(Math.max(1, Math.min(distance, position.subtract(tip).dot(facing)))));
     }

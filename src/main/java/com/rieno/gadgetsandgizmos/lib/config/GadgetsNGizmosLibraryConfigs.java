@@ -50,6 +50,8 @@ public final class GadgetsNGizmosLibraryConfigs {
                 "gadgetsngizmos-server.toml");
         modContainer.registerConfig(ModConfig.Type.CLIENT, ViewfinderConfig.SPEC,
                 "gadgetsngizmos-camera-client.toml");
+        modContainer.registerConfig(ModConfig.Type.COMMON, LuaRuntimeConfig.SPEC,
+                "gadgetsngizmos-lua-common.toml");
     }
 
     /*--------------------------------------------------------##---------------------------------------------------------

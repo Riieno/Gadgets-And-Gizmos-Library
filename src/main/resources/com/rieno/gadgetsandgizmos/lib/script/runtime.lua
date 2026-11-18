@@ -2,6 +2,12 @@ local bridge = __gng_script
 __gng_script = nil
 if peripheral.hasType("left", "modem") then rednet.open("left") end
 local makePackage = dofile("/rom/modules/main/cc/require.lua").make
+local terminalExtension
+if bridge.terminalSource then
+    local createTerminal = assert(load(bridge.terminalSource('terminal.lua'), '@terminal', 't', _G))()
+    local install = assert(load(bridge.terminalSource('native_terminal.lua'), '@native_terminal', 't', _G))()
+    terminalExtension = install(bridge, createTerminal)
+end
 
 local function validate(value, active, depth, budget)
     budget[1] = budget[1] + 1
@@ -39,22 +45,132 @@ local function message(err)
     end)
 end
 
+-- Resolve physical sides without replacing the private controller bridge or modem
+local peripheralEvent
+local function sidePeripherals(hub)
+    if not hub or not hub.getPeripherals then return peripheral, nil, function(name) return name end end
+    local api, wrapped = {}, setmetatable({}, {__mode = "k"})
+    for key, value in pairs(peripheral) do api[key] = value end
+    local internal = {}
+    for _, side in ipairs({"top", "bottom", "left", "right", "front", "back"}) do internal["internal:" .. side] = side end
+    local function names()
+        local sides, reverse = {}, {}
+        local available = hub.getPeripherals()
+        for _, side in ipairs({"top", "bottom", "left", "right", "front", "back"}) do
+            local name = available["side:" .. side]
+            if name then sides[side], reverse[name] = name, side end
+        end
+        return sides, reverse
+    end
+    local function resolve(name)
+        if internal[name] and peripheral.isPresent(internal[name]) then return internal[name] end
+        local sides = names()
+        return sides[name] or name
+    end
+    api.getNames = function()
+        local sides, reverse = names()
+        local result, seen = {}, {}
+        for _, name in ipairs(peripheral.getNames()) do
+            name = reverse[name] or (sides[name] and "internal:" .. name or name)
+            if not seen[name] then result[#result + 1], seen[name] = name, true end
+        end
+        return result
+    end
+    for _, method in ipairs({"isPresent", "getMethods", "call"}) do
+        api[method] = function(name, ...) return peripheral[method](resolve(name), ...) end
+    end
+    api.getType = function(name)
+        if type(name) == "table" then name = api.getName(name) end
+        return peripheral.getType(resolve(name))
+    end
+    api.hasType = function(name, kind)
+        if type(name) == "table" then name = api.getName(name) end
+        return peripheral.hasType(resolve(name), kind)
+    end
+    api.wrap = function(name)
+        local actual = resolve(name)
+        local target = peripheral.wrap(actual)
+        if target and actual ~= name then wrapped[target] = name end
+        return target
+    end
+    api.getName = function(target)
+        if wrapped[target] then return wrapped[target] end
+        local name = peripheral.getName(target)
+        local sides, reverse = names()
+        return reverse[name] or (sides[name] and "internal:" .. name or name)
+    end
+    api.find = function(kind, filter)
+        local result = {}
+        for _, name in ipairs(api.getNames()) do
+            if api.hasType(name, kind) then
+                local target = api.wrap(name)
+                if not filter or filter(name, target) then result[#result + 1] = target end
+            end
+        end
+        return table.unpack(result)
+    end
+    return api, function(event)
+        if event[1] == "monitor_touch" or event[1] == "monitor_click" or event[1] == "monitor_drag"
+            or event[1] == "monitor_up" or event[1] == "monitor_resize" or event[1] == "peripheral" or event[1] == "peripheral_detach" then
+            local _, reverse = names()
+            event[2] = reverse[event[2]] or event[2]
+        end
+        return event
+    end, resolve
+end
+
 local function environment()
     local env = {}
     for _, key in ipairs({
         "assert", "error", "ipairs", "next", "pairs", "pcall", "select", "tonumber", "tostring", "type", "unpack", "xpcall",
         "rawequal", "rawget", "rawlen", "rawset", "getmetatable", "setmetatable", "math", "string", "table", "coroutine", "bit32",
-        "os", "fs", "io", "textutils", "colors", "colours", "keys", "vector", "paintutils", "term", "window",
-        "parallel", "peripheral", "redstone", "rs", "http", "utf8", "print", "write", "read", "sleep",
+        "os", "fs", "io", "textutils", "colors", "colours", "keys", "vector", "paintutils", "term", "terminal", "window",
+        "parallel", "peripheral", "redstone", "rs", "http", "utf8", "print", "printError", "write", "read", "sleep",
         "settings", "rednet", "gps", "disk", "help", "bit", "_HOST", "_VERSION"
     }) do
         env[key] = _G[key]
     end
     env._G = env
+    if terminalExtension then
+        env.term, env.window, env.paintutils = terminalExtension.term, terminalExtension.window, terminalExtension.paintutils
+    end
+    env.terminal = env.terminal or {attach = function() return term.native() end}
+    env.term.attach = env.terminal.attach
+    env.term.resize = env.term.resize or function(width, height) return bridge.resize(width, height) end
     env.gng = peripheral.wrap("back")
+    if terminalExtension then
+        local nativeCall = env.gng.callRemote
+        env.gng.callRemote = function(name,method,...)
+            if peripheral.hasType(name,'monitor') then return peripheral.call(name,method,...) end
+            return nativeCall(name,method,...)
+        end
+    end
+    local resolvePeripheral
+    env.peripheral, peripheralEvent, resolvePeripheral = sidePeripherals(env.gng)
+    env.rednet = {}
+    for key, value in pairs(rednet) do env.rednet[key] = value end
+    for _, method in ipairs({"open", "close", "isOpen"}) do
+        env.rednet[method] = function(name, ...)
+            if name ~= nil then name = resolvePeripheral(name) end
+            return rednet[method](name, ...)
+        end
+    end
     env.acc = env.gng
     env.load = function(code, name, mode) return load(code, name, mode or "t", env) end
     env.loadstring = env.load
+    env.shell = shell
+    env.loadfile = function(path, mode, target)
+        local file, err = fs.open(path, "r")
+        if not file then return nil, err end
+        local source = file.readAll()
+        file.close()
+        return load(source, "@" .. path, mode or "t", target or env)
+    end
+    env.dofile = function(path)
+        local fn, err = env.loadfile(path)
+        if not fn then error(err, 2) end
+        return fn()
+    end
     env.debug = {
         getinfo = debug.getinfo, getmetatable = debug.getmetatable, traceback = debug.traceback,
         getregistry = function() return { _LOADED = env.package and env.package.loaded or {} } end
@@ -136,6 +252,7 @@ local function prepare(retained)
             bridge.persistence(value)
         end
     })
+    env.inputs, env.outputs = ports, output
     env.ports, env.output = ports, output
     env.execEvent = {
         on = function(name)
@@ -145,6 +262,7 @@ local function prepare(retained)
         end,
         pulse = function(name)
             if type(name) ~= "string" or not execOutputs[name] then error("Unknown execution output: " .. tostring(name), 2) end
+            if terminalExtension then terminalExtension.capture() end
             publish()
             bridge.pulse(name)
         end
@@ -152,12 +270,15 @@ local function prepare(retained)
 end
 
 local function finish(task, err)
-    local ok, value = pcall(publish)
+    local ok, value = pcall(function()
+        if terminalExtension then terminalExtension.capture() end
+        publish()
+    end)
     if not ok then err = value end
     bridge.complete(task.revision, err and message(err) or "", task.port)
 end
 
-local inputEvents = {mouse_click = true, mouse_drag = true, mouse_up = true, mouse_scroll = true, key = true, key_up = true, char = true, paste = true}
+local inputEvents = {mouse_click = true, mouse_drag = true, mouse_up = true, mouse_scroll = true, key = true, key_up = true, char = true, paste = true, monitor_touch = true, monitor_click = true, monitor_drag = true, monitor_up = true}
 
 local function resume(task, event)
     while true do
@@ -178,7 +299,7 @@ end
 local function dispatch(task, event)
     if not task or event[1] == "__gng_script" then return task end
     if task.filter == nil or task.filter == event[1] or event[1] == "terminate" then return resume(task, event) end
-    if inputEvents[event[1]] and (task.filter == "task_complete" or task.filter == "timer") then
+    if inputEvents[event[1]] and (task.filter == "task_complete" or task.filter == "__lua_call" or task.filter == "timer") then
         task.inputs = task.inputs or {}
         if #task.inputs >= 128 then table.remove(task.inputs, 1) end
         task.inputs[#task.inputs + 1] = event
@@ -230,8 +351,11 @@ while true do
         end
     end
     bridge.ready(main ~= nil, handler ~= nil, env ~= nil)
-    bridge.waiting(tostring(main and (main.filter or "*") or ""), tostring(handler and (handler.filter or "*") or ""))
+    local mainFilter, handlerFilter = tostring(main and (main.filter or "*") or ""), tostring(handler and (handler.filter or "*") or "")
+    if terminalExtension and mainFilter ~= 'task_complete' and handlerFilter ~= 'task_complete' then terminalExtension.capture() end
+    bridge.waiting(mainFilter, handlerFilter)
     local event = table.pack(os.pullEventRaw())
+    if peripheralEvent then event = peripheralEvent(event) end
     main = dispatch(main, event)
     handler = dispatch(handler, event)
 end

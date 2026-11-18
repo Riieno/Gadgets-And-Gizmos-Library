@@ -11,6 +11,7 @@ package com.rieno.gadgetsandgizmos.lib.view;
 import com.rieno.gadgetsandgizmos.lib.graph.GraphValue;
 import com.rieno.gadgetsandgizmos.lib.geometry.RayBounds;
 import com.rieno.gadgetsandgizmos.lib.physics.SableEntityQueryApi;
+import com.rieno.gadgetsandgizmos.lib.physics.EntityTelemetryApi;
 import com.rieno.gadgetsandgizmos.lib.physics.SableLevelApi;
 import com.rieno.gadgetsandgizmos.lib.physics.SableTransformApi;
 import com.rieno.gadgetsandgizmos.lib.physics.SableSubLevelTelemetryApi;
@@ -334,9 +335,24 @@ public final class ViewRaycast{
         }
         // Include the loaded body's transform and physics without retaining its implementation
         public GraphValue details(Level level){
+            return details(level, new ViewPose(position, new org.joml.Quaterniond(), 70), MAX_LENGTH);
+        }
+        // Sample entity telemetry relative to the observing lens while retaining the hit coordinates
+        public GraphValue details(Level level, ViewPose lens, double range){
             Map<String, GraphValue> vals = new LinkedHashMap<>();
             ((Map<?, ?>) details().value()).forEach((key, val) -> vals.put(key.toString(), (GraphValue) val));
             vals.put("dimension", GraphValue.string(level.dimension().location().toString()));
+            Entity target = null;
+            if("entity".equals(kind) && level instanceof net.minecraft.server.level.ServerLevel server){
+                try{ target = server.getEntity(UUID.fromString(entityId)); }
+                catch(IllegalArgumentException ignored){}
+            }
+            var up = lens.orientation().transform(new org.joml.Vector3d(0, 1, 0));
+            var telemetry = EntityTelemetryApi.sampleEntity(target, lens.position(), lens.forward(),
+                    new Vec3(up.x, up.y, up.z), level.dimension().location().toString(), range);
+            vals.put("entity_details", GraphValue.map(telemetry));
+            telemetry.forEach(vals::putIfAbsent);
+            vals.put("is_entity", GraphValue.bool(target != null && !target.isRemoved()));
             SubLevel body = SableLevelApi.subLevel(level, subLevelId);
             Map<String, GraphValue> subLevel = new LinkedHashMap<>();
             if(body != null && !body.isRemoved()){
@@ -356,6 +372,61 @@ public final class ViewRaycast{
             vals.put("sub_level_details", GraphValue.map(subLevel));
             return GraphValue.map(vals);
         }
+
+        // Publish the common camera outputs from the same detailed sample
+        public Map<String, GraphValue> values(Level level, ViewPose lens, double range){
+            GraphValue details = details(level, lens, range);
+            Map<String, GraphValue> vals = new LinkedHashMap<>();
+            ((Map<?, ?>)details.value()).forEach((key, val) -> vals.put(key.toString(), (GraphValue)val));
+            vals.put("hit", GraphValue.bool(hit()));
+            vals.put("hit_x", GraphValue.number(position.x));
+            vals.put("hit_y", GraphValue.number(position.y));
+            vals.put("hit_z", GraphValue.number(position.z));
+            vals.put("hit_details", details);
+            return Map.copyOf(vals);
+        }
+    }
+
+    // Retain saved camera outputs while exposing the shared entity telemetry ports
+    public static Map<String, String> ports(){
+        return com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder.ports(
+                "ray_cast", "list", "hit", "boolean", "hit_x", "number", "hit_y", "number", "hit_z", "number",
+                "hit_details", "map", "is_sub_level", "boolean");
+    }
+
+    // Describe MAP fields without promoting them into separate camera outputs
+    public static Map<String, String> detailPorts(){
+        Map<String, String> fields = new LinkedHashMap<>(EntityTelemetryApi.detailPorts());
+        fields.putAll(com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder.ports("type", "string", "local_block_position", "map",
+                "local_hit_position", "map", "is_sub_level", "boolean", "face", "string", "block", "string", "block_state", "map",
+                "entity_details", "map", "sub_level_details", "map"));
+        return com.rieno.gadgetsandgizmos.lib.graph.GraphPortOrder.copy(fields);
+    }
+
+    // Keep offline camera MAP fields correctly typed for saved breakout wires
+    public static GraphValue unavailableDetails(){
+        Map<String, GraphValue> vals = new LinkedHashMap<>();
+        detailPorts().forEach((port, type) -> vals.put(port, switch(type){
+            case "boolean" -> GraphValue.bool(false);
+            case "number" -> GraphValue.number(0);
+            case "string" -> GraphValue.string("");
+            default -> GraphValue.map(Map.of());
+        }));
+        var entity = EntityTelemetryApi.sampleEntity(null, Vec3.ZERO, new Vec3(0, 0, -1), new Vec3(0, 1, 0), "", 0);
+        vals.putAll(entity); vals.put("entity_details", GraphValue.map(entity));
+        return GraphValue.map(vals);
+    }
+
+    // Keep hit geometry and block state separate from entity and player telemetry
+    public static java.util.List<com.rieno.gadgetsandgizmos.lib.graph.GraphNodePresentationRegistry.Section> detailSections(){
+        var sections = new java.util.ArrayList<com.rieno.gadgetsandgizmos.lib.graph.GraphNodePresentationRegistry.Section>();
+        sections.add(new com.rieno.gadgetsandgizmos.lib.graph.GraphNodePresentationRegistry.Section("hit", "Hit", java.util.List.of("type", "distance", "position", "local_hit_position")));
+        sections.add(new com.rieno.gadgetsandgizmos.lib.graph.GraphNodePresentationRegistry.Section("block", "Block", java.util.List.of("block", "block_state", "face", "local_block_position")));
+        for(var section : EntityTelemetryApi.sections()){
+            sections.add(new com.rieno.gadgetsandgizmos.lib.graph.GraphNodePresentationRegistry.Section(section.id(), section.label(),
+                    section.ports().stream().filter(port -> !port.equals("position") && !port.equals("distance")).toList()));
+        }
+        return java.util.List.copyOf(sections);
     }
 
     // Export one vector as typed coordinate values

@@ -25,4 +25,11 @@ public record GraphCalloutLayout(double x, double y, int width, int height){
         return viewport.screenX(x) < right && viewport.screenX(x + width) > left
                 && viewport.screenY(y) < bottom && viewport.screenY(y + height) > top;
     }
+
+    // Keep temporary messages readable when their visible node is against a viewport edge
+    public GraphCalloutLayout fitWithin(GraphViewport viewport, double left, double top, double right, double bottom){
+        double minX = viewport.graphX(left), minY = viewport.graphY(top);
+        return new GraphCalloutLayout(Math.clamp(x, minX, Math.max(minX, viewport.graphX(right) - width)),
+                Math.clamp(y, minY, Math.max(minY, viewport.graphY(bottom) - height)), width, height);
+    }
 }

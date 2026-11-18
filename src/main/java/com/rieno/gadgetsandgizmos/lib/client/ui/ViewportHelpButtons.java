@@ -55,6 +55,13 @@ public final class ViewportHelpButtons{
         }
     }
 
+    // Reserve the remaining footer space beside the visible help buttons
+    public static ScriptEditorWorkspace.Rect contentBounds(int left, int right, int bottom, boolean documentation){
+        var last = bounds(left, right, bottom, documentation ? Action.DOCUMENTATION : Action.SHORTCUTS);
+        int x = last.width() > 0 ? last.right() + 8 : left;
+        return new ScriptEditorWorkspace.Rect(x, bottom - 28, Math.max(0, right - x - 4), 20);
+    }
+
     private static HelpModalFrame.Rect bounds(int left, int right, int bottom, Action action){
         if(right - left < 52) return new HelpModalFrame.Rect(left, bottom, 0, 0);
         return new HelpModalFrame.Rect(left + 8 + action.ordinal() * 24, bottom - 28, 20, 20);

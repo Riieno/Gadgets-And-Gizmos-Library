@@ -7,6 +7,12 @@ import net.minecraft.nbt.Tag;
 public final class GraphInputDefaults{
     private GraphInputDefaults(){}
 
+    // Keep an authored false value while allowing missing boolean inputs to use a fallback
+    public static boolean booleanValue(CompoundTag data, String port, boolean fallback){
+        CompoundTag payload = configuredValue(data, port).getCompound("Payload");
+        return payload.contains("Value", Tag.TAG_BYTE) ? payload.getBoolean("Value") : fallback;
+    }
+
     // Preserve authored whitespace and empty strings before consulting legacy properties
     public static String text(CompoundTag data, String port, String fallback){
         CompoundTag val = configuredValue(data, port);

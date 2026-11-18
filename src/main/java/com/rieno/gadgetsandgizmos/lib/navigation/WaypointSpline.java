@@ -103,6 +103,14 @@ public final class WaypointSpline {
         return new WaypointSpline(List.copyOf(normalized));
     }
 
+    // Build a measured cubic segment with caller-owned endpoint tangents
+    public static Segment hermiteSegment(Vec3 start, Vec3 end, Vec3 startTangent, Vec3 endTangent){
+        if(!isFinite(start) || !isFinite(end) || !isFinite(startTangent) || !isFinite(endTangent)){
+            throw new IllegalArgumentException("Spline endpoints and tangents must be finite");
+        }
+        return Segment.create(0, start, end, startTangent, endTangent);
+    }
+
     // Get detached authored waypoints
     public List<Vec3> waypoints() {
         return waypoints;

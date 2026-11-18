@@ -14,10 +14,14 @@ public final class ViewRaySampler{
     private long tick = Long.MIN_VALUE;
     private List<ViewRaycast.Result> rays = List.of();
     private ViewRaycast.Result nearest = ViewRaycast.Result.miss(net.minecraft.world.phys.Vec3.ZERO, 0);
+    private ViewPose lens = new ViewPose(net.minecraft.world.phys.Vec3.ZERO, new org.joml.Quaterniond(), 70);
+    private double range;
 
     public void sample(Level level, ViewPose pose, double length, double rate, ViewRaycast.Filter filter, UUID ignored){
         if(level == null || level.isClientSide || tick == level.getGameTime()) return;
         tick = level.getGameTime();
+        lens = pose;
+        this.range = Double.isFinite(length) ? Math.clamp(length, 0, ViewRaycast.MAX_LENGTH) : 0;
         int count = budget.next(tick, rate);
         if(count == 0 && rate > 0) return;
         double range = Double.isFinite(length) ? Math.clamp(length, 0, ViewRaycast.MAX_LENGTH) : 0;
@@ -32,9 +36,8 @@ public final class ViewRaySampler{
     }
 
     public Map<String, GraphValue> values(Level level){
-        return Map.of("ray_cast", GraphValue.list(rays.stream().map(hit -> hit.details(level)).toList()),
-                "hit", GraphValue.bool(nearest.hit()), "hit_x", GraphValue.number(nearest.position().x),
-                "hit_y", GraphValue.number(nearest.position().y), "hit_z", GraphValue.number(nearest.position().z),
-                "hit_details", nearest.details(level), "is_sub_level", GraphValue.bool(nearest.subLevelId() != null));
+        var vals = new java.util.LinkedHashMap<>(nearest.values(level, lens, range));
+        vals.put("ray_cast", GraphValue.list(rays.stream().map(hit -> hit.details(level, lens, range)).toList()));
+        return Map.copyOf(vals);
     }
 }

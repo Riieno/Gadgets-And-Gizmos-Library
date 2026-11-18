@@ -88,11 +88,14 @@ public final class GraphWireGeometry {
 
     // Retain socket-owner turns while allowing hosts to disable detours around unrelated nodes
     public static Path route(Endpoint source, Endpoint target, List<Bounds> obstacles, Mode mode, double clearance, boolean avoidNodes){
-        if(avoidNodes) return route(source, target, obstacles, mode, clearance);
         List<Bounds> owners = new ArrayList<>();
         if(source.owner() != null) owners.add(source.owner());
         if(target.owner() != null && !owners.contains(target.owner())) owners.add(target.owner());
-        return route(source, target, owners, mode, clearance);
+        Path base = route(source, target, owners, mode, clearance);
+        if(avoidNodes) for(Bounds rect : obstacles){
+            if(!owners.contains(rect) && base.intersects(rect)) return route(source, target, obstacles, mode, clearance);
+        }
+        return base;
     }
 
     // Leave both sockets along their outward directions and keep the middle route outside node bodies
@@ -606,6 +609,13 @@ public final class GraphWireGeometry {
         public double length(){ return length; }
         public Bounds bounds(){ return bounds; }
         public List<Bezier> beziers(){ return beziers; }
+
+        // Reject distant rectangles before checking the same sampled segments used for drawing
+        public boolean intersects(Bounds rect){
+            if(!bounds.intersects(rect)) return false;
+            for(Segment part : segments) if(crosses(part.start(), part.end(), rect)) return true;
+            return false;
+        }
 
         public static Path fromBeziers(List<Bezier> curves){
             if(curves.isEmpty()) throw new IllegalArgumentException("A Bezier path requires a curve");

@@ -13,6 +13,7 @@ import com.rieno.gadgetsandgizmos.lib.documentation.MarkdownDocument;
 import com.rieno.gadgetsandgizmos.lib.graph.render.GraphCalloutLayout;
 import com.rieno.gadgetsandgizmos.lib.graph.render.GraphViewport;
 import net.minecraft.client.gui.Font;
+import net.minecraft.Util;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
@@ -21,6 +22,7 @@ import org.lwjgl.glfw.GLFW;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Map;
 import java.util.function.Function;
 
 // Anchor readable callouts above graph nodes without changing their saved positions or contents
@@ -42,6 +44,7 @@ public final class GraphCalloutBubbles{
     private GraphViewport graphViewport;
     private Rect menu;
     private int menuWidth;
+    private long expiresAt;
 
     // Let the host translate the shared close-bubbles action
     public GraphCalloutBubbles(Component closeLabel){
@@ -58,6 +61,7 @@ public final class GraphCalloutBubbles{
 
     // Replace a snapshot of annotations while treating configured Markdown as local text
     public void setEntries(List<Entry> entries){
+        expiresAt = 0L;
         this.entries = entries.stream().map(entry -> new Text(entry.nodeId(), Component.literal(
                 MarkdownDocument.parse(entry.markdown()).nodes().stream().map(MarkdownDocument.Node::plainText)
                         .collect(java.util.stream.Collectors.joining("\n"))))).toList();
@@ -65,11 +69,23 @@ public final class GraphCalloutBubbles{
         menu = null;
     }
 
+    // Show temporary diagnostic text literally, without interpreting error messages as Markdown
+    public void setMessages(Map<String, List<String>> messages, long lifetimeMillis){
+        if(lifetimeMillis <= 0) throw new IllegalArgumentException("Callout lifetime must be positive");
+        entries = messages.entrySet().stream().filter(entry -> !entry.getValue().isEmpty())
+                .map(entry -> new Text(entry.getKey(), Component.literal(String.join("\n", entry.getValue())))).toList();
+        placed = List.of(); menu = null;
+        expiresAt = Util.getMillis() + lifetimeMillis;
+    }
+
     // Remove the annotations and their context menu together
-    public void clear(){ entries = List.of(); placed = List.of(); menu = null; }
+    public void clear(){ entries = List.of(); placed = List.of(); menu = null; expiresAt = 0L; }
 
     // Check whether this layer still owns any annotations
-    public boolean isEmpty(){ return entries.isEmpty(); }
+    public boolean isEmpty(){
+        if(expiresAt != 0L && Util.getMillis() >= expiresAt) clear();
+        return entries.isEmpty();
+    }
 
     // Preserve screen-coordinate callers at unit zoom
     public void render(GuiGraphics graphics, Font font, Rect viewport, Function<String, Anchor> anchors,
@@ -83,19 +99,25 @@ public final class GraphCalloutBubbles{
     // Draw authored callouts through the same pan and zoom transform as their graph nodes
     public void render(GuiGraphics graphics, Font font, Rect viewport, GraphViewport graphViewport,
             Function<String, GraphAnchor> anchors, HelpModalStyle style, int mouseX, int mouseY){
+        if(isEmpty()) return;
         this.viewport = Objects.requireNonNull(viewport);
         if(!Objects.equals(this.graphViewport, graphViewport)) menu = null;
         this.graphViewport = Objects.requireNonNull(graphViewport);
         if(viewport.width() < 24 || viewport.height() < 24){ placed = List.of(); menu = null; return; }
         menuWidth = Math.min(viewport.width(), font.width(closeLabel) + 20);
         List<Placed> next = new ArrayList<>();
-        int width = 250;
+        int width = expiresAt == 0L ? 250 : Math.max(24, Math.min(250, (int)graphViewport.graphDistance(viewport.width() - 8)));
         for(Text entry : entries){
             GraphAnchor anchor = anchors.apply(entry.nodeId());
             if(anchor == null) continue;
             var lines = font.split(entry.text(), width - 16);
             int height = lines.size() * (font.lineHeight + 2) + 12;
             var bounds = GraphCalloutLayout.above(anchor.x(), anchor.y(), anchor.width(), width, height);
+            if(expiresAt != 0L && graphViewport.screenX(anchor.x()) < viewport.right()
+                    && graphViewport.screenX(anchor.x() + anchor.width()) > viewport.x()
+                    && graphViewport.screenY(anchor.y()) >= viewport.y() && graphViewport.screenY(anchor.y()) < viewport.bottom()){
+                bounds = bounds.fitWithin(graphViewport, viewport.x() + 4, viewport.y() + 4, viewport.right() - 4, viewport.bottom() - 4);
+            }
             if(bounds.intersects(graphViewport, viewport.x(), viewport.y(), viewport.right(), viewport.bottom()))
                 next.add(new Placed(bounds, lines));
         }
@@ -129,7 +151,7 @@ public final class GraphCalloutBubbles{
 
     // Open a close action on right-click and consume bubble clicks before the graph sees them
     public boolean mouseClicked(double x, double y, int button){
-        if(entries.isEmpty() || viewport == null || !viewport.contains(x, y)) return false;
+        if(isEmpty() || viewport == null || !viewport.contains(x, y)) return false;
         if(menu != null){
             if(button == GLFW.GLFW_MOUSE_BUTTON_LEFT){
                 if(menu.contains(x, y)) clear();

@@ -127,6 +127,7 @@ http.websocket(
 http.websocketAsync(
 if
 in
+inputs
 io.close(
 io.flush(
 io.input(
@@ -321,6 +322,7 @@ os.time(
 os.unloadAPI(
 os.version(
 output
+outputs
 paintutils.drawBox(
 paintutils.drawFilledBox(
 paintutils.drawImage(
@@ -488,3 +490,8 @@ node.removeInputPort(
 node.removeOutputPort(
 node.removeExecIn(
 node.removeExecOut(
+
+terminal.attach(
+term.attach(
+term.resize(
+term.blitHex(

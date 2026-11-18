@@ -62,24 +62,47 @@ public final class ContainerStorageNetworks{
     // Automation inherits the explicit network's reach without requiring an online player or loading chunks
     public static List<BlockEntity> connected(BlockEntity selected){
         if(!available(selected)) return List.of();
-        ServerLevel level = SableLevelApi.serverLevel(selected.getLevel());
-        if(level == null) return List.of();
-        Topology topology = TOPOLOGIES.get(level);
-        if(topology == null || topology.tick() != level.getGameTime()){
-            topology = topology(level);
-            TOPOLOGIES.put(level, topology);
-        }
+        Topology topology = current(selected);
+        if(topology == null) return List.of();
         return topology.components().getOrDefault(key(selected), List.of(root(selected))).stream()
                 .filter(ContainerStorageNetworks::available).toList();
     }
 
+    private static Topology current(BlockEntity selected){
+        ServerLevel level = SableLevelApi.serverLevel(selected.getLevel());
+        if(level == null) return null;
+        Topology res = TOPOLOGIES.get(level);
+        if(res == null || res.tick() != level.getGameTime()){
+            res = topology(level);
+            TOPOLOGIES.put(level, res);
+        }
+        return res;
+    }
+
+    // Share capability discovery and indexed ports across all entries in the same network this tick
+    static ContainerNetworkAccess.Routing routing(BlockEntity selected){
+        if(!available(selected)) return null;
+        Topology topology = current(selected);
+        if(topology == null) return null;
+        Key key = key(selected);
+        var res = topology.routes().get(key);
+        if(res != null) return res;
+        List<BlockEntity> members = topology.components().getOrDefault(key, List.of(root(selected)));
+        res = ContainerNetworkAccess.routing(members);
+        for(BlockEntity member : members) topology.routes().put(key(member), res);
+        return res;
+    }
+
     private static Topology topology(ServerLevel level){
         Map<Key, List<BlockEntity>> components = new LinkedHashMap<>();
+        Map<BlockEntity, List<BlockEntity>> networks = new LinkedHashMap<>();
         SOURCES.keySet().removeIf(source -> source == null || source.isRemoved());
         for(BlockEntity source : List.copyOf(SOURCES.keySet())){
             if(!available(source) || SableLevelApi.serverLevel(source.getLevel()) != level) continue;
             Map<Key, BlockEntity> merged = new LinkedHashMap<>();
-            for(BlockEntity target : linkedStorage(source, level, null)){
+            List<BlockEntity> linked = linkedStorage(source, level);
+            networks.put(source, linked);
+            for(BlockEntity target : linked){
                 for(BlockEntity member : components.getOrDefault(key(target), List.of(root(target)))){
                     if(available(member)) merged.putIfAbsent(key(member), member);
                 }
@@ -87,18 +110,18 @@ public final class ContainerStorageNetworks{
             List<BlockEntity> network = List.copyOf(merged.values());
             for(Key member : merged.keySet()) components.put(member, network);
         }
-        return new Topology(level.getGameTime(), components);
+        return new Topology(level.getGameTime(), components, networks, new LinkedHashMap<>());
     }
 
     // Include overlapping linked networks while applying access checks to controllers and every container
     public static List<BlockEntity> connected(BlockEntity selected, ServerPlayer viewer){
         if(selected == null || selected.getLevel() == null || viewer == null) return List.of();
+        Topology topology = current(selected);
+        if(topology == null) return List.of();
         List<List<BlockEntity>> networks = new ArrayList<>();
-        SOURCES.keySet().removeIf(source -> source == null || source.isRemoved());
-        for(BlockEntity source : List.copyOf(SOURCES.keySet())){
-            if(!accessible(source, viewer)
-                    || SableLevelApi.serverLevel(source.getLevel()) != SableLevelApi.serverLevel(selected.getLevel())) continue;
-            networks.add(linkedStorage(source, SableLevelApi.serverLevel(selected.getLevel()), viewer));
+        for(var network : topology.networks().entrySet()){
+            if(!accessible(network.getKey(), viewer)) continue;
+            networks.add(network.getValue().stream().filter(target -> accessible(target, viewer)).toList());
         }
         Map<Key, BlockEntity> connected = new LinkedHashMap<>();
         if(accessible(selected, viewer)) connected.put(key(selected), root(selected));
@@ -115,8 +138,8 @@ public final class ContainerStorageNetworks{
         return List.copyOf(connected.values());
     }
 
-    // Filter each controller before overlapping links can merge otherwise separate storage networks
-    private static List<BlockEntity> linkedStorage(BlockEntity source, ServerLevel level, ServerPlayer viewer){
+    // Keep physical assembly boundaries intact before merging overlapping storage links
+    private static List<BlockEntity> linkedStorage(BlockEntity source, ServerLevel level){
         Source adapter = SOURCES.get(source);
         UUID sourceId = SableLevelApi.containingId(source);
         Set<UUID> related = null;
@@ -132,7 +155,7 @@ public final class ContainerStorageNetworks{
                 }
                 if(!related.contains(targetId)) continue;
             }
-            if(viewer == null || accessible(target, viewer)) storage.add(root(target));
+            storage.add(root(target));
         }
         return List.copyOf(storage);
     }
@@ -163,5 +186,7 @@ public final class ContainerStorageNetworks{
     private record Key(ServerLevel level, UUID subLevelId, BlockPos pos){}
     private record Source(Function<BlockEntity, List<BlockEntity>> storage,
                           Function<BlockEntity, ? extends Collection<UUID>> relatedSubLevels){}
-    private record Topology(long tick, Map<Key, List<BlockEntity>> components){}
+    private record Topology(long tick, Map<Key, List<BlockEntity>> components,
+                            Map<BlockEntity, List<BlockEntity>> networks,
+                            Map<Key, ContainerNetworkAccess.Routing> routes){}
 }

@@ -9,9 +9,6 @@ package com.rieno.gadgetsandgizmos.lib.navigation;
 ------------------------------------------------------------##-----------------------------------------------------*/
 
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.core.BlockPos;
-import com.simibubi.create.content.trains.track.BezierConnection;
-import net.createmod.catnip.data.Couple;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -238,7 +235,7 @@ public final class DockingApproachLanes{
         return network;
     }
 
-    // Connect bypasses before and after the berth row using Create's track handle calculation
+    // Connect bypasses before and after the berth row using the library's spline geometry
     public static SplinePathNetwork connected(SplinePathNetwork lanes, Vec3 up){
         if(!structured(lanes) || lanes.paths().size() == 1) return lanes;
         var primary = lanes.paths().getFirst();
@@ -259,9 +256,9 @@ public final class DockingApproachLanes{
             nodes.add(new SplinePathNetwork.Node(end, to, SplinePathNetwork.Role.JUNCTION));
             var spline = lanes.spline(path.id());
             addCurve(nodes, paths, start, path.nodes().getFirst(), from, lanes.node(path.nodes().getFirst()).position(),
-                    first.tangentAtFraction(fraction), spline.segments().getFirst().tangentAtFraction(0), up);
+                    first.tangentAtFraction(fraction), spline.segments().getFirst().tangentAtFraction(0));
             addCurve(nodes, paths, path.nodes().getLast(), end, lanes.node(path.nodes().getLast()).position(), to,
-                    spline.segments().getLast().tangentAtFraction(1), last.tangentAtFraction(1 - fraction), up);
+                    spline.segments().getLast().tangentAtFraction(1), last.tangentAtFraction(1 - fraction));
         }
         primaryControls.addAll(1, starts);
         primaryControls.addAll(primaryControls.size() - 1, ends);
@@ -301,16 +298,15 @@ public final class DockingApproachLanes{
     }
 
     private static void addCurve(List<SplinePathNetwork.Node> nodes, List<SplinePathNetwork.Path> paths,
-            UUID fromId, UUID toId, Vec3 from, Vec3 to, Vec3 forward, Vec3 exitForward, Vec3 up){
-        var curve = new BezierConnection(Couple.create(BlockPos.containing(from), BlockPos.containing(to)),
-                Couple.create(from, to), Couple.create(forward.normalize(), exitForward.normalize().scale(-1)),
-                Couple.create(up, up), true, false, null);
+            UUID fromId, UUID toId, Vec3 from, Vec3 to, Vec3 forward, Vec3 exitForward){
+        double span = from.distanceTo(to);
+        var curve = WaypointSpline.hermiteSegment(from, to, forward.normalize().scale(span), exitForward.normalize().scale(span));
         List<UUID> controls = new ArrayList<>();
         controls.add(fromId);
         for(int idx = 1; idx < 8; idx++){
             UUID id = UUID.randomUUID();
             controls.add(id);
-            nodes.add(new SplinePathNetwork.Node(id, curve.getPosition(idx / 8.0D), SplinePathNetwork.Role.JUNCTION));
+            nodes.add(new SplinePathNetwork.Node(id, curve.pointAtFraction(idx / 8.0D), SplinePathNetwork.Role.JUNCTION));
         }
         controls.add(toId);
         paths.add(new SplinePathNetwork.Path(UUID.randomUUID(), controls));

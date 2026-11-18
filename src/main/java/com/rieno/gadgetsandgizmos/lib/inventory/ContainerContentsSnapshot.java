@@ -32,6 +32,11 @@ public final class ContainerContentsSnapshot{
 
     // Group equal components while retaining slot, capacity and fluid details
     public static CompoundTag capture(BlockEntity target){
+        return capture(target, true);
+    }
+
+    // Skip item traversal when the caller only needs live fluid, energy and transfer details
+    public static CompoundTag capture(BlockEntity target, boolean includeItems){
         CompoundTag data = new CompoundTag();
         data.putBoolean("Attached", true);
         if(target instanceof TransferTrackedStorage tracked){
@@ -51,7 +56,8 @@ public final class ContainerContentsSnapshot{
         LongEnergyStorage longEnergy = target instanceof LongEnergyStorage storage ? storage : null;
         if(inventory == null && fluids == null && energy == null && longEnergy == null) throw new IllegalArgumentException("This target has no container capability");
         ListTag rows = new ListTag();
-        if(inventory != null){
+        var itemRows = new java.util.HashMap<ItemStackKey, CompoundTag>();
+        if(inventory != null && includeItems){
             if(inventory.getSlots() > 4096) throw new IllegalArgumentException("Container exceeds the snapshot slot limit");
             int occupied = 0;
             long capacity = 0;
@@ -63,12 +69,8 @@ public final class ContainerContentsSnapshot{
                 if(stack.isEmpty()) continue;
                 occupied++;
                 total += stack.getCount();
-                CompoundTag row = null;
-                for(int rowIdx = 0; rowIdx < rows.size(); rowIdx++){
-                    var existing = rows.getCompound(rowIdx);
-                    var item = ItemStack.parseOptional(level.registryAccess(), existing.getCompound("Item"));
-                    if(ItemStack.isSameItemSameComponents(item, stack)){ row = existing; break; }
-                }
+                var key = new ItemStackKey(stack);
+                CompoundTag row = itemRows.get(key);
                 if(row == null){
                     if(rows.size() >= 256){ omitted++; continue; }
                     row = new CompoundTag();
@@ -80,6 +82,7 @@ public final class ContainerContentsSnapshot{
                     row.putString("Components", shortText(stack.getComponentsPatch().toString(), 512));
                     row.putInt("MaxStack", stack.getMaxStackSize());
                     rows.add(row);
+                    itemRows.put(key, row);
                 }
                 row.putLong("Count", row.getLong("Count") + stack.getCount());
                 row.putInt("Slots", row.getInt("Slots") + 1);
