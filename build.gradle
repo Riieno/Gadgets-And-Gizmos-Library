@@ -52,7 +52,7 @@ repositories {
 
 def libsDir = file('libs')
 def powerGridJar = providers.gradleProperty('powergrid_jar')
-        .orElse('G:/Minecraft/Instances/Addon Dev/mods/powergrid-mc1.21.1-0.6.2.jar')
+        .orElse('libs/powergrid-mc1.21.1-0.6.2.jar')
 def requiredSableJar = file("libs/sable-neoforge-${minecraft_version}-${sable_version}.jar")
 def localJars = fileTree(libsDir) {
     include '*.jar'
